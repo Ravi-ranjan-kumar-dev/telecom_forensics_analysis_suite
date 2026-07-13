@@ -1,0 +1,15 @@
+{
+  "case_id": "DEV-WORKSPACE",
+  "case_name": "Development Analysis Workspace",
+  "fir_number": "",
+  "incident_date": "",
+  "investigator": "",
+  "unit_name": "",
+  "incident_location": "",
+  "description": "Temporary automatic workspace used while the software is under development. Case-selection UI is intentionally bypassed.",
+  "status": "active",
+  "created_at": "2026-07-12T21:57:19+00:00",
+  "updated_at": "2026-07-13T08:28:00+00:00",
+  "schema_version": 2,
+  "source_timezone": "Asia/Kolkata"
+}

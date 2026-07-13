@@ -1,0 +1,13 @@
+Check,Rows,Percentage
+Invalid allocation timestamp/range,0,0.0
+Invalid/missing event timestamp,0,0.0
+Negative event duration,1292,0.1424
+Zero event duration,6912,0.7619
+Event outside allocation interval,0,0.0
+Missing translated/NAT IP,654192,72.1116
+Missing IMEI,0,0.0
+Missing IMSI,0,0.0
+First Cell differs from searched Cell,0,0.0
+Last Cell differs from searched Cell,213780,23.565
+Missing volume fields,0,0.0
+Exact duplicate event flag,0,0.0

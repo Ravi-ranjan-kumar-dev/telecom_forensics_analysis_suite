@@ -1,0 +1,11 @@
+[
+  {
+    "analysis_type": "IPDR_MULTIPLE",
+    "status": "FAILED",
+    "input_records": 0,
+    "output_records": 0,
+    "report_path": "",
+    "error_message": "IPDR loading failed.",
+    "recorded_at": "2026-07-12T13:29:25+00:00"
+  }
+]

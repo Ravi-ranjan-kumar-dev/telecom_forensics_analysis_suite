@@ -1,0 +1,52 @@
+[
+  {
+    "analysis_run_id": "analysis_20260712T214119_635167Z_de105687",
+    "analysis_type": "SINGLE_CDR",
+    "status": "FAILED",
+    "input_records": 0,
+    "output_records": 0,
+    "report_path": "",
+    "error_message": "Valid Single CDR target/dataframe nahi mila.",
+    "evidence_snapshot": [],
+    "configuration_snapshot": {
+      "schema_version": 2,
+      "captured_at_utc": "2026-07-12T21:41:19.636594+00:00",
+      "source_timezone": "Asia/Kolkata",
+      "targets": [],
+      "sightings": [],
+      "cgi_groups": [],
+      "snapshot_sha256": "a752f59d8c2b7617c6d2a8d01f8951625400574e4e9d3cf76afde320d2394625",
+      "sha256": "a752f59d8c2b7617c6d2a8d01f8951625400574e4e9d3cf76afde320d2394625"
+    },
+    "recorded_at": "2026-07-12T21:41:19.636640+00:00"
+  },
+  {
+    "analysis_run_id": "analysis_20260712T214412_828284Z_292d6353",
+    "analysis_type": "SINGLE_CDR",
+    "status": "COMPLETED",
+    "input_records": 5098,
+    "output_records": 0,
+    "report_path": "",
+    "error_message": "",
+    "evidence_snapshot": [],
+    "configuration_snapshot": {
+      "schema_version": 2,
+      "captured_at_utc": "2026-07-12T21:44:12.828979+00:00",
+      "source_timezone": "Asia/Kolkata",
+      "targets": [
+        {
+          "target_type": "MSISDN",
+          "target_value": "7209062997",
+          "description": "Single CDR target",
+          "updated_at": "2026-07-12T21:44:10+00:00",
+          "created_at": "2026-07-12T21:44:10+00:00"
+        }
+      ],
+      "sightings": [],
+      "cgi_groups": [],
+      "snapshot_sha256": "5d9f981709d65fc9a93053a922479495fcd680b092ee2d4c02d05a94fc0f1b1d",
+      "sha256": "5d9f981709d65fc9a93053a922479495fcd680b092ee2d4c02d05a94fc0f1b1d"
+    },
+    "recorded_at": "2026-07-12T21:44:12.829043+00:00"
+  }
+]

@@ -1,0 +1,21 @@
+Metric,Value
+Total IPDR/NAT Events,907194
+Source Files,44
+Searched Cell IDs,10
+Unique Subscribers,2084
+Unique IMEI,2084
+Unique IMSI,2084
+Unique Allocation Keys,10235
+Observed Allocation-Volume Records,12189
+Unique Source IP,4891
+Unique Translated/NAT IP,7085
+Unique Destination IP,19664
+Unique Destination Ports,704
+First Event Time,2026-06-11 20:00:00
+Last Event Time,2026-06-11 20:59:59
+Earliest Allocation Start,2026-06-11 19:01:40
+Latest Allocation End,2026-06-12 07:34:50
+Negative Duration Rows,1292
+Zero Duration Rows,6912
+Events Outside Allocation,0
+Exact Duplicate Rows Flagged,0

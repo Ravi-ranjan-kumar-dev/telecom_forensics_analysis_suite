@@ -1,0 +1,509 @@
+{
+  "manifest_schema_version": 2,
+  "run_id": "gprs_20260712T231354_414134Z_5d7da729",
+  "created_at_utc": "2026-07-12T23:13:54.674946+00:00",
+  "source_timezone": "Asia/Kolkata",
+  "input_folder": "project://data/tower_dump/gprs/input",
+  "source_files": [
+    "project://data/tower_dump/gprs/input/cellid_405-52-2325-232220182_1.csv",
+    "project://data/tower_dump/gprs/input/cellid_405-52-2325-232220262_1.csv",
+    "project://data/tower_dump/gprs/input/cellid_405-52-2325-232220272_1.csv",
+    "project://data/tower_dump/gprs/input/cellid_405-52-2325-232220352_1.csv",
+    "project://data/tower_dump/gprs/input/cellid_405-52-2325-232441632_1.csv",
+    "project://data/tower_dump/gprs/input/cellid_405-52-2325-232441701_1.csv",
+    "project://data/tower_dump/gprs/input/cellid_405-52-2325-232441702_1.csv",
+    "project://data/tower_dump/gprs/input/cellid_405-52-2325-232441711_1.csv",
+    "project://data/tower_dump/gprs/input/cellid_405-52-2325-232441712_1.csv",
+    "project://data/tower_dump/gprs/input/cellid_405-52-2325-233856789_1.csv",
+    "project://data/tower_dump/gprs/input/cellid_405-52-2325-233856799_1.csv",
+    "project://data/tower_dump/gprs/input/cellid_405-52-2325-238959217_1.csv",
+    "project://data/tower_dump/gprs/input/cellid_405-52-325-14072_1.csv",
+    "project://data/tower_dump/gprs/input/cellid_405-52-325-14073_1.csv",
+    "project://data/tower_dump/gprs/input/cellid_405-52-325-22146_1.csv",
+    "project://data/tower_dump/gprs/input/cellid_405-52-325-57312_1.csv",
+    "project://data/tower_dump/gprs/input/cellid_405-52-325-61541_1.csv",
+    "project://data/tower_dump/gprs/input/cellid_405-52-325-61542_1.csv"
+  ],
+  "source_provenance": [
+    {
+      "source_file": "project://data/tower_dump/gprs/input/cellid_405-52-2325-232220182_1.csv",
+      "source_path_id": "266266e5e23882cb2ab655304d374972d77cf312bff32be0de0729bd2e93158a",
+      "evidence_id": "EVD-000001",
+      "registered_sha256": "13987e09da9c00d15db673ce2ac14f1210817a4b5d0c2f6b9131f78c0534e357",
+      "current_sha256": "13987e09da9c00d15db673ce2ac14f1210817a4b5d0c2f6b9131f78c0534e357",
+      "sha256": "13987e09da9c00d15db673ce2ac14f1210817a4b5d0c2f6b9131f78c0534e357",
+      "file_size_bytes": 347222,
+      "provenance_status": "VERIFIED"
+    },
+    {
+      "source_file": "project://data/tower_dump/gprs/input/cellid_405-52-2325-232220262_1.csv",
+      "source_path_id": "78a82decfa1d00f5f0f6a43d5e3b5bc4e6c7dc3d89268d00fbbed03426cae47f",
+      "evidence_id": "EVD-000002",
+      "registered_sha256": "41b1c1a6a2b28014f390c2b1546c48f0dfa3f972a638717290bd5f87f99b2262",
+      "current_sha256": "41b1c1a6a2b28014f390c2b1546c48f0dfa3f972a638717290bd5f87f99b2262",
+      "sha256": "41b1c1a6a2b28014f390c2b1546c48f0dfa3f972a638717290bd5f87f99b2262",
+      "file_size_bytes": 120636,
+      "provenance_status": "VERIFIED"
+    },
+    {
+      "source_file": "project://data/tower_dump/gprs/input/cellid_405-52-2325-232220272_1.csv",
+      "source_path_id": "5ba3db881caf566f70378f40a1a580eefdd9c4a4069711dcabaaebcbf8edfc96",
+      "evidence_id": "EVD-000003",
+      "registered_sha256": "a0fc4a686551fc4f6f46b7542524f381b2cddc6b202b51d1a2eddc726462bdbd",
+      "current_sha256": "a0fc4a686551fc4f6f46b7542524f381b2cddc6b202b51d1a2eddc726462bdbd",
+      "sha256": "a0fc4a686551fc4f6f46b7542524f381b2cddc6b202b51d1a2eddc726462bdbd",
+      "file_size_bytes": 65150,
+      "provenance_status": "VERIFIED"
+    },
+    {
+      "source_file": "project://data/tower_dump/gprs/input/cellid_405-52-2325-232220352_1.csv",
+      "source_path_id": "a9189f6d242135f915ed2c391f0786575bf8023c5e7473d04617b82cc2a35a7d",
+      "evidence_id": "EVD-000004",
+      "registered_sha256": "464d622a9081149da4d68b751dc9b1f5a59df588ac2ce8caad671a76a4c2e5dc",
+      "current_sha256": "464d622a9081149da4d68b751dc9b1f5a59df588ac2ce8caad671a76a4c2e5dc",
+      "sha256": "464d622a9081149da4d68b751dc9b1f5a59df588ac2ce8caad671a76a4c2e5dc",
+      "file_size_bytes": 115602,
+      "provenance_status": "VERIFIED"
+    },
+    {
+      "source_file": "project://data/tower_dump/gprs/input/cellid_405-52-2325-232441632_1.csv",
+      "source_path_id": "cc9db9408d562fda14da93f77f23f0c540e1f3e2193e104049618ddb9fc424bf",
+      "evidence_id": "EVD-000005",
+      "registered_sha256": "3fc9da01a71deda506a635e7b0c88fb7aa24a7831f8961b1f34ac2d7d1835321",
+      "current_sha256": "3fc9da01a71deda506a635e7b0c88fb7aa24a7831f8961b1f34ac2d7d1835321",
+      "sha256": "3fc9da01a71deda506a635e7b0c88fb7aa24a7831f8961b1f34ac2d7d1835321",
+      "file_size_bytes": 214704,
+      "provenance_status": "VERIFIED"
+    },
+    {
+      "source_file": "project://data/tower_dump/gprs/input/cellid_405-52-2325-232441701_1.csv",
+      "source_path_id": "46531cf681fb39621d873d3b3a4a0e21ff311816aa4bed82513c8e9b69bd45c6",
+      "evidence_id": "EVD-000006",
+      "registered_sha256": "a5e96d8b65125b78ae35f8b5d223a94fb39b04692785770cafa884d1e5a45d5a",
+      "current_sha256": "a5e96d8b65125b78ae35f8b5d223a94fb39b04692785770cafa884d1e5a45d5a",
+      "sha256": "a5e96d8b65125b78ae35f8b5d223a94fb39b04692785770cafa884d1e5a45d5a",
+      "file_size_bytes": 193729,
+      "provenance_status": "VERIFIED"
+    },
+    {
+      "source_file": "project://data/tower_dump/gprs/input/cellid_405-52-2325-232441702_1.csv",
+      "source_path_id": "115bed90812dc7eb4268e11404fbfcb26ffd849bf411303e84ff37eebc8dd0dc",
+      "evidence_id": "EVD-000007",
+      "registered_sha256": "a4e889744cd69ec4b20f64dc3b7f641561ab79ebb106212ff6684adbcc43abb6",
+      "current_sha256": "a4e889744cd69ec4b20f64dc3b7f641561ab79ebb106212ff6684adbcc43abb6",
+      "sha256": "a4e889744cd69ec4b20f64dc3b7f641561ab79ebb106212ff6684adbcc43abb6",
+      "file_size_bytes": 193138,
+      "provenance_status": "VERIFIED"
+    },
+    {
+      "source_file": "project://data/tower_dump/gprs/input/cellid_405-52-2325-232441711_1.csv",
+      "source_path_id": "fbaad057b42e7c084ba6faff8d823e0af9fc62736b43b4827a8865e191b144ba",
+      "evidence_id": "EVD-000008",
+      "registered_sha256": "e2b1ead209d3def7f1cee3ae236c7dd5db0eebbca5cdd0594e0af89cc97994f3",
+      "current_sha256": "e2b1ead209d3def7f1cee3ae236c7dd5db0eebbca5cdd0594e0af89cc97994f3",
+      "sha256": "e2b1ead209d3def7f1cee3ae236c7dd5db0eebbca5cdd0594e0af89cc97994f3",
+      "file_size_bytes": 201909,
+      "provenance_status": "VERIFIED"
+    },
+    {
+      "source_file": "project://data/tower_dump/gprs/input/cellid_405-52-2325-232441712_1.csv",
+      "source_path_id": "58ebfe7e3342bbeb4c3696f542170cba21fc2f1af1deb08e3e95de7780a0a9e7",
+      "evidence_id": "EVD-000009",
+      "registered_sha256": "13f0bc2f8bc0fe81924dd7421383c4601e937cfc594f3f314b141cfa13c083a3",
+      "current_sha256": "13f0bc2f8bc0fe81924dd7421383c4601e937cfc594f3f314b141cfa13c083a3",
+      "sha256": "13f0bc2f8bc0fe81924dd7421383c4601e937cfc594f3f314b141cfa13c083a3",
+      "file_size_bytes": 149484,
+      "provenance_status": "VERIFIED"
+    },
+    {
+      "source_file": "project://data/tower_dump/gprs/input/cellid_405-52-2325-233856789_1.csv",
+      "source_path_id": "dbf1557adce278c465c740b4b07810da953f30173cb74bb7394263b6d1dcdc8f",
+      "evidence_id": "EVD-000010",
+      "registered_sha256": "9cb17d3d489d1d54bdf7eaaa5b4e333b33b0a1cf8df4cca57e53c99f99ec1efc",
+      "current_sha256": "9cb17d3d489d1d54bdf7eaaa5b4e333b33b0a1cf8df4cca57e53c99f99ec1efc",
+      "sha256": "9cb17d3d489d1d54bdf7eaaa5b4e333b33b0a1cf8df4cca57e53c99f99ec1efc",
+      "file_size_bytes": 408597,
+      "provenance_status": "VERIFIED"
+    },
+    {
+      "source_file": "project://data/tower_dump/gprs/input/cellid_405-52-2325-233856799_1.csv",
+      "source_path_id": "e8b87f3d485e429adcf849b2d9ae5f46112cc7ecdb3586306c55b3cb8e3506d6",
+      "evidence_id": "EVD-000011",
+      "registered_sha256": "8031ad17ff2496d8cd06a381af51bf3325006462369eeff55138e6540973e731",
+      "current_sha256": "8031ad17ff2496d8cd06a381af51bf3325006462369eeff55138e6540973e731",
+      "sha256": "8031ad17ff2496d8cd06a381af51bf3325006462369eeff55138e6540973e731",
+      "file_size_bytes": 511505,
+      "provenance_status": "VERIFIED"
+    },
+    {
+      "source_file": "project://data/tower_dump/gprs/input/cellid_405-52-2325-238959217_1.csv",
+      "source_path_id": "0d35d924593a28d982a1ccc51ff25b9aeab075a53cc1ab3031ff06cbc3bf3467",
+      "evidence_id": "EVD-000012",
+      "registered_sha256": "8d8e0d555cd6f8461df92bffff604d415f6c76630d6e54e7bbc799b473bdd626",
+      "current_sha256": "8d8e0d555cd6f8461df92bffff604d415f6c76630d6e54e7bbc799b473bdd626",
+      "sha256": "8d8e0d555cd6f8461df92bffff604d415f6c76630d6e54e7bbc799b473bdd626",
+      "file_size_bytes": 67636,
+      "provenance_status": "VERIFIED"
+    },
+    {
+      "source_file": "project://data/tower_dump/gprs/input/cellid_405-52-325-14072_1.csv",
+      "source_path_id": "503e612185c61b85cf022557fb0e25d651843f03a0189c2292f50b39ee937379",
+      "evidence_id": "EVD-000013",
+      "registered_sha256": "08cc3623cf2435476555fdb7a29a77d5f978ed519cb095fce23e3085f03a7ac3",
+      "current_sha256": "08cc3623cf2435476555fdb7a29a77d5f978ed519cb095fce23e3085f03a7ac3",
+      "sha256": "08cc3623cf2435476555fdb7a29a77d5f978ed519cb095fce23e3085f03a7ac3",
+      "file_size_bytes": 4191,
+      "provenance_status": "VERIFIED"
+    },
+    {
+      "source_file": "project://data/tower_dump/gprs/input/cellid_405-52-325-14073_1.csv",
+      "source_path_id": "1b2bdfb9a13b12b011bc7b056dde82a1e1c3ba91f7c4bb7137edca0ee6dab7ab",
+      "evidence_id": "EVD-000014",
+      "registered_sha256": "579d452cde3d0edd1d2978865e92656fca8ced4d9e18d50372a077e0cc2acc70",
+      "current_sha256": "579d452cde3d0edd1d2978865e92656fca8ced4d9e18d50372a077e0cc2acc70",
+      "sha256": "579d452cde3d0edd1d2978865e92656fca8ced4d9e18d50372a077e0cc2acc70",
+      "file_size_bytes": 26991,
+      "provenance_status": "VERIFIED"
+    },
+    {
+      "source_file": "project://data/tower_dump/gprs/input/cellid_405-52-325-22146_1.csv",
+      "source_path_id": "4b5fb4ad8d85d600927ef176130873f016ca67746df6f9cba5b0898ee5f43d1e",
+      "evidence_id": "EVD-000015",
+      "registered_sha256": "63b2b2abf7e93015cd7a99bc2f0a85bea4b82e0a7925c3af3734ce65ebaa5959",
+      "current_sha256": "63b2b2abf7e93015cd7a99bc2f0a85bea4b82e0a7925c3af3734ce65ebaa5959",
+      "sha256": "63b2b2abf7e93015cd7a99bc2f0a85bea4b82e0a7925c3af3734ce65ebaa5959",
+      "file_size_bytes": 3798,
+      "provenance_status": "VERIFIED"
+    },
+    {
+      "source_file": "project://data/tower_dump/gprs/input/cellid_405-52-325-57312_1.csv",
+      "source_path_id": "3dad447b87932c45ba288fd0ed81c71d0fe7fb9a25b658e0035cae11b96e2c26",
+      "evidence_id": "EVD-000016",
+      "registered_sha256": "050c8a9f3e551420519e8019d2a5d68da6f232ed43999524e20a87ca942aad12",
+      "current_sha256": "050c8a9f3e551420519e8019d2a5d68da6f232ed43999524e20a87ca942aad12",
+      "sha256": "050c8a9f3e551420519e8019d2a5d68da6f232ed43999524e20a87ca942aad12",
+      "file_size_bytes": 3700,
+      "provenance_status": "VERIFIED"
+    },
+    {
+      "source_file": "project://data/tower_dump/gprs/input/cellid_405-52-325-61541_1.csv",
+      "source_path_id": "8b5825e20e6dc49991ce14965a9ec70e44385127154c589ca049229c6ace8c8c",
+      "evidence_id": "EVD-000017",
+      "registered_sha256": "debca16fffab96feec9cdf9e1b0c964ccc29344b4d6f74e826e5385247a18709",
+      "current_sha256": "debca16fffab96feec9cdf9e1b0c964ccc29344b4d6f74e826e5385247a18709",
+      "sha256": "debca16fffab96feec9cdf9e1b0c964ccc29344b4d6f74e826e5385247a18709",
+      "file_size_bytes": 7991,
+      "provenance_status": "VERIFIED"
+    },
+    {
+      "source_file": "project://data/tower_dump/gprs/input/cellid_405-52-325-61542_1.csv",
+      "source_path_id": "72a335dfd243a04538014124ca351157bcc666d0c9de8bd03b06348c127f9796",
+      "evidence_id": "EVD-000018",
+      "registered_sha256": "baa812a3d4c8ca8157895f5522c36b05497bc57cbe459d5b3d6918062d9994e7",
+      "current_sha256": "baa812a3d4c8ca8157895f5522c36b05497bc57cbe459d5b3d6918062d9994e7",
+      "sha256": "baa812a3d4c8ca8157895f5522c36b05497bc57cbe459d5b3d6918062d9994e7",
+      "file_size_bytes": 22846,
+      "provenance_status": "VERIFIED"
+    }
+  ],
+  "evidence_ids": [
+    "EVD-000001",
+    "EVD-000002",
+    "EVD-000003",
+    "EVD-000004",
+    "EVD-000005",
+    "EVD-000006",
+    "EVD-000007",
+    "EVD-000008",
+    "EVD-000009",
+    "EVD-000010",
+    "EVD-000011",
+    "EVD-000012",
+    "EVD-000013",
+    "EVD-000014",
+    "EVD-000015",
+    "EVD-000016",
+    "EVD-000017",
+    "EVD-000018"
+  ],
+  "configuration_snapshot": {
+    "schema_version": 2,
+    "captured_at_utc": "2026-07-12T23:13:54.678058+00:00",
+    "source_timezone": "Asia/Kolkata",
+    "targets": [
+      {
+        "target_type": "MSISDN",
+        "target_value": "7209062997",
+        "description": "Multiple CDR target",
+        "updated_at": "2026-07-12T22:52:27+00:00",
+        "created_at": "2026-07-12T21:57:26+00:00"
+      },
+      {
+        "target_type": "MSISDN",
+        "target_value": "7970549093",
+        "description": "Multiple CDR target",
+        "updated_at": "2026-07-12T22:52:17+00:00",
+        "created_at": "2026-07-12T22:38:29+00:00"
+      },
+      {
+        "target_type": "MSISDN",
+        "target_value": "9708127547",
+        "description": "Multiple CDR target",
+        "updated_at": "2026-07-12T22:52:36+00:00",
+        "created_at": "2026-07-12T22:38:49+00:00"
+      },
+      {
+        "target_type": "MSISDN",
+        "target_value": "9031175164",
+        "description": "Multiple CDR target",
+        "updated_at": "2026-07-12T22:52:41+00:00",
+        "created_at": "2026-07-12T22:38:53+00:00"
+      },
+      {
+        "target_type": "MSISDN",
+        "target_value": "9570927473",
+        "description": "Multiple CDR target",
+        "updated_at": "2026-07-12T22:52:55+00:00",
+        "created_at": "2026-07-12T22:39:07+00:00"
+      },
+      {
+        "target_type": "MSISDN",
+        "target_value": "8544247584",
+        "description": "Multiple CDR target",
+        "updated_at": "2026-07-12T22:53:09+00:00",
+        "created_at": "2026-07-12T22:39:21+00:00"
+      }
+    ],
+    "sightings": [],
+    "cgi_groups": [],
+    "snapshot_sha256": "130269d797192171ee28d465437b49cd9a9d974ba3a9f5e36fec65624bc82657",
+    "sha256": "130269d797192171ee28d465437b49cd9a9d974ba3a9f5e36fec65624bc82657"
+  },
+  "user_facing_report": "reports/tower_dump/gprs/Tower_GPRS_Dump_Analysis_DEV-WORKSPACE_20260712_231354_713674.xlsx",
+  "report_status": "COMPLETED",
+  "analysis_run_id": "gprs_20260712T231354_414134Z_5d7da729",
+  "analysis_type": "TOWER_GPRS_DUMP",
+  "record_count": 11810,
+  "partition_count": 0,
+  "overlap_rule": "",
+  "saved_files": {
+    "summary": "results/gprs_dump/gprs_20260712T231354_414134Z_5d7da729/summary.csv",
+    "file_summary": "results/gprs_dump/gprs_20260712T231354_414134Z_5d7da729/file_summary.csv",
+    "technology_summary": "results/gprs_dump/gprs_20260712T231354_414134Z_5d7da729/technology_summary.csv",
+    "pre_post_summary": "results/gprs_dump/gprs_20260712T231354_414134Z_5d7da729/pre_post_summary.csv",
+    "roaming_summary": "results/gprs_dump/gprs_20260712T231354_414134Z_5d7da729/roaming_summary.csv",
+    "subscriber_summary": "results/gprs_dump/gprs_20260712T231354_414134Z_5d7da729/subscriber_summary.csv",
+    "repeat_subscribers": "results/gprs_dump/gprs_20260712T231354_414134Z_5d7da729/repeat_subscribers.csv",
+    "imei_summary": "results/gprs_dump/gprs_20260712T231354_414134Z_5d7da729/imei_summary.csv",
+    "shared_imei": "results/gprs_dump/gprs_20260712T231354_414134Z_5d7da729/shared_imei.csv",
+    "imsi_summary": "results/gprs_dump/gprs_20260712T231354_414134Z_5d7da729/imsi_summary.csv",
+    "shared_imsi": "results/gprs_dump/gprs_20260712T231354_414134Z_5d7da729/shared_imsi.csv",
+    "ip_summary": "results/gprs_dump/gprs_20260712T231354_414134Z_5d7da729/ip_summary.csv",
+    "duration_buckets": "results/gprs_dump/gprs_20260712T231354_414134Z_5d7da729/duration_buckets.csv",
+    "hourly_activity": "results/gprs_dump/gprs_20260712T231354_414134Z_5d7da729/hourly_activity.csv",
+    "long_sessions": "results/gprs_dump/gprs_20260712T231354_414134Z_5d7da729/long_sessions.csv",
+    "zero_volume_sessions": "results/gprs_dump/gprs_20260712T231354_414134Z_5d7da729/zero_volume_sessions.csv",
+    "non_standard_identifiers": "results/gprs_dump/gprs_20260712T231354_414134Z_5d7da729/non_standard_identifiers.csv",
+    "data_quality": "results/gprs_dump/gprs_20260712T231354_414134Z_5d7da729/data_quality.csv",
+    "rejected_rows": "results/gprs_dump/gprs_20260712T231354_414134Z_5d7da729/rejected_rows.csv"
+  },
+  "saved_file_fingerprints": {
+    "summary": {
+      "path": "results/gprs_dump/gprs_20260712T231354_414134Z_5d7da729/summary.csv",
+      "file_name": "summary.csv",
+      "file_size_bytes": 406,
+      "sha256": "268c0ee944f49bde63872a10980032f4f3e62908f65a7e638c7296e26a55f5a7",
+      "formula_escaped": true
+    },
+    "file_summary": {
+      "path": "results/gprs_dump/gprs_20260712T231354_414134Z_5d7da729/file_summary.csv",
+      "file_name": "file_summary.csv",
+      "file_size_bytes": 6122,
+      "sha256": "7d8df9c257da1fb759fb430cf0bcb18c0356c2343be9b6fea789a9e60c1dc74d",
+      "formula_escaped": true
+    },
+    "technology_summary": {
+      "path": "results/gprs_dump/gprs_20260712T231354_414134Z_5d7da729/technology_summary.csv",
+      "file_name": "technology_summary.csv",
+      "file_size_bytes": 43,
+      "sha256": "7ebd697a01214770fa9a0c39b4c43e8e19c46ec0784b108ddecacf2838ff521d",
+      "formula_escaped": true
+    },
+    "pre_post_summary": {
+      "path": "results/gprs_dump/gprs_20260712T231354_414134Z_5d7da729/pre_post_summary.csv",
+      "file_name": "pre_post_summary.csv",
+      "file_size_bytes": 44,
+      "sha256": "7a1e5c9fcc1609c07bc097875f8b0a509d75eaf775ee5a353cb1c589f0028dc7",
+      "formula_escaped": true
+    },
+    "roaming_summary": {
+      "path": "results/gprs_dump/gprs_20260712T231354_414134Z_5d7da729/roaming_summary.csv",
+      "file_name": "roaming_summary.csv",
+      "file_size_bytes": 41,
+      "sha256": "68242d8e172adee461fe3bf028485e17b4cf20f67c8242f9078444c0381394e3",
+      "formula_escaped": true
+    },
+    "subscriber_summary": {
+      "path": "results/gprs_dump/gprs_20260712T231354_414134Z_5d7da729/subscriber_summary.csv",
+      "file_name": "subscriber_summary.csv",
+      "file_size_bytes": 388305,
+      "sha256": "7f905ba336b73489a1c4641fac719a293b4edf813f493d0385c1d999c711cadb",
+      "formula_escaped": true
+    },
+    "repeat_subscribers": {
+      "path": "results/gprs_dump/gprs_20260712T231354_414134Z_5d7da729/repeat_subscribers.csv",
+      "file_name": "repeat_subscribers.csv",
+      "file_size_bytes": 273991,
+      "sha256": "bff2d835f2bd046a1084b9d0a54b9ff15b8f25ad034d2e54dea5ee53ae54c2b3",
+      "formula_escaped": true
+    },
+    "imei_summary": {
+      "path": "results/gprs_dump/gprs_20260712T231354_414134Z_5d7da729/imei_summary.csv",
+      "file_name": "imei_summary.csv",
+      "file_size_bytes": 248390,
+      "sha256": "9c606395afbc2f31e4d809e84ea4817e4694cdb1f67b7c2acba1f2ca6f35f57e",
+      "formula_escaped": true
+    },
+    "shared_imei": {
+      "path": "results/gprs_dump/gprs_20260712T231354_414134Z_5d7da729/shared_imei.csv",
+      "file_name": "shared_imei.csv",
+      "file_size_bytes": 196,
+      "sha256": "17984fd7b54c67617a342a7ca743ea084450fe4006d577ea6adec9558522b4af",
+      "formula_escaped": true
+    },
+    "imsi_summary": {
+      "path": "results/gprs_dump/gprs_20260712T231354_414134Z_5d7da729/imsi_summary.csv",
+      "file_name": "imsi_summary.csv",
+      "file_size_bytes": 245453,
+      "sha256": "bd6160c44abf2fc2c55153a3d9f77caf1e79c41fe1de536b4865216cb961ca69",
+      "formula_escaped": true
+    },
+    "shared_imsi": {
+      "path": "results/gprs_dump/gprs_20260712T231354_414134Z_5d7da729/shared_imsi.csv",
+      "file_name": "shared_imsi.csv",
+      "file_size_bytes": 88,
+      "sha256": "b87a89608bfee396eeb889fa3be867d7b2642606b5d0e1170228138627341545",
+      "formula_escaped": true
+    },
+    "ip_summary": {
+      "path": "results/gprs_dump/gprs_20260712T231354_414134Z_5d7da729/ip_summary.csv",
+      "file_name": "ip_summary.csv",
+      "file_size_bytes": 540774,
+      "sha256": "1facb5ae62217b1421d72a944208be06e9c37fb60d641cac74011315a005c263",
+      "formula_escaped": true
+    },
+    "duration_buckets": {
+      "path": "results/gprs_dump/gprs_20260712T231354_414134Z_5d7da729/duration_buckets.csv",
+      "file_name": "duration_buckets.csv",
+      "file_size_bytes": 148,
+      "sha256": "1608b85eb0d799c3eeee86c0ae962590ea150065dfaaeacf92b99b01ce5b1ff5",
+      "formula_escaped": true
+    },
+    "hourly_activity": {
+      "path": "results/gprs_dump/gprs_20260712T231354_414134Z_5d7da729/hourly_activity.csv",
+      "file_name": "hourly_activity.csv",
+      "file_size_bytes": 51,
+      "sha256": "65f0f78f1a81df9ada524686ef78ffc95b86415499a092891931b3010d05c5a6",
+      "formula_escaped": true
+    },
+    "long_sessions": {
+      "path": "results/gprs_dump/gprs_20260712T231354_414134Z_5d7da729/long_sessions.csv",
+      "file_name": "long_sessions.csv",
+      "file_size_bytes": 108373,
+      "sha256": "794aa290d77cb55439c8107f901d644d8fdb278d15ed88e020fb6e8fb41ce027",
+      "formula_escaped": true
+    },
+    "zero_volume_sessions": {
+      "path": "results/gprs_dump/gprs_20260712T231354_414134Z_5d7da729/zero_volume_sessions.csv",
+      "file_name": "zero_volume_sessions.csv",
+      "file_size_bytes": 97236,
+      "sha256": "dca3442e1efc23d3a203aa3044efd5fa17887c7a3a132a46b05e0d6eee0c29e5",
+      "formula_escaped": true
+    },
+    "non_standard_identifiers": {
+      "path": "results/gprs_dump/gprs_20260712T231354_414134Z_5d7da729/non_standard_identifiers.csv",
+      "file_name": "non_standard_identifiers.csv",
+      "file_size_bytes": 1332739,
+      "sha256": "08508e31c51e6f8ec1958adaab42f9d82c870f9109fd2c667f06ff031d927628",
+      "formula_escaped": true
+    },
+    "data_quality": {
+      "path": "results/gprs_dump/gprs_20260712T231354_414134Z_5d7da729/data_quality.csv",
+      "file_name": "data_quality.csv",
+      "file_size_bytes": 295,
+      "sha256": "ca11125096a2cc6e0b9992ac2352d8810910a44fbef4df4ad53d7d4038270c1f",
+      "formula_escaped": true
+    },
+    "rejected_rows": {
+      "path": "results/gprs_dump/gprs_20260712T231354_414134Z_5d7da729/rejected_rows.csv",
+      "file_name": "rejected_rows.csv",
+      "file_size_bytes": 19540,
+      "sha256": "401667d9dce00d77efbf2d7ad4580ecd3833a2e643acdbfb0b044d94d8a1de0f",
+      "formula_escaped": true
+    }
+  },
+  "warnings": [
+    "cellid_405-52-2325-232220182_1.csv: 79 sessions have missing volume fields.",
+    "cellid_405-52-2325-232220182_1.csv: 297 rows contain non-standard subscriber identifiers.",
+    "cellid_405-52-2325-232220182_1.csv: 11 zero-volume sessions.",
+    "cellid_405-52-2325-232220262_1.csv: 31 sessions have missing volume fields.",
+    "cellid_405-52-2325-232220262_1.csv: 43 rows contain non-standard subscriber identifiers.",
+    "cellid_405-52-2325-232220262_1.csv: 13 zero-volume sessions.",
+    "cellid_405-52-2325-232220272_1.csv: 18 sessions have missing volume fields.",
+    "cellid_405-52-2325-232220272_1.csv: 32 rows contain non-standard subscriber identifiers.",
+    "cellid_405-52-2325-232220272_1.csv: 5 zero-volume sessions.",
+    "cellid_405-52-2325-232220352_1.csv: 228 sessions have missing volume fields.",
+    "cellid_405-52-2325-232220352_1.csv: 205 rows contain non-standard subscriber identifiers.",
+    "cellid_405-52-2325-232220352_1.csv: 9 zero-volume sessions.",
+    "cellid_405-52-2325-232441632_1.csv: 22 sessions have missing volume fields.",
+    "cellid_405-52-2325-232441632_1.csv: 15 rows contain non-standard subscriber identifiers.",
+    "cellid_405-52-2325-232441632_1.csv: 4 zero-volume sessions.",
+    "cellid_405-52-2325-232441701_1.csv: 44 sessions have missing volume fields.",
+    "cellid_405-52-2325-232441701_1.csv: 78 rows contain non-standard subscriber identifiers.",
+    "cellid_405-52-2325-232441701_1.csv: 16 zero-volume sessions.",
+    "cellid_405-52-2325-232441702_1.csv: 27 sessions have missing volume fields.",
+    "cellid_405-52-2325-232441702_1.csv: 54 rows contain non-standard subscriber identifiers.",
+    "cellid_405-52-2325-232441702_1.csv: 14 zero-volume sessions.",
+    "cellid_405-52-2325-232441711_1.csv: 42 sessions have missing volume fields.",
+    "cellid_405-52-2325-232441711_1.csv: 94 rows contain non-standard subscriber identifiers.",
+    "cellid_405-52-2325-232441711_1.csv: 17 zero-volume sessions.",
+    "cellid_405-52-2325-232441712_1.csv: 20 sessions have missing volume fields.",
+    "cellid_405-52-2325-232441712_1.csv: 38 rows contain non-standard subscriber identifiers.",
+    "cellid_405-52-2325-232441712_1.csv: 14 zero-volume sessions.",
+    "cellid_405-52-2325-233856789_1.csv: 283 sessions have missing volume fields.",
+    "cellid_405-52-2325-233856789_1.csv: 893 rows contain non-standard subscriber identifiers.",
+    "cellid_405-52-2325-233856789_1.csv: 26 zero-volume sessions.",
+    "cellid_405-52-2325-233856799_1.csv: 235 sessions have missing volume fields.",
+    "cellid_405-52-2325-233856799_1.csv: 499 rows contain non-standard subscriber identifiers.",
+    "cellid_405-52-2325-233856799_1.csv: 18 zero-volume sessions.",
+    "cellid_405-52-2325-238959217_1.csv: 18 sessions have missing volume fields.",
+    "cellid_405-52-2325-238959217_1.csv: 184 rows contain non-standard subscriber identifiers.",
+    "cellid_405-52-2325-238959217_1.csv: 9 zero-volume sessions.",
+    "cellid_405-52-325-14072_1.csv: 3 sessions have missing volume fields.",
+    "cellid_405-52-325-14072_1.csv: 14 rows contain non-standard subscriber identifiers.",
+    "cellid_405-52-325-14072_1.csv: 1 zero-volume sessions.",
+    "cellid_405-52-325-14073_1.csv: 14 sessions have missing volume fields.",
+    "cellid_405-52-325-14073_1.csv: 58 rows contain non-standard subscriber identifiers.",
+    "cellid_405-52-325-14073_1.csv: 16 zero-volume sessions.",
+    "cellid_405-52-325-22146_1.csv: 2 sessions have missing volume fields.",
+    "cellid_405-52-325-22146_1.csv: 5 rows contain non-standard subscriber identifiers.",
+    "cellid_405-52-325-22146_1.csv: 4 zero-volume sessions.",
+    "cellid_405-52-325-57312_1.csv: 3 sessions have missing volume fields.",
+    "cellid_405-52-325-57312_1.csv: 15 rows contain non-standard subscriber identifiers.",
+    "cellid_405-52-325-57312_1.csv: 2 zero-volume sessions.",
+    "cellid_405-52-325-61541_1.csv: 9 sessions have missing volume fields.",
+    "cellid_405-52-325-61541_1.csv: 21 rows contain non-standard subscriber identifiers.",
+    "cellid_405-52-325-61541_1.csv: 4 zero-volume sessions.",
+    "cellid_405-52-325-61542_1.csv: 3 sessions have missing volume fields.",
+    "cellid_405-52-325-61542_1.csv: 102 rows contain non-standard subscriber identifiers.",
+    "cellid_405-52-325-61542_1.csv: 4 zero-volume sessions."
+  ],
+  "errors": [],
+  "report_fingerprint": {
+    "path": "reports/tower_dump/gprs/Tower_GPRS_Dump_Analysis_DEV-WORKSPACE_20260712_231354_713674.xlsx",
+    "file_name": "Tower_GPRS_Dump_Analysis_DEV-WORKSPACE_20260712_231354_713674.xlsx",
+    "file_size_bytes": 1709148,
+    "sha256": "81d8ce18496cc37165d8f8b199979a1664fdd1c811620120216d44806905507d"
+  },
+  "report_attached_at_utc": "2026-07-12T23:14:06.491000+00:00"
+}

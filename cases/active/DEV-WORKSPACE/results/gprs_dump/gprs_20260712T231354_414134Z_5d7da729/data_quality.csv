@@ -1,0 +1,10 @@
+Check,Rows,Percentage
+Invalid session timestamp/duration,0,0.0
+Missing volume fields,1081,9.1533
+Downlink + Uplink != Total,0,0.0
+Non-standard subscriber identifier,2647,22.4132
+Zero total volume,187,1.5834
+Missing IPv4,2404,20.3556
+Missing IPv6,482,4.0813
+Missing IMEI,0,0.0
+Missing IMSI,0,0.0

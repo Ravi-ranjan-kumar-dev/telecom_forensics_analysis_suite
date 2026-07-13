@@ -1,0 +1,16 @@
+Metric,Value
+Total Sessions,11810.0
+Unique Subscribers,2917.0
+Unique IMEI,2917.0
+Unique IMSI,2917.0
+Unique IPv4,2558.0
+Unique IPv6,3185.0
+Unique CGI,18.0
+Total Data Volume,239571696548.0
+Average Session Seconds,1190.0372565622354
+Longest Session Seconds,7200.0
+Invalid Session Time Rows,0.0
+Missing Volume Rows,1081.0
+Volume Mismatch Rows,0.0
+Non-standard Subscriber Rows,2647.0
+Zero-volume Sessions,187.0

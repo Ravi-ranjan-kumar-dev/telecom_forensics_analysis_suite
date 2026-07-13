@@ -1,0 +1,10 @@
+venv/
+__pycache__/
+*.pyc
+output/
+reports/*.py[cod]
+.venv/
+*.log
+~$*.xlsx
+database/backups/
+database/import_logs/
