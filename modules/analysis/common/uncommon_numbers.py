@@ -36,11 +36,29 @@ def _clean_text_series(series: pd.Series) -> pd.Series:
 
 
 def _safe_datetime_series(series: pd.Series) -> pd.Series:
-    return pd.to_datetime(
+    """Parse datetime safely.
+
+    First try normal/ISO parsing because many telecom-normalized fields are
+    stored as YYYY-MM-DD HH:MM:SS. If some values fail, retry those values with
+    dayfirst=True for Indian DD/MM/YYYY style data.
+    """
+
+    parsed = pd.to_datetime(
         series,
         errors="coerce",
-        dayfirst=True,
     )
+
+    missing_mask = parsed.isna() & series.notna()
+
+    if missing_mask.any():
+        retry = pd.to_datetime(
+            series[missing_mask],
+            errors="coerce",
+            dayfirst=True,
+        )
+        parsed.loc[missing_mask] = retry
+
+    return parsed
 
 
 def _safe_nunique(
