@@ -226,6 +226,65 @@ def _score_row(row: pd.Series) -> tuple[int, str]:
     return 30, "Common or low-priority presence"
 
 
+def _priority_from_row(row: pd.Series) -> tuple[str, str, str]:
+    score = int(row.get("rarity_score", 0) or 0)
+    current_count = int(row.get("current_seen_count", 0) or 0)
+    baseline_count = int(row.get("baseline_seen_count", 0) or 0)
+    cells_seen = int(row.get("cells_seen", 0) or 0)
+    imei_count = int(row.get("imei_count", 0) or 0)
+    imsi_count = int(row.get("imsi_count", 0) or 0)
+
+    if score >= 100 and cells_seen >= 3:
+        return (
+            "HIGH",
+            "Multi-cell uncommon presence",
+            "Verify CCTV route, tower sequence, IMEI/IMSI continuity and field location.",
+        )
+
+    if score >= 100 and current_count >= 100:
+        return (
+            "HIGH",
+            "High activity only in current window",
+            "Verify whether this subscriber is local, visitor, suspect associate, or high-data user.",
+        )
+
+    if score >= 85 and baseline_count <= 2 and current_count >= 5:
+        return (
+            "MEDIUM_HIGH",
+            "Rare baseline presence with repeated current activity",
+            "Check call/IP activity around incident time and compare with known local users.",
+        )
+
+    if cells_seen >= 2:
+        return (
+            "MEDIUM_HIGH",
+            "Seen on multiple cells",
+            "Check movement feasibility and cell coverage overlap.",
+        )
+
+    if imei_count >= 2 or imsi_count >= 2:
+        return (
+            "MEDIUM",
+            "Multiple device/SIM identifiers observed",
+            "Verify IMEI/IMSI mapping and possible SIM/device change.",
+        )
+
+    if score >= 100:
+        return (
+            "MEDIUM",
+            "Window-only presence",
+            "Verify CAF/SDR, address, local status and CCTV relevance.",
+        )
+
+    return (
+        "LOW",
+        "Low-priority uncommon presence",
+        "Keep as secondary lead unless linked with CCTV, device, or other suspects.",
+    )
+
+
+
+
 def find_uncommon_numbers(
     current_dataframe: pd.DataFrame,
     baseline_dataframe: pd.DataFrame | None = None,
@@ -266,6 +325,9 @@ def find_uncommon_numbers(
                 "rarity_score",
                 "reason",
                 "source_module",
+                "priority_level",
+                "rank_reason",
+                "investigation_hint",
             ]
         )
 
@@ -320,6 +382,26 @@ def find_uncommon_numbers(
     ]
 
     result["source_module"] = config.source_module
+
+    priority_values = result.apply(
+        _priority_from_row,
+        axis=1,
+    )
+
+    result["priority_level"] = [
+        priority
+        for priority, _rank_reason, _hint in priority_values
+    ]
+
+    result["rank_reason"] = [
+        rank_reason
+        for _priority, rank_reason, _hint in priority_values
+    ]
+
+    result["investigation_hint"] = [
+        hint
+        for _priority, _rank_reason, hint in priority_values
+    ]
 
     result = result[
         result["rarity_score"] >= min_score
@@ -406,6 +488,8 @@ def print_uncommon_summary(
         for column in [
             "entity",
             "rarity_score",
+            "priority_level",
+            "rank_reason",
             "reason",
             "current_seen_count",
             "baseline_seen_count",
@@ -414,6 +498,7 @@ def print_uncommon_summary(
             "cells_seen",
             "imei_count",
             "imsi_count",
+            "investigation_hint",
             "source_module",
         ]
         if column in uncommon_dataframe.columns
