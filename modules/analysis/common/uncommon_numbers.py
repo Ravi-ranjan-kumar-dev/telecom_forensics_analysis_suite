@@ -32,8 +32,7 @@ def _clean_text_series(series: pd.Series) -> pd.Series:
                 "NONE": pd.NA,
             }
         )
-    )
-
+)
 
 def _safe_datetime_series(series: pd.Series) -> pd.Series:
     """Parse datetime safely.
