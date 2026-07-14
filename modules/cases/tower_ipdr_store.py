@@ -22,7 +22,8 @@ CORE_TABLES = (
     "imsi_summary", "imsi_cell_presence", "source_ip_summary", "translated_ip_summary",
     "destination_ip_summary", "destination_port_summary", "destination_endpoint_summary",
     "apn_summary", "roaming_summary", "cell_movement_summary", "hourly_activity",
-    "data_quality", "normalized_events", "rejected_rows",
+    "data_quality", "uncommon_priority_summary", "uncommon_numbers",
+    "normalized_events", "rejected_rows",
 )
 PARTITION_TABLES = (
     "partition_windows", "partition_summary", "partition_status", "actual_event_hits",

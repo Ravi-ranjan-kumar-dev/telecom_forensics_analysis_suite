@@ -6,6 +6,8 @@ from typing import Any
 
 import pandas as pd
 
+from modules.analysis.toweripdr import analysis
+
 
 def _print_table(title: str, dataframe: Any, limit: int = 20) -> None:
     print("\n" + "=" * 90)
@@ -42,6 +44,16 @@ def print_tower_ipdr_analysis(
     _print_table("TOP DESTINATION IP", analysis.get("destination_ip_summary"), row_limit)
     _print_table("TOP DESTINATION PORT", analysis.get("destination_port_summary"), row_limit)
     _print_table("DATA QUALITY", analysis.get("data_quality"), 100)
+    _print_table(
+          "UNCOMMON PRIORITY SUMMARY",
+          analysis.get("uncommon_priority_summary"),
+          20,
+      )
+    _print_table(
+          "TOP UNCOMMON NUMBERS",
+          analysis.get("uncommon_numbers"),
+          row_limit,
+      )
 
 
 def print_tower_ipdr_partition(

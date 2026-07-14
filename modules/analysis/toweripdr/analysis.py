@@ -5,6 +5,11 @@ from __future__ import annotations
 from typing import Any
 
 import pandas as pd
+from modules.analysis.common.uncommon_numbers import (
+    UncommonNumberConfig,
+    find_uncommon_numbers,
+    split_current_and_baseline_by_window,
+)
 
 from modules.analysis.partition_scope import (
     cell_mask,
@@ -460,23 +465,199 @@ def _quality_table(df: pd.DataFrame) -> pd.DataFrame:
     )
 
 
+def _empty_uncommon_numbers() -> pd.DataFrame:
+    return pd.DataFrame(
+        columns=[
+            "entity",
+            "current_seen_count",
+            "baseline_seen_count",
+            "first_seen",
+            "last_seen",
+            "cells_seen",
+            "imei_count",
+            "imsi_count",
+            "rarity_score",
+            "priority_level",
+            "rank_reason",
+            "reason",
+            "investigation_hint",
+            "source_module",
+        ]
+    )
+
+
+def _uncommon_priority_summary(uncommon: pd.DataFrame) -> pd.DataFrame:
+    if not isinstance(uncommon, pd.DataFrame) or uncommon.empty:
+        return pd.DataFrame(
+            columns=[
+                "priority_level",
+                "candidate_count",
+            ]
+        )
+
+    if "priority_level" not in uncommon.columns:
+        return pd.DataFrame(
+            columns=[
+                "priority_level",
+                "candidate_count",
+            ]
+        )
+
+    priority_order = {
+        "HIGH": 1,
+        "MEDIUM_HIGH": 2,
+        "MEDIUM": 3,
+        "LOW": 4,
+    }
+
+    summary = (
+        uncommon.groupby("priority_level")
+        .size()
+        .reset_index(name="candidate_count")
+    )
+
+    summary["_sort"] = (
+        summary["priority_level"]
+        .map(priority_order)
+        .fillna(99)
+        .astype(int)
+    )
+
+    return (
+        summary.sort_values("_sort")
+        .drop(columns=["_sort"])
+        .reset_index(drop=True)
+    )
+
+
+def _tower_ipdr_uncommon_numbers(
+    df: pd.DataFrame,
+    *,
+    window_start: str | None = None,
+    window_end: str | None = None,
+) -> pd.DataFrame:
+    """Build uncommon subscriber leads for a CCTV/incident window.
+
+    Without a window, this returns an empty table because uncommon presence
+    needs a current-window vs baseline comparison.
+    """
+
+    required_columns = {
+        "subscriber_number",
+        "event_time",
+    }
+
+    if (
+        not isinstance(df, pd.DataFrame)
+        or df.empty
+        or not required_columns.issubset(df.columns)
+        or not window_start
+        or not window_end
+    ):
+        return _empty_uncommon_numbers()
+
+    current, baseline = split_current_and_baseline_by_window(
+        df,
+        time_col="event_time",
+        window_start=window_start,
+        window_end=window_end,
+    )
+
+    config = UncommonNumberConfig(
+        entity_col="subscriber_number",
+        time_col="event_time",
+        cell_col="searched_cell_id" if "searched_cell_id" in df.columns else None,
+        imei_col="imei" if "imei" in df.columns else None,
+        imsi_col="imsi" if "imsi" in df.columns else None,
+        source_module="tower_ipdr",
+    )
+
+    return find_uncommon_numbers(
+        current,
+        baseline,
+        config=config,
+        min_score=50,
+    )
+
+def _normalise_identity_columns(df: pd.DataFrame) -> pd.DataFrame:
+    """Keep telecom identifiers as strings for safe grouping/merge.
+
+    CSV/DuckDB/Excel can infer subscriber numbers or ports as numeric values.
+    For forensic analysis these are identifiers, not mathematical numbers.
+    """
+
+    if not isinstance(df, pd.DataFrame) or df.empty:
+        return df
+
+    identity_columns = [
+        "subscriber_number",
+        "subscriber_number_raw",
+        "identifier_type",
+        "user_id",
+        "imei",
+        "imei_raw",
+        "imsi",
+        "imsi_raw",
+        "searched_cell_id",
+        "first_cell_id",
+        "last_cell_id",
+        "source_ip",
+        "source_ip_raw",
+        "translated_ip",
+        "translated_ip_raw",
+        "destination_ip",
+        "destination_ip_raw",
+        "source_port",
+        "translated_port",
+        "destination_port",
+        "operator",
+        "source_format",
+        "allocation_key",
+        "allocation_volume_key",
+    ]
+
+    output = df.copy()
+
+    for column in identity_columns:
+        if column in output.columns:
+            output[column] = (
+                output[column]
+                .astype("string")
+                .fillna("")
+                .str.strip()
+            )
+
+    return output
+
+
 def run_tower_ipdr_analysis(
     df: pd.DataFrame,
     *,
     file_summary: pd.DataFrame | None = None,
+    uncommon_window_start: str | None = None,
+    uncommon_window_end: str | None = None,
 ) -> dict[str, Any]:
     if not isinstance(df, pd.DataFrame):
         raise TypeError("Tower IPDR pandas DataFrame required hai.")
 
     if df.empty:
         raise ValueError("Tower IPDR DataFrame empty hai.")
-
+    df = _normalise_identity_columns(df)
     allocations = _allocation_records(df)
     subscriber_summary = _subscriber_summary(df, allocations)
     subscriber_cell_presence = _cell_presence(df, "subscriber_number")
     imei_cell_presence = _cell_presence(df, "imei")
     imsi_cell_presence = _cell_presence(df, "imsi")
     total_cells = int(_clean_text(df["searched_cell_id"]).replace("", pd.NA).nunique())
+    uncommon_numbers = _tower_ipdr_uncommon_numbers(
+        df,
+        window_start=uncommon_window_start,
+        window_end=uncommon_window_end,
+    )
+
+    uncommon_priority_summary = _uncommon_priority_summary(
+        uncommon_numbers
+    )
 
     return {
         "summary": _metric_rows(df, allocations),
@@ -508,6 +689,8 @@ def run_tower_ipdr_analysis(
         "normalized_events": df.copy(),
         "record_count": len(df),
         "total_cells": total_cells,
+        "uncommon_numbers": uncommon_numbers,
+        "uncommon_priority_summary": uncommon_priority_summary,
     }
 
 
