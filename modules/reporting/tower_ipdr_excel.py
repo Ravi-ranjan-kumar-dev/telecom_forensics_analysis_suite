@@ -364,7 +364,7 @@ def generate_tower_ipdr_excel_report(
         ("23. Data Quality", analysis.get("data_quality"), "Validation flags without altering raw evidence."),
         ("24. Uncommon Priority", analysis.get("uncommon_priority_summary"), "Priority counts for uncommon subscriber leads."),
         ("25. Uncommon Numbers", analysis.get("uncommon_numbers"), "Window-only or rare subscriber presence ranked for investigation."),
-        ("26. Normalized Events", analysis.get("normalized_events"), "Normalized event-level evidence; raw source files remain unchanged."),
+        ("26. Normalized Events Preview", normalized_events_preview, "Preview only: first 5,000 normalized events. Complete normalized evidence remains saved in backend CSV."),
         ("27. Rejected Rows", analysis.get("rejected_rows"), "Malformed/non-data rows quarantined with physical source-line provenance."),
     ]
 
