@@ -407,17 +407,35 @@ def find_uncommon_numbers(
         result["rarity_score"] >= min_score
     ].copy()
 
+    priority_order = {
+        "HIGH": 1,
+        "MEDIUM_HIGH": 2,
+        "MEDIUM": 3,
+        "LOW": 4,
+    }
+
+    result["_priority_rank"] = (
+        result["priority_level"]
+        .map(priority_order)
+        .fillna(99)
+        .astype(int)
+    )
+
     result = result.sort_values(
         by=[
+            "_priority_rank",
             "rarity_score",
             "current_seen_count",
             "baseline_seen_count",
         ],
         ascending=[
+            True,
             False,
             False,
             True,
         ],
+    ).drop(
+        columns=["_priority_rank"]
     ).reset_index(drop=True)
 
     return result
