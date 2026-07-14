@@ -27,11 +27,30 @@ def _clean_text(series: pd.Series) -> pd.Series:
     )
 
 
-def _joined_unique(series: pd.Series, limit: int = 30) -> str:
-    values = sorted({value for value in _clean_text(series) if value})
+def _joined_unique(series: pd.Series, limit: int = 10) -> str:
+    """Return a small, readable list of unique values.
 
-    if len(values) > limit:
-        return ", ".join(values[:limit]) + f" ... (+{len(values) - limit})"
+    Large Tower IPDR dumps can contain thousands of values per group.
+    Sorting and joining all values makes subscriber summary very slow.
+    For console/Excel summary, keep only first few unique values and mark
+    overflow with "...".
+    """
+
+    values: list[str] = []
+    seen: set[str] = set()
+    max_values = max(1, int(limit))
+
+    for value in _clean_text(series):
+        if not value or value in seen:
+            continue
+
+        seen.add(value)
+
+        if len(values) < max_values:
+            values.append(value)
+        else:
+            values.append("...")
+            break
 
     return ", ".join(values)
 
