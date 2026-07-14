@@ -15,6 +15,23 @@ from pathlib import Path
 from typing import Any
 
 import pandas as pd
+
+TOWER_IPDR_EXCEL_PREVIEW_ROWS = 5000
+
+
+def _excel_preview(dataframe, max_rows: int = TOWER_IPDR_EXCEL_PREVIEW_ROWS):
+    """Return Excel-safe preview data.
+
+    Full forensic evidence remains preserved in backend CSV files.
+    Excel should contain summaries and limited previews only.
+    """
+
+    if isinstance(dataframe, pd.DataFrame) and len(dataframe) > max_rows:
+        return dataframe.head(max_rows).copy()
+
+    return dataframe
+
+
 from openpyxl import Workbook
 from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 from openpyxl.utils import get_column_letter
@@ -316,6 +333,11 @@ def generate_tower_ipdr_excel_report(
     )
     overview.freeze_panes = "A4"
     overview.sheet_view.showGridLines = False
+
+    normalized_events_preview = _excel_preview(
+        analysis.get("normalized_events"),
+        max_rows=TOWER_IPDR_EXCEL_PREVIEW_ROWS,
+    )
 
     tables = [
         ("2. Source Files", load_result.get("file_summary"), "Loaded Jio CELL ID_IPDRNAT files and diagnostics."),
