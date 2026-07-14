@@ -439,21 +439,21 @@ def generate_tower_ipdr_excel_report(
     ]
 
     partition_tables = [
-        ("26. Partition Windows", "partition_windows", "User-entered date/time, resolved CGI scope and automatic ±10-minute windows."),
-        ("27. Partition Summary", "partition_summary", "Time-and-location scoped actual-event and allocation-overlap counts."),
-        ("28. Partition Status", "partition_status", "Valid, time-only and rejected sighting configurations."),
-        ("29. Actual Event Hits", "actual_event_hits", "Events matching both the CCTV window and resolved searched cell."),
-        ("30. Actual Location Exclusions", "actual_time_only_excluded_by_location", "Time-matching events excluded because searched cell did not match."),
-        ("31. Event Presence", "event_subscriber_presence", "Subscriber presence across valid actual-event partitions."),
-        ("32. Event N-of-M", "event_n_of_m_candidates", "Actual-event candidates present in the configured minimum valid partitions."),
-        ("33. Event Strict Common", "event_strict_common_candidates", "Actual-event candidates present in all valid partitions."),
-        ("34. Allocation Hits", "allocation_overlap_hits", "Allocation records matching both overlap time and searched cell."),
-        ("35. Allocation Location Exclusions", "allocation_time_only_excluded_by_location", "Allocation overlaps excluded because searched cell did not match."),
-        ("36. Allocation Presence", "allocation_subscriber_presence", "Subscriber presence across valid allocation-overlap partitions."),
-        ("37. Allocation N-of-M", "allocation_n_of_m_candidates", "Allocation candidates present in the configured minimum valid partitions."),
-        ("38. Allocation Strict", "allocation_strict_common_candidates", "Allocation candidates present in all valid partitions."),
-        ("39. IMEI Event Presence", "imei_event_presence", "IMEI continuity across valid actual-event partitions."),
-        ("40. IMSI Event Presence", "imsi_event_presence", "IMSI continuity across valid actual-event partitions."),
+        ("28. Partition Windows", "partition_windows", "User-entered date/time, resolved CGI scope and automatic ±10-minute windows."),
+        ("29. Partition Summary", "partition_summary", "Time-and-location scoped actual-event and allocation-overlap counts."),
+        ("30. Partition Status", "partition_status", "Valid, time-only and rejected sighting configurations."),
+        ("31. Actual Event Hits", "actual_event_hits", "Events matching both the CCTV window and resolved searched cell."),
+        ("32. Actual Location Exclusions", "actual_time_only_excluded_by_location", "Time-matching events excluded because searched cell did not match."),
+        ("33. Event Presence", "event_subscriber_presence", "Subscriber presence across valid actual-event partitions."),
+        ("34. Event N-of-M", "event_n_of_m_candidates", "Actual-event candidates present in the configured minimum valid partitions."),
+        ("35. Event Strict Common", "event_strict_common_candidates", "Actual-event candidates present in all valid partitions."),
+        ("36. Allocation Hits", "allocation_overlap_hits", "Allocation records matching both overlap time and searched cell."),
+        ("37. Allocation Location Exclusions", "allocation_time_only_excluded_by_location", "Allocation overlaps excluded because searched cell did not match."),
+        ("38. Allocation Presence", "allocation_subscriber_presence", "Subscriber presence across valid allocation-overlap partitions."),
+        ("39. Allocation N-of-M", "allocation_n_of_m_candidates", "Allocation candidates present in the configured minimum valid partitions."),
+        ("40. Allocation Strict", "allocation_strict_common_candidates", "Allocation candidates present in all valid partitions."),
+        ("41. IMEI Event Presence", "imei_event_presence", "IMEI continuity across valid actual-event partitions."),
+        ("42. IMSI Event Presence", "imsi_event_presence", "IMSI continuity across valid actual-event partitions."),
     ]
 
     for name, dataframe, subtitle in tables:
@@ -501,10 +501,10 @@ def generate_tower_ipdr_excel_report(
             },
         ]
     )
-    _write_table(workbook, "37. Analysis Status", status, subtitle="Execution status for this report.")
+    _write_table(workbook, "43. Analysis Status", status, subtitle="Execution status for this report.")
     warning_names = _write_table(
         workbook,
-        "38. Warnings",
+        "44. Warnings",
         _warnings(load_result),
         subtitle="Loader warnings and mandatory interpretation notes.",
     )
