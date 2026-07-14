@@ -197,14 +197,9 @@ def _execute(
         if not isinstance(dataframe, pd.DataFrame) or dataframe.empty:
             raise ValueError("Normalized Tower IPDR DataFrame unavailable.")
 
-        analysis = run_tower_ipdr_analysis(
-            dataframe,
-            file_summary=load_result.get("file_summary"),
-        )
-        analysis["rejected_rows"] = load_result.get("rejected_rows", pd.DataFrame())
-        print_tower_ipdr_analysis(analysis, row_limit=20)
-
-        partition = None
+        sightings: list[dict[str, Any]] = []
+        uncommon_window_start = None
+        uncommon_window_end = None
 
         if use_partitions:
             sightings = list_sightings(case_id)
@@ -212,6 +207,27 @@ def _execute(
             if not sightings:
                 raise CaseError("CCTV date-time windows configured nahi hain.")
 
+            for sighting in sightings:
+                window_start = sighting.get("window_start")
+                window_end = sighting.get("window_end")
+
+                if window_start and window_end:
+                    uncommon_window_start = str(window_start)
+                    uncommon_window_end = str(window_end)
+                    break
+
+        analysis = run_tower_ipdr_analysis(
+            dataframe,
+            file_summary=load_result.get("file_summary"),
+            uncommon_window_start=uncommon_window_start,
+            uncommon_window_end=uncommon_window_end,
+        )
+        analysis["rejected_rows"] = load_result.get("rejected_rows", pd.DataFrame())
+        print_tower_ipdr_analysis(analysis, row_limit=20)
+
+        partition = None
+
+        if use_partitions:
             partition = create_tower_ipdr_partitions(
                 dataframe,
                 sightings=sightings,
