@@ -32,6 +32,76 @@ def _excel_preview(dataframe, max_rows: int = TOWER_IPDR_EXCEL_PREVIEW_ROWS):
     return dataframe
 
 
+DETAIL_SHEET_KEYWORDS = (
+    "allocation records",
+    "subscribers",
+    "subscriber cell matrix",
+    "multi cell candidates",
+    "all cell candidates",
+    "imei summary",
+    "imei cell matrix",
+    "imsi summary",
+    "imsi cell matrix",
+    "source ip",
+    "nat ip",
+    "destination ip",
+    "destination ports",
+    "destination endpoints",
+    "uncommon numbers",
+    "normalized events",
+    "rejected rows",
+    "actual event hits",
+    "actual location exclusions",
+    "event presence",
+    "event n-of-m",
+    "event strict common",
+    "allocation hits",
+    "allocation location exclusions",
+    "allocation presence",
+    "allocation n-of-m",
+    "allocation strict",
+    "imei event presence",
+    "imsi event presence",
+)
+
+
+def _should_preview_sheet(sheet_name: str) -> bool:
+    """Return True for large/detail sheets that should be Excel-previewed."""
+
+    name = str(sheet_name or "").lower()
+
+    return any(
+        keyword in name
+        for keyword in DETAIL_SHEET_KEYWORDS
+    )
+
+
+def _excel_frame_for_sheet(sheet_name: str, dataframe):
+    frame = _frame(dataframe)
+
+    if _should_preview_sheet(sheet_name):
+        return _excel_preview(frame)
+
+    return frame
+
+
+def _excel_subtitle_for_sheet(sheet_name: str, dataframe, subtitle: str) -> str:
+    frame = _frame(dataframe)
+
+    if (
+        _should_preview_sheet(sheet_name)
+        and isinstance(frame, pd.DataFrame)
+        and len(frame) > TOWER_IPDR_EXCEL_PREVIEW_ROWS
+    ):
+        return (
+            f"{subtitle} Preview only: first "
+            f"{TOWER_IPDR_EXCEL_PREVIEW_ROWS:,} rows are shown in Excel; "
+            "complete table remains saved in backend CSV."
+        )
+
+    return subtitle
+
+
 from openpyxl import Workbook
 from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 from openpyxl.utils import get_column_letter
@@ -387,11 +457,25 @@ def generate_tower_ipdr_excel_report(
     ]
 
     for name, dataframe, subtitle in tables:
-        _write_table(workbook, name, _frame(dataframe), subtitle=subtitle)
+        _write_table(
+            workbook,
+            name,
+            _excel_frame_for_sheet(name, dataframe),
+            subtitle=_excel_subtitle_for_sheet(name, dataframe, subtitle),
+        )
 
     for name, key, subtitle in partition_tables:
-        dataframe = _frame(partition.get(key)) if isinstance(partition, dict) else pd.DataFrame()
-        _write_table(workbook, name, dataframe, subtitle=subtitle)
+        dataframe = (
+            partition.get(key)
+            if isinstance(partition, dict)
+            else pd.DataFrame()
+        )
+        _write_table(
+            workbook,
+            name,
+            _excel_frame_for_sheet(name, dataframe),
+            subtitle=_excel_subtitle_for_sheet(name, dataframe, subtitle),
+        )
 
     status = pd.DataFrame(
         [
