@@ -8,3 +8,9 @@ reports/*.py[cod]
 ~$*.xlsx
 database/backups/
 database/import_logs/
+
+# Runtime case staging / generated analysis databases
+cases/active/*/staging/
+*.duckdb
+*.duckdb.wal
+*.parquet
