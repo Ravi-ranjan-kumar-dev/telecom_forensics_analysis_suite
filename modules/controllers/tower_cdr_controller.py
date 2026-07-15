@@ -108,7 +108,7 @@ def _print_sightings(case_id: str) -> None:
         print(
             f"{index:<4}"
             f"{str(item.get('sighting_id', '')):<8}"
-            f"{str(item.get('partition_timestamp', '')):<24}"
+            f"{str(item.get('cctv_timestamp', '')):<24}"
             f"{str(item.get('window_start', '')):<24}"
             f"{str(item.get('window_end', '')):<24}"
         )
@@ -454,7 +454,7 @@ def _show_latest(case_id: str) -> None:
     for item in manifest.get("partition_summary", []):
         print(
             f"- {item.get('sighting_id')} | "
-            f"{item.get('partition_timestamp')} | "
+            f"{item.get('cctv_timestamp')} | "
             f"records={item.get('filtered_records', 0)} | "
             f"subscribers={item.get('unique_subscribers', 0)} | "
             f"cells={item.get('unique_searched_cells', 0)}"

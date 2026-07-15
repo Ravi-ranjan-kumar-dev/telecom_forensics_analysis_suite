@@ -442,7 +442,7 @@ def generate_tower_ipdr_excel_report(
         ("28. Partition Windows", "partition_windows", "User-entered date/time, resolved CGI scope and automatic ±10-minute windows."),
         ("29. Partition Summary", "partition_summary", "Time-and-location scoped actual-event and allocation-overlap counts."),
         ("30. Partition Status", "partition_status", "Valid, time-only and rejected sighting configurations."),
-        ("31. Actual Event Hits", "actual_event_hits", "Events matching both the CCTV window and resolved searched cell."),
+        ("31. Actual Event Hits", "actual_event_hits", "Events matching both the date-time partition and resolved searched cell."),
         ("32. Actual Location Exclusions", "actual_time_only_excluded_by_location", "Time-matching events excluded because searched cell did not match."),
         ("33. Event Presence", "event_subscriber_presence", "Subscriber presence across valid actual-event partitions."),
         ("34. Event N-of-M", "event_n_of_m_candidates", "Actual-event candidates present in the configured minimum valid partitions."),

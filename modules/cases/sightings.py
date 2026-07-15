@@ -173,8 +173,8 @@ def save_sighting(
     sighting_id: str,
     location_name: str,
     cctv_timestamp: str | datetime,
-    minutes_before: int = 10,
-    minutes_after: int = 10,
+    minutes_before: int = 0,
+    minutes_after: int = 0,
     cgi_group_id: str,
     source_types: list[str] | None = None,
     notes: str = "",
@@ -278,8 +278,8 @@ def replace_simple_sightings(
     case_id: str,
     date_time_pairs: list[tuple[str, str]],
     *,
-    minutes_before: int = 10,
-    minutes_after: int = 10,
+    minutes_before: int = 0,
+    minutes_after: int = 0,
 ) -> list[dict[str, Any]]:
     ensure_case_writable(case_id)
     before, after = int(minutes_before), int(minutes_after)

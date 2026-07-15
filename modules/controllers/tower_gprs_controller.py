@@ -151,7 +151,7 @@ def _print_sightings(case_id: str) -> None:
         print(
             f"{index:<4}"
             f"{'P' + str(index):<12}"
-            f"{str(item.get('partition_timestamp', '')):<24}"
+            f"{str(item.get('cctv_timestamp', '')):<24}"
             f"{str(item.get('window_start', '')):<24}"
             f"{str(item.get('window_end', '')):<24}"
         )

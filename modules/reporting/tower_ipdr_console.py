@@ -61,7 +61,7 @@ def print_tower_ipdr_partition(
     *,
     row_limit: int = 50,
 ) -> None:
-    _print_table("CCTV PARTITION WINDOWS", partition.get("partition_windows"), 100)
+    _print_table("DATA TIME PARTITIONS", partition.get("partition_windows"), 100)
     _print_table("PARTITION SUMMARY", partition.get("partition_summary"), 100)
     _print_table(
         "ACTUAL EVENT N-OF-M CANDIDATES",
