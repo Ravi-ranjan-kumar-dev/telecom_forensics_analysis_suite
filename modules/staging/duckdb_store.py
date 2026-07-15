@@ -124,7 +124,7 @@ class DuckDBStore:
         sql: str,
         parameters: Iterable | None = None,
     ) -> pd.DataFrame:
-        with duckdb_connection(self.database_path, read_only=True) as connection:
+        with duckdb_connection(self.database_path, read_only=False) as connection:
             if parameters is None:
                 return connection.execute(sql).fetchdf()
 
