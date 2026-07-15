@@ -31,6 +31,16 @@ from modules.cases.tower_ipdr_store import (
 )
 from modules.core.paths import TOWER_IPDR_DUMP_DATA_DIR
 from modules.loader.tower_ipdr_loader import load_tower_ipdr_case
+from modules.staging.tower_ipdr_staging import (
+    count_tower_ipdr_events,
+    import_tower_ipdr_folder_to_duckdb,
+    tower_ipdr_cell_counts,
+    tower_ipdr_database_path,
+    tower_ipdr_manifest_path,
+    tower_ipdr_minute_count,
+    tower_ipdr_time_count,
+    tower_ipdr_uncommon_in_minute,
+)
 from modules.reporting.tower_ipdr_console import (
     print_tower_ipdr_analysis,
     print_tower_ipdr_partition,
@@ -41,22 +51,24 @@ SUPPORTED_SUFFIXES = {".csv", ".txt"}
 
 
 def _menu(case: dict[str, Any]) -> str:
-    print("\n" + "=" * 78)
+    print("" + "=" * 78)
     print(
         f"TOWER IPDR DUMP WORKSPACE | "
         f"{case.get('case_id', '')} | "
         f"{case.get('case_name', '')}"
     )
     print("=" * 78)
-    print("1. Run Complete Multi-Cell Tower IPDR Analysis")
-    print("2. New Date-Time Partition Partition Analysis")
-    print("3. List Current Date-Time Partitions")
-    print("4. Re-run Partition Using Saved Date-Times")
-    print("5. Clear Saved Date-Time Partitions")
-    print("6. View Latest Tower IPDR Run")
+    print("1. Import / Rebuild Tower IPDR Staging")
+    print("2. View Tower IPDR Staging Status")
+    print("3. Create Data-Time Partitions")
+    print("4. List Data-Time Partitions")
+    print("5. Run Exact Data-Time Partition Query")
+    print("6. Run Same-Minute Partition Query")
+    print("7. Run Same-Minute Uncommon Leads")
+    print("8. Legacy Full Pandas Tower IPDR Analysis")
+    print("9. View Latest Legacy Tower IPDR Run")
     print("0. Back to Tower Dump Analysis")
-    return input("\nChoose Action: ").strip()
-
+    return input("Choose Action: ").strip()
 
 def _has_files(directory: Path) -> bool:
     return directory.is_dir() and any(
@@ -76,7 +88,7 @@ def _input_folder(case_id: str) -> Path:
 
 def _collect_date_time_pairs() -> list[tuple[str, str]]:
     print("\n" + "=" * 72)
-    print("ENTER CCTV DATE AND TIME")
+    print("ENTER DATA-TIME PARTITIONS")
     print("=" * 72)
     print("Date example : 11-06-2026")
     print("Time example : 20:10 or 20:10:00")
@@ -109,18 +121,18 @@ def _print_sightings(case_id: str) -> None:
     sightings = list_sightings(case_id)
 
     print("\n" + "=" * 92)
-    print("SAVED CCTV DATE-TIME WINDOWS")
+    print("SAVED DATA-TIME PARTITIONS")
     print("=" * 92)
 
     if not sightings:
-        print("No CCTV date-time configured.")
+        print("No data-time partitions configured.")
         return
 
     print(
         f"{'#':<4}{'Partition':<12}"
         f"{'Partition Time':<24}"
-        f"{'Window Start':<24}"
-        f"{'Window End':<24}"
+        f"{'Start Time':<24}"
+        f"{'End Time':<24}"
     )
     print("-" * 92)
 
@@ -205,7 +217,7 @@ def _execute(
             sightings = list_sightings(case_id)
 
             if not sightings:
-                raise CaseError("CCTV date-time windows configured nahi hain.")
+                raise CaseError("Data-time partitions configured nahi hain.")
 
             for sighting in sightings:
                 window_start = sighting.get("window_start")
@@ -341,14 +353,171 @@ def _new_partition(case: dict[str, Any]) -> dict[str, Any] | None:
         print("[-] Koi date-time enter nahi hua.")
         return None
 
+    case_id = str(case["case_id"])
+
     replace_simple_sightings(
-        str(case["case_id"]),
+        case_id,
         pairs,
         minutes_before=0,
         minutes_after=0,
     )
-    _print_sightings(str(case["case_id"]))
-    return _execute(case, use_partitions=True)
+
+    _print_sightings(case_id)
+    print("[+] Data-time partitions saved. SQL query options 5, 6, 7 se analysis chalayein.")
+
+    return {
+        "case_id": case_id,
+        "partitions": list_sightings(case_id),
+    }
+
+
+def _print_dataframe(title: str, dataframe: pd.DataFrame, *, max_rows: int = 20) -> None:
+    print("\n" + "=" * 78)
+    print(title)
+    print("=" * 78)
+
+    if not isinstance(dataframe, pd.DataFrame) or dataframe.empty:
+        print("No records found.")
+        return
+
+    print(dataframe.head(max_rows).to_string(index=False))
+
+
+def _import_staging(case: dict[str, Any]) -> None:
+    case_id = str(case["case_id"])
+    input_folder = _input_folder(case_id)
+
+    print(f"[+] Tower IPDR staging input folder: {input_folder}")
+
+    summary = import_tower_ipdr_folder_to_duckdb(
+        case_id,
+        input_folder,
+        recursive=True,
+        force_rebuild=True,
+    )
+
+    print("\n" + "=" * 78)
+    print("TOWER IPDR STAGING IMPORT COMPLETED")
+    print("=" * 78)
+    print(f"Candidate Files : {summary.get('candidate_files', 0):,}")
+    print(f"Loaded Files    : {summary.get('loaded_files', 0):,}")
+    print(f"Skipped Files   : {summary.get('skipped_files', 0):,}")
+    print(f"Failed Files    : {summary.get('failed_files', 0):,}")
+    print(f"Rows This Run   : {summary.get('rows_loaded_this_run', 0):,}")
+    print(f"Rows In DB      : {summary.get('total_rows_in_database', 0):,}")
+    print(f"Database        : {summary.get('database_path', '')}")
+    print(f"Manifest        : {summary.get('manifest_path', '')}")
+
+    _print_dataframe(
+        "TOP CELL COUNTS",
+        tower_ipdr_cell_counts(case_id).head(20),
+        max_rows=20,
+    )
+
+
+def _show_staging_status(case_id: str) -> None:
+    database_path = tower_ipdr_database_path(case_id)
+    manifest_path = tower_ipdr_manifest_path(case_id)
+    row_count = count_tower_ipdr_events(case_id)
+
+    print("\n" + "=" * 78)
+    print("TOWER IPDR STAGING STATUS")
+    print("=" * 78)
+    print(f"Database Exists : {database_path.exists()}")
+    print(f"Manifest Exists : {manifest_path.exists()}")
+    print(f"Database Path   : {database_path}")
+    print(f"Manifest Path   : {manifest_path}")
+    print(f"Rows In DB      : {row_count:,}")
+
+    if row_count:
+        _print_dataframe(
+            "TOP CELL COUNTS",
+            tower_ipdr_cell_counts(case_id).head(20),
+            max_rows=20,
+        )
+
+
+def _saved_partition_times(case_id: str) -> list[str]:
+    values: list[str] = []
+
+    for item in list_sightings(case_id):
+        value = (
+            item.get("cctv_timestamp")
+            or item.get("window_start")
+            or ""
+        )
+        value = str(value).strip()
+
+        if value:
+            values.append(value)
+
+    return values
+
+
+def _ask_partition_time(case_id: str) -> str:
+    saved_times = _saved_partition_times(case_id)
+
+    if saved_times:
+        _print_sightings(case_id)
+        print("\nSaved partition number enter karein, ya exact date-time type karein.")
+        print("Blank Enter = first saved partition.")
+
+    value = input("\nData-time partition (number/date-time): ").strip()
+
+    if not value and saved_times:
+        return saved_times[0]
+
+    if value.isdigit() and saved_times:
+        index = int(value)
+
+        if 1 <= index <= len(saved_times):
+            return saved_times[index - 1]
+
+    if not value:
+        raise CaseError("Data-time partition required hai.")
+
+    return value
+
+
+def _run_exact_partition_query(case: dict[str, Any]) -> None:
+    case_id = str(case["case_id"])
+    partition_time = _ask_partition_time(case_id)
+
+    result = tower_ipdr_time_count(case_id, partition_time)
+
+    _print_dataframe(
+        f"EXACT DATA-TIME PARTITION | {partition_time}",
+        result,
+    )
+
+
+def _run_minute_partition_query(case: dict[str, Any]) -> None:
+    case_id = str(case["case_id"])
+    partition_time = _ask_partition_time(case_id)
+
+    result = tower_ipdr_minute_count(case_id, partition_time)
+
+    _print_dataframe(
+        f"SAME-MINUTE DATA-TIME PARTITION | {partition_time}",
+        result,
+    )
+
+
+def _run_minute_uncommon_query(case: dict[str, Any]) -> None:
+    case_id = str(case["case_id"])
+    partition_time = _ask_partition_time(case_id)
+
+    result = tower_ipdr_uncommon_in_minute(
+        case_id,
+        partition_time,
+        limit=50,
+    )
+
+    _print_dataframe(
+        f"SAME-MINUTE UNCOMMON LEADS | {partition_time}",
+        result,
+        max_rows=50,
+    )
 
 
 def _show_latest(case_id: str) -> None:
@@ -400,7 +569,7 @@ def handle_tower_ipdr_workspace(
 
             elif choice == "5":
                 clear_sightings(case_id)
-                print("[+] Saved CCTV date-times cleared.")
+                print("[+] Saved data-time partitions cleared.")
 
             elif choice == "6":
                 _show_latest(case_id)
