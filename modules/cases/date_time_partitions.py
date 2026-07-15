@@ -195,3 +195,75 @@ def print_date_time_parts(case_id: str, workflow: str) -> None:
         print(f"  Start : {part.get('start_time')}")
         print(f"  End   : {part.get('end_time')}")
         print(f"  Meaning: {part.get('simple_meaning')}")
+
+
+def find_overlapping_date_time_parts(parts: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Find overlapping date-time parts for user warning.
+
+    Overlap allowed hai, lekin user ko warning dikhana zaroori hai.
+    """
+
+    warnings: list[dict[str, Any]] = []
+
+    parsed_parts = []
+
+    for part in parts:
+        try:
+            parsed_parts.append(
+                {
+                    "part_no": int(part.get("part_no", 0)),
+                    "part_name": str(part.get("part_name", "")),
+                    "start_time": str(part.get("start_time", "")),
+                    "end_time": str(part.get("end_time", "")),
+                    "start_dt": datetime.strptime(
+                        str(part.get("start_time")),
+                        "%Y-%m-%d %H:%M:%S",
+                    ),
+                    "end_dt": datetime.strptime(
+                        str(part.get("end_time")),
+                        "%Y-%m-%d %H:%M:%S",
+                    ),
+                }
+            )
+        except Exception:
+            continue
+
+    for index, left in enumerate(parsed_parts):
+        for right in parsed_parts[index + 1:]:
+            overlaps = left["start_dt"] < right["end_dt"] and right["start_dt"] < left["end_dt"]
+
+            if overlaps:
+                warnings.append(
+                    {
+                        "left_part": left["part_name"],
+                        "left_range": f"{left['start_time']} to {left['end_time']}",
+                        "right_part": right["part_name"],
+                        "right_range": f"{right['start_time']} to {right['end_time']}",
+                        "message": (
+                            f"{left['part_name']} aur {right['part_name']} ka time period overlap karta hai. "
+                            "Yeh allowed hai, lekin dono parts me kuch same records aa sakte hain."
+                        ),
+                    }
+                )
+
+    return warnings
+
+
+def print_date_time_part_warnings(case_id: str, workflow: str) -> None:
+    payload = load_date_time_parts(case_id, workflow)
+    parts = list(payload.get("parts", []))
+    warnings = find_overlapping_date_time_parts(parts)
+
+    if not warnings:
+        return
+
+    print("\n" + "-" * 78)
+    print("DATE-TIME PART WARNING")
+    print("-" * 78)
+
+    for warning in warnings:
+        print(f"[!] {warning.get('message')}")
+        print(f"    {warning.get('left_part')} : {warning.get('left_range')}")
+        print(f"    {warning.get('right_part')}: {warning.get('right_range')}")
+
+    print("Meaning: Overlap intentional ho sakta hai, lekin report compare karte time dhyan rakhein.")

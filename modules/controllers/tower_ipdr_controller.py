@@ -29,6 +29,13 @@ from modules.cases.tower_ipdr_store import (
     load_latest_tower_ipdr_manifest,
     save_tower_ipdr_run,
 )
+from modules.cases.date_time_partitions import (
+    clear_date_time_parts,
+    list_date_time_parts,
+    print_date_time_parts,
+    print_date_time_part_warnings,
+    save_date_time_parts,
+)
 from modules.core.paths import TOWER_IPDR_DUMP_DATA_DIR
 from modules.loader.tower_ipdr_loader import load_tower_ipdr_case
 from modules.staging.tower_ipdr_staging import (
@@ -40,6 +47,9 @@ from modules.staging.tower_ipdr_staging import (
     tower_ipdr_minute_count,
     tower_ipdr_time_count,
     tower_ipdr_uncommon_in_minute,
+    tower_ipdr_investigation_summary,
+    print_tower_ipdr_investigation_summary,
+    tower_ipdr_range_investigation_summary,
 )
 from modules.reporting.tower_ipdr_console import (
     print_tower_ipdr_analysis,
@@ -48,21 +58,21 @@ from modules.reporting.tower_ipdr_console import (
 
 
 SUPPORTED_SUFFIXES = {".csv", ".txt"}
+TOWER_IPDR_WORKFLOW = "tower_ipdr"
 
 
 def _menu(case: dict[str, Any]) -> str:
     print("" + "=" * 78)
     print(
-        f"TOWER IPDR DUMP WORKSPACE | "
+        f"TOWER IPDR DUMP ANALYSIS | "
         f"{case.get('case_id', '')} | "
         f"{case.get('case_name', '')}"
     )
     print("=" * 78)
-    print("1. Load / Rebuild Tower IPDR Dump")
-    print("2. Date-Time Partitioning")
-    print("3. Run Fast Partition Analysis")
-    print("4. View Staging Status")
-    print("5. Advanced Tools")
+    print("1. Load Dump Data")
+    print("2. Create Date-Time Parts")
+    print("3. Run Part-wise Analysis")
+    print("4. View / Export Report")
     print("0. Back to Tower Dump Analysis")
     return input("Choose Action: ").strip()
 
@@ -136,7 +146,7 @@ def _print_sightings(case_id: str) -> None:
         print(
             f"{index:<4}"
             f"{'P' + str(index):<12}"
-            f"{str(item.get('cctv_timestamp', '')):<24}"
+            f"{str(item.get('date-time_timestamp', '')):<24}"
             f"{str(item.get('window_start', '')):<24}"
             f"{str(item.get('window_end', '')):<24}"
         )
@@ -437,7 +447,7 @@ def _saved_partition_times(case_id: str) -> list[str]:
     values: list[str] = []
 
     for item in list_sightings(case_id):
-        value = item.get("cctv_timestamp") or item.get("window_start") or ""
+        value = item.get("date-time_timestamp") or item.get("window_start") or ""
         value = str(value).strip()
 
         if value:
@@ -543,26 +553,24 @@ def _partition_menu(case: dict[str, Any]) -> None:
 
 def _run_fast_partition_analysis(case: dict[str, Any]) -> None:
     case_id = str(case["case_id"])
+
+    if count_tower_ipdr_events(case_id) <= 0:
+        print("[-] Tower IPDR dump loaded nahi hai.")
+        print("[+] Pehle option 1: Load / Rebuild Tower IPDR Dump chalayein.")
+        return
+
     partition_time = _ask_partition_time(case_id)
 
-    print("\n" + "=" * 78)
-    print(f"FAST DATE-TIME PARTITION ANALYSIS | {partition_time}")
-    print("=" * 78)
-
-    _print_dataframe(
-        "1. EXACT SECOND COUNT",
-        tower_ipdr_time_count(case_id, partition_time),
+    result = tower_ipdr_investigation_summary(
+        case_id,
+        partition_time,
+        mode="same_minute",
+        lead_limit=50,
     )
 
-    _print_dataframe(
-        "2. SAME-MINUTE COUNT",
-        tower_ipdr_minute_count(case_id, partition_time),
-    )
-
-    _print_dataframe(
-        "3. SAME-MINUTE UNCOMMON LEADS",
-        tower_ipdr_uncommon_in_minute(case_id, partition_time, limit=50),
-        max_rows=50,
+    print_tower_ipdr_investigation_summary(
+        result,
+        max_leads=10,
     )
 
 
@@ -597,6 +605,170 @@ def _advanced_menu(case: dict[str, Any]) -> None:
         else:
             print("[-] Invalid choice. Select 0 to 5.")
 
+
+
+def _collect_date_time_ranges() -> list[tuple[str, str]]:
+    print("\n" + "=" * 78)
+    print("CREATE DATE-TIME PARTS")
+    print("=" * 78)
+    print("Har part ke liye Start Date-Time aur End Date-Time enter karein.")
+    print("Example Date : 2026-06-11")
+    print("Example Time : 20:00:00")
+    print()
+    print("Rule:")
+    print("Part 1 Start + Part 1 End = Part 1")
+    print("Part 2 Start + Part 2 End = Part 2")
+    print("Blank Start Date = finish")
+    print("=" * 78)
+
+    ranges: list[tuple[str, str]] = []
+    part_no = 1
+
+    while True:
+        print(f"\nPart {part_no}")
+
+        start_date = input("  Start Date (blank = finish): ").strip()
+        if not start_date:
+            break
+
+        start_time = input("  Start Time: ").strip()
+        if not start_time:
+            print("[-] Start Time required hai. Is part ko dobara enter karein.")
+            continue
+
+        end_date = input("  End Date  : ").strip()
+        if not end_date:
+            print("[-] End Date required hai. Is part ko dobara enter karein.")
+            continue
+
+        end_time = input("  End Time  : ").strip()
+        if not end_time:
+            print("[-] End Time required hai. Is part ko dobara enter karein.")
+            continue
+
+        ranges.append(
+            (
+                f"{start_date} {start_time}",
+                f"{end_date} {end_time}",
+            )
+        )
+        part_no += 1
+
+    return ranges
+
+
+def _create_date_time_parts(case: dict[str, Any]) -> None:
+    case_id = str(case["case_id"])
+
+    ranges = _collect_date_time_ranges()
+
+    if not ranges:
+        print("[-] Koi Date-Time Part enter nahi kiya gaya.")
+        return
+
+    payload = save_date_time_parts(
+        case_id,
+        TOWER_IPDR_WORKFLOW,
+        ranges,
+    )
+
+    print_date_time_parts(case_id, TOWER_IPDR_WORKFLOW)
+    print_date_time_part_warnings(case_id, TOWER_IPDR_WORKFLOW)
+
+    print("\n[+] Date-Time Parts saved.")
+    print(f"[+] Total Parts: {payload.get('parts_count', 0)}")
+    print("[+] Ab option 3: Run Part-wise Analysis chalayein.")
+
+
+def _run_partwise_analysis(case: dict[str, Any]) -> None:
+    case_id = str(case["case_id"])
+    parts = list_date_time_parts(case_id, TOWER_IPDR_WORKFLOW)
+
+    if not parts:
+        print("[-] Date-Time Parts saved nahi hain.")
+        print("[+] Pehle option 2: Create Date-Time Parts chalayein.")
+        return
+
+    if count_tower_ipdr_events(case_id) <= 0:
+        print("[-] Tower IPDR dump loaded nahi hai.")
+        print("[+] Pehle option 1: Load Dump Data chalayein.")
+        return
+
+    print_date_time_parts(case_id, TOWER_IPDR_WORKFLOW)
+
+    print("" + "=" * 78)
+    print("RUN PART-WISE ANALYSIS")
+    print("=" * 78)
+    print("A. Analyze All Parts")
+    print("0. Back")
+
+    for part in parts:
+        print(
+            f"{part.get('part_no')}. "
+            f"{part.get('part_name')} | "
+            f"{part.get('start_time')} to {part.get('end_time')}"
+        )
+
+    choice = input("Choose Part Number or A: ").strip().lower()
+
+    if choice == "0":
+        return
+
+    selected_parts = []
+
+    if choice == "a":
+        selected_parts = parts
+    else:
+        try:
+            selected_no = int(choice)
+        except ValueError:
+            print("[-] Invalid choice.")
+            return
+
+        selected_parts = [
+            part for part in parts
+            if int(part.get("part_no", -1)) == selected_no
+        ]
+
+        if not selected_parts:
+            print("[-] Selected part nahi mila.")
+            return
+
+    for part in selected_parts:
+        print("" + "#" * 78)
+        print(f"{part.get('part_name')} ANALYSIS")
+        print("#" * 78)
+        print(f"Period: {part.get('start_time')} to {part.get('end_time')}")
+
+        result = tower_ipdr_range_investigation_summary(
+            case_id,
+            str(part.get("start_time")),
+            str(part.get("end_time")),
+            lead_limit=50,
+        )
+
+        print_tower_ipdr_investigation_summary(
+            result,
+            max_leads=10,
+        )
+
+
+def _view_or_export_report(case: dict[str, Any]) -> None:
+    case_id = str(case["case_id"])
+
+    print("\n" + "=" * 78)
+    print("VIEW / EXPORT REPORT")
+    print("=" * 78)
+
+    parts = list_date_time_parts(case_id, TOWER_IPDR_WORKFLOW)
+
+    if parts:
+        print("[+] Current Date-Time Parts:")
+        print_date_time_parts(case_id, TOWER_IPDR_WORKFLOW)
+    else:
+        print("[-] Date-Time Parts available nahi hain.")
+
+    print("\n[+] Report export part-wise analysis ke baad available hoga.")
 
 def _show_latest(case_id: str) -> None:
     manifest = load_latest_tower_ipdr_manifest(case_id)
@@ -634,29 +806,22 @@ def handle_tower_ipdr_workspace(
             choice = _menu(case)
 
             if choice == "1":
-                _execute(case, use_partitions=False)
+                _import_staging(case)
 
             elif choice == "2":
-                _new_partition(case)
+                _create_date_time_parts(case)
 
             elif choice == "3":
-                _print_sightings(case_id)
+                _run_partwise_analysis(case)
 
             elif choice == "4":
-                _execute(case, use_partitions=True)
-
-            elif choice == "5":
-                clear_sightings(case_id)
-                print("[+] Saved date-time partitions cleared.")
-
-            elif choice == "6":
-                _show_latest(case_id)
+                _view_or_export_report(case)
 
             elif choice == "0":
                 return None
 
             else:
-                print("[-] Invalid choice. Select 0 to 6.")
+                print("[-] Invalid choice. Select 0 to 4.")
 
         except KeyboardInterrupt:
             print("\n[-] Returning to Tower IPDR workspace.")
