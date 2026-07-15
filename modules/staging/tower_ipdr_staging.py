@@ -1268,3 +1268,110 @@ def print_tower_ipdr_investigation_summary(
     print("4. Compare with CCTV, field input, suspect route and tower location.")
     print("5. Do not conclude only from tower/IPDR presence; corroboration is required.")
     print("=" * 78)
+
+
+def _safe_report_name(value: str) -> str:
+    import re
+
+    text = str(value).strip()
+    text = text.replace(":", "-").replace(" ", "_")
+    text = re.sub(r"[^A-Za-z0-9_.-]+", "_", text)
+    return text.strip("_") or "partition"
+
+
+def tower_ipdr_fast_report_root(case_id: str) -> Path:
+    return (
+        Path("cases")
+        / "active"
+        / str(case_id)
+        / "reports"
+        / "tower_dump"
+        / "ipdr"
+        / "fast_partition"
+    )
+
+
+def export_tower_ipdr_investigation_summary(
+    case_id: str,
+    partition_time: str,
+    *,
+    mode: str = "same_minute",
+    lead_limit: int = 50,
+    max_leads_in_text: int = 20,
+) -> dict[str, Any]:
+    """Export fast Tower IPDR partition result for case record.
+
+    Exports:
+    - simple officer-friendly TXT summary
+    - detailed CSV tables
+    - manifest.json
+    """
+
+    import io
+    from contextlib import redirect_stdout
+
+    result = tower_ipdr_investigation_summary(
+        case_id,
+        partition_time,
+        mode=mode,
+        lead_limit=lead_limit,
+    )
+
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    safe_partition = _safe_report_name(partition_time)
+    run_id = f"tower_ipdr_fast_partition_{safe_partition}_{timestamp}"
+
+    output_dir = tower_ipdr_fast_report_root(case_id) / run_id
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    saved_files: dict[str, str] = {}
+
+    for name, dataframe in result.items():
+        if not isinstance(dataframe, pd.DataFrame):
+            continue
+
+        csv_path = output_dir / f"{name}.csv"
+        dataframe.to_csv(csv_path, index=False)
+        saved_files[name] = str(csv_path)
+
+    buffer = io.StringIO()
+
+    with redirect_stdout(buffer):
+        print_tower_ipdr_investigation_summary(
+            result,
+            max_leads=max_leads_in_text,
+        )
+
+    text_path = output_dir / "investigation_summary.txt"
+    text_path.write_text(buffer.getvalue(), encoding="utf-8")
+    saved_files["investigation_summary_text"] = str(text_path)
+
+    manifest = {
+        "case_id": str(case_id),
+        "run_id": run_id,
+        "created_at": _now_iso(),
+        "partition_time": str(partition_time),
+        "analysis_mode": str(mode),
+        "lead_limit": int(lead_limit),
+        "max_leads_in_text": int(max_leads_in_text),
+        "output_dir": str(output_dir),
+        "saved_files": saved_files,
+        "note": (
+            "Fast Tower IPDR partition report generated from DuckDB staging. "
+            "Results are investigation leads and require verification."
+        ),
+    }
+
+    manifest_path = output_dir / "manifest.json"
+    manifest_path.write_text(
+        json.dumps(
+            _json_safe(manifest),
+            ensure_ascii=False,
+            indent=2,
+            sort_keys=True,
+        ),
+        encoding="utf-8",
+    )
+    saved_files["manifest"] = str(manifest_path)
+
+    return manifest
