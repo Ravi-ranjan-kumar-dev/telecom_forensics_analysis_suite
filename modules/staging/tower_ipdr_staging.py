@@ -2001,6 +2001,26 @@ def export_tower_ipdr_partwise_range_report(
         )
         print("", file=text_buffer)
 
+    comparison = tower_ipdr_compare_date_time_parts(
+        case_id,
+        parts,
+        lead_limit=lead_limit,
+    )
+
+    for table_name, dataframe in comparison.items():
+        if not isinstance(dataframe, pd.DataFrame):
+            continue
+
+        csv_path = output_dir / f"comparison_{table_name}.csv"
+        dataframe.to_csv(csv_path, index=False)
+        saved_files[f"comparison_{table_name}"] = str(csv_path)
+
+    with redirect_stdout(text_buffer):
+        print_tower_ipdr_part_comparison_summary(
+            comparison,
+            max_rows=max_leads_in_text,
+        )
+
     for part in parts:
         part_no = int(part.get("part_no", 0))
         part_name = str(part.get("part_name") or f"Part {part_no}")
@@ -2111,3 +2131,340 @@ def export_tower_ipdr_partwise_range_report(
     saved_files["manifest"] = str(manifest_path)
 
     return manifest
+
+
+def _simple_join_unique(values: Any) -> str:
+    cleaned = []
+
+    for value in values:
+        if value is None:
+            continue
+
+        text = str(value).strip()
+
+        if not text or text.lower() in {"nan", "none"}:
+            continue
+
+        cleaned.append(text)
+
+    return ", ".join(sorted(set(cleaned)))
+
+
+def _priority_sort_value(value: Any) -> int:
+    order = {
+        "High": 1,
+        "Medium-High": 2,
+        "Medium": 3,
+        "Low": 4,
+    }
+    return order.get(str(value), 9)
+
+
+def tower_ipdr_compare_date_time_parts(
+    case_id: str,
+    parts: list[dict[str, Any]],
+    *,
+    lead_limit: int = 200,
+) -> dict[str, pd.DataFrame]:
+    """Compare mobile numbers across saved Date-Time Parts.
+
+    Purpose:
+    - Common across parts
+    - Part-only numbers
+    - Combined priority leads
+    """
+
+    database_path = tower_ipdr_database_path(case_id)
+    store = DuckDBStore(database_path)
+
+    empty = {
+        "comparison_summary": pd.DataFrame(),
+        "part_level_counts": pd.DataFrame(),
+        "common_across_parts": pd.DataFrame(),
+        "part_only_numbers": pd.DataFrame(),
+        "combined_priority_leads": pd.DataFrame(),
+        "all_part_presence": pd.DataFrame(),
+    }
+
+    if not parts or not store.table_exists(TABLE_EVENTS):
+        return empty
+
+    presence_frames: list[pd.DataFrame] = []
+
+    for part in parts:
+        part_no = int(part.get("part_no", 0))
+        part_name = str(part.get("part_name") or f"Part {part_no}")
+        start_time = str(part.get("start_time"))
+        end_time = str(part.get("end_time"))
+
+        dataframe = store.query_df(
+            f"""
+            SELECT
+                ? AS part_no,
+                ? AS part_name,
+                ? AS start_time,
+                ? AS end_time,
+                subscriber_number AS mobile_number,
+                COUNT(*) AS records_found,
+                COUNT(DISTINCT searched_cell_id) AS cells_seen,
+                COUNT(DISTINCT imei) AS imei_count,
+                COUNT(DISTINCT imsi) AS imsi_count,
+                MIN(TRY_CAST(event_time AS TIMESTAMP)) AS first_seen,
+                MAX(TRY_CAST(event_time AS TIMESTAMP)) AS last_seen
+            FROM {TABLE_EVENTS}
+            WHERE TRY_CAST(event_time AS TIMESTAMP) >= CAST(? AS TIMESTAMP)
+              AND TRY_CAST(event_time AS TIMESTAMP) < CAST(? AS TIMESTAMP)
+              AND subscriber_number IS NOT NULL
+              AND subscriber_number <> ''
+            GROUP BY subscriber_number
+            """,
+            [
+                part_no,
+                part_name,
+                start_time,
+                end_time,
+                start_time,
+                end_time,
+            ],
+        )
+
+        if isinstance(dataframe, pd.DataFrame) and not dataframe.empty:
+            presence_frames.append(dataframe)
+
+    if not presence_frames:
+        return empty
+
+    all_part_presence = pd.concat(presence_frames, ignore_index=True)
+    all_part_presence["mobile_number"] = all_part_presence["mobile_number"].astype(str)
+
+    combined_rows: list[dict[str, Any]] = []
+
+    for mobile_number, group in all_part_presence.groupby("mobile_number", dropna=True):
+        total_records = int(group["records_found"].sum())
+        parts_seen_count = int(group["part_no"].nunique())
+        max_cells_seen = int(group["cells_seen"].max())
+        total_part_entries = int(len(group))
+
+        if parts_seen_count >= 2 and max_cells_seen >= 2:
+            priority = "High"
+            confidence = "High"
+            reason = "Seen in multiple Date-Time Parts and more than one searched cell"
+        elif parts_seen_count >= 2:
+            priority = "Medium-High"
+            confidence = "Medium"
+            reason = "Seen in multiple Date-Time Parts"
+        elif max_cells_seen >= 2:
+            priority = "Medium"
+            confidence = "Medium"
+            reason = "Seen in one Date-Time Part but on multiple searched cells"
+        elif total_records >= 10:
+            priority = "Medium"
+            confidence = "Medium"
+            reason = "High activity in one Date-Time Part"
+        else:
+            priority = "Low"
+            confidence = "Low"
+            reason = "Seen in one Date-Time Part with limited records"
+
+        combined_rows.append(
+            {
+                "mobile_number": mobile_number,
+                "parts_seen_count": parts_seen_count,
+                "parts_seen": _simple_join_unique(group["part_name"].tolist()),
+                "part_ranges": _simple_join_unique(
+                    [
+                        f"{row.start_time} to {row.end_time}"
+                        for row in group.itertuples(index=False)
+                    ]
+                ),
+                "total_records": total_records,
+                "max_cells_seen_in_any_part": max_cells_seen,
+                "max_imei_count_in_any_part": int(group["imei_count"].max()),
+                "max_imsi_count_in_any_part": int(group["imsi_count"].max()),
+                "first_seen": group["first_seen"].min(),
+                "last_seen": group["last_seen"].max(),
+                "priority": priority,
+                "confidence_level": confidence,
+                "simple_reason": reason,
+                "suggested_action": (
+                    "Verify with CDR/SDR/CAF, IMEI/IMSI, tower location and field information."
+                ),
+                "part_entries": total_part_entries,
+            }
+        )
+
+    combined_priority_leads = pd.DataFrame(combined_rows)
+
+    if combined_priority_leads.empty:
+        return empty
+
+    combined_priority_leads["_priority_sort"] = combined_priority_leads["priority"].map(
+        _priority_sort_value
+    )
+    combined_priority_leads = combined_priority_leads.sort_values(
+        by=[
+            "_priority_sort",
+            "parts_seen_count",
+            "max_cells_seen_in_any_part",
+            "total_records",
+        ],
+        ascending=[True, False, False, False],
+    ).drop(columns=["_priority_sort"])
+
+    common_across_parts = combined_priority_leads[
+        combined_priority_leads["parts_seen_count"] >= 2
+    ].head(lead_limit)
+
+    part_only_mobile_numbers = set(
+        combined_priority_leads.loc[
+            combined_priority_leads["parts_seen_count"] == 1,
+            "mobile_number",
+        ].astype(str)
+    )
+
+    part_only_numbers = all_part_presence[
+        all_part_presence["mobile_number"].astype(str).isin(part_only_mobile_numbers)
+    ].copy()
+
+    if not part_only_numbers.empty:
+        part_only_numbers = part_only_numbers.merge(
+            combined_priority_leads[
+                [
+                    "mobile_number",
+                    "priority",
+                    "confidence_level",
+                    "simple_reason",
+                    "suggested_action",
+                ]
+            ],
+            on="mobile_number",
+            how="left",
+        )
+        part_only_numbers["_priority_sort"] = part_only_numbers["priority"].map(
+            _priority_sort_value
+        )
+        part_only_numbers = part_only_numbers.sort_values(
+            by=["_priority_sort", "cells_seen", "records_found"],
+            ascending=[True, False, False],
+        ).drop(columns=["_priority_sort"]).head(lead_limit)
+
+    part_level_rows: list[dict[str, Any]] = []
+
+    for part_key, group in all_part_presence.groupby(
+        ["part_no", "part_name", "start_time", "end_time"],
+        dropna=False,
+    ):
+        part_no, part_name, start_time, end_time = part_key
+
+        part_level_rows.append(
+            {
+                "part_no": part_no,
+                "part_name": part_name,
+                "start_time": start_time,
+                "end_time": end_time,
+                "unique_numbers": int(group["mobile_number"].nunique()),
+                "total_records": int(group["records_found"].sum()),
+                "multi_cell_numbers": int((group["cells_seen"] >= 2).sum()),
+                "high_activity_numbers": int((group["records_found"] >= 10).sum()),
+            }
+        )
+
+    part_level_counts = pd.DataFrame(part_level_rows).sort_values("part_no")
+
+    comparison_summary = pd.DataFrame(
+        [
+            {
+                "finding": "Total Date-Time Parts",
+                "count": len(parts),
+                "meaning": "Total saved investigation periods.",
+            },
+            {
+                "finding": "Unique Numbers Across All Parts",
+                "count": int(combined_priority_leads["mobile_number"].nunique()),
+                "meaning": "Numbers found in any selected Date-Time Part.",
+            },
+            {
+                "finding": "Common Across Parts",
+                "count": int((combined_priority_leads["parts_seen_count"] >= 2).sum()),
+                "meaning": "Numbers found in two or more Date-Time Parts.",
+            },
+            {
+                "finding": "Part-Only Numbers",
+                "count": int((combined_priority_leads["parts_seen_count"] == 1).sum()),
+                "meaning": "Numbers found in only one selected Date-Time Part.",
+            },
+            {
+                "finding": "High Priority Combined Leads",
+                "count": int((combined_priority_leads["priority"] == "High").sum()),
+                "meaning": "Numbers with stronger combined importance across parts.",
+            },
+        ]
+    )
+
+    return {
+        "comparison_summary": comparison_summary,
+        "part_level_counts": part_level_counts,
+        "common_across_parts": common_across_parts,
+        "part_only_numbers": part_only_numbers,
+        "combined_priority_leads": combined_priority_leads.head(lead_limit),
+        "all_part_presence": all_part_presence,
+    }
+
+
+def print_tower_ipdr_part_comparison_summary(
+    comparison: dict[str, pd.DataFrame],
+    *,
+    max_rows: int = 20,
+) -> None:
+    """Print part comparison in simple investigation language."""
+
+    comparison_summary = comparison.get("comparison_summary", pd.DataFrame())
+    part_level_counts = comparison.get("part_level_counts", pd.DataFrame())
+    common_across_parts = comparison.get("common_across_parts", pd.DataFrame())
+    part_only_numbers = comparison.get("part_only_numbers", pd.DataFrame())
+    combined_priority_leads = comparison.get("combined_priority_leads", pd.DataFrame())
+
+    print("\n" + "=" * 78)
+    print("DATE-TIME PART COMPARISON SUMMARY")
+    print("=" * 78)
+
+    if isinstance(comparison_summary, pd.DataFrame) and not comparison_summary.empty:
+        for _, row in comparison_summary.iterrows():
+            print(f"- {row.get('finding')}: {row.get('count')}")
+            print(f"  Meaning: {row.get('meaning')}")
+    else:
+        print("No comparison summary available.")
+
+    print("\n" + "-" * 78)
+    print("PART-WISE BASIC COUNTS")
+    print("-" * 78)
+
+    if isinstance(part_level_counts, pd.DataFrame) and not part_level_counts.empty:
+        for _, row in part_level_counts.iterrows():
+            print(f"{row.get('part_name')} | {row.get('start_time')} to {row.get('end_time')}")
+            print(f"  Unique Numbers      : {row.get('unique_numbers')}")
+            print(f"  Total Records       : {row.get('total_records')}")
+            print(f"  Multi-Cell Numbers  : {row.get('multi_cell_numbers')}")
+            print(f"  High Activity Nos.  : {row.get('high_activity_numbers')}")
+    else:
+        print("No part-wise count available.")
+
+    print("\n" + "-" * 78)
+    print("TOP COMBINED PRIORITY LEADS")
+    print("-" * 78)
+    print("Meaning: Numbers ranked by presence across parts, multi-cell presence and activity.")
+    _print_simple_leads(combined_priority_leads, max_rows=max_rows)
+
+    print("\n" + "-" * 78)
+    print("COMMON ACROSS DATE-TIME PARTS")
+    print("-" * 78)
+    print("Meaning: Numbers found in two or more selected Date-Time Parts.")
+    print("Use: These may show repeated presence across investigation periods.")
+    _print_simple_leads(common_across_parts, max_rows=max_rows)
+
+    print("\n" + "-" * 78)
+    print("PART-ONLY NUMBERS")
+    print("-" * 78)
+    print("Meaning: Numbers found in only one selected Date-Time Part.")
+    print("Use: These may be period-specific visitors or one-time presence leads.")
+    _print_simple_leads(part_only_numbers, max_rows=max_rows)
