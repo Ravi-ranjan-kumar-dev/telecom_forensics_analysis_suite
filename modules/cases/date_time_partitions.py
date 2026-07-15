@@ -94,8 +94,9 @@ def build_date_time_parts(
                 "start_time": start_time,
                 "end_time": end_time,
                 "range_rule": "start_time <= event_time < end_time",
+                "display_rule": "Start aur End Date-Time ke beech ka data",
                 "simple_meaning": (
-                    f"{start_time} se {end_time} se pehle tak ka data"
+                    f"{start_time} se {end_time} ke beech ka data"
                 ),
             }
         )
@@ -119,6 +120,7 @@ def save_date_time_parts(
         "updated_at": _now_iso(),
         "partition_method": "start_end_pair",
         "range_rule": "start_time <= event_time < end_time",
+        "display_rule": "Start aur End Date-Time ke beech ka data",
         "parts_count": len(parts),
         "parts": parts,
         "note": (
@@ -147,6 +149,7 @@ def load_date_time_parts(case_id: str, workflow: str) -> dict[str, Any]:
             "workflow": str(workflow),
             "partition_method": "start_end_pair",
             "range_rule": "start_time <= event_time < end_time",
+            "display_rule": "Start aur End Date-Time ke beech ka data",
             "parts_count": 0,
             "parts": [],
         }
