@@ -58,15 +58,11 @@ def _menu(case: dict[str, Any]) -> str:
         f"{case.get('case_name', '')}"
     )
     print("=" * 78)
-    print("1. View Tower IPDR Staging Status")
-    print("2. Import / Rebuild Tower IPDR Staging")
-    print("3. Create Date-Time Partitions")
-    print("4. List Date-Time Partitions")
-    print("5. Run Exact Date-Time Partition Query")
-    print("6. Run Same-Minute Date-Time Partition Query")
-    print("7. Run Same-Minute Uncommon Leads")
-    print("8. Advanced: Legacy Full Pandas Analysis")
-    print("9. View Latest Legacy Tower IPDR Run")
+    print("1. Load / Rebuild Tower IPDR Dump")
+    print("2. Date-Time Partitioning")
+    print("3. Run Fast Partition Analysis")
+    print("4. View Staging Status")
+    print("5. Advanced Tools")
     print("0. Back to Tower Dump Analysis")
     return input("Choose Action: ").strip()
 
@@ -516,6 +512,90 @@ def _run_legacy_full_analysis(case: dict[str, Any]) -> None:
         return
 
     _execute(case, use_partitions=False)
+
+
+def _partition_menu(case: dict[str, Any]) -> None:
+    case_id = str(case["case_id"])
+
+    while True:
+        print("\n" + "=" * 78)
+        print("DATE-TIME PARTITIONING")
+        print("=" * 78)
+        print("1. Add / Replace Date-Time Partitions")
+        print("2. List Date-Time Partitions")
+        print("3. Clear Date-Time Partitions")
+        print("0. Back")
+
+        choice = input("\nChoose Action: ").strip()
+
+        if choice == "1":
+            _new_partition(case)
+        elif choice == "2":
+            _print_sightings(case_id)
+        elif choice == "3":
+            clear_sightings(case_id)
+            print("[+] Saved date-time partitions cleared.")
+        elif choice == "0":
+            return
+        else:
+            print("[-] Invalid choice. Select 0 to 3.")
+
+
+def _run_fast_partition_analysis(case: dict[str, Any]) -> None:
+    case_id = str(case["case_id"])
+    partition_time = _ask_partition_time(case_id)
+
+    print("\n" + "=" * 78)
+    print(f"FAST DATE-TIME PARTITION ANALYSIS | {partition_time}")
+    print("=" * 78)
+
+    _print_dataframe(
+        "1. EXACT SECOND COUNT",
+        tower_ipdr_time_count(case_id, partition_time),
+    )
+
+    _print_dataframe(
+        "2. SAME-MINUTE COUNT",
+        tower_ipdr_minute_count(case_id, partition_time),
+    )
+
+    _print_dataframe(
+        "3. SAME-MINUTE UNCOMMON LEADS",
+        tower_ipdr_uncommon_in_minute(case_id, partition_time, limit=50),
+        max_rows=50,
+    )
+
+
+def _advanced_menu(case: dict[str, Any]) -> None:
+    case_id = str(case["case_id"])
+
+    while True:
+        print("\n" + "=" * 78)
+        print("ADVANCED TOWER IPDR TOOLS")
+        print("=" * 78)
+        print("1. Exact-second Query Only")
+        print("2. Same-minute Query Only")
+        print("3. Same-minute Uncommon Leads Only")
+        print("4. Legacy Full Pandas Analysis")
+        print("5. View Latest Legacy Tower IPDR Run")
+        print("0. Back")
+
+        choice = input("\nChoose Action: ").strip()
+
+        if choice == "1":
+            _run_exact_partition_query(case)
+        elif choice == "2":
+            _run_minute_partition_query(case)
+        elif choice == "3":
+            _run_minute_uncommon_query(case)
+        elif choice == "4":
+            _run_legacy_full_analysis(case)
+        elif choice == "5":
+            _show_latest(case_id)
+        elif choice == "0":
+            return
+        else:
+            print("[-] Invalid choice. Select 0 to 5.")
 
 
 def _show_latest(case_id: str) -> None:
