@@ -661,3 +661,460 @@ def tower_ipdr_uncommon_in_minute(
         """,
         [partition_time, partition_time, int(limit)],
     )
+
+
+def tower_ipdr_investigation_summary(
+    case_id: str,
+    partition_time: str,
+    *,
+    mode: str = "same_minute",
+    lead_limit: int = 50,
+) -> dict[str, pd.DataFrame]:
+    """Simple investigation-friendly Tower IPDR partition summary.
+
+    mode:
+    - exact_second: only exact timestamp match
+    - same_minute: all events in same minute as partition_time
+
+    This function is designed for non-technical investigation output.
+    """
+
+    database_path = tower_ipdr_database_path(case_id)
+    store = DuckDBStore(database_path)
+
+    empty = {
+        "summary": pd.DataFrame(),
+        "lead_summary": pd.DataFrame(),
+        "common_numbers": pd.DataFrame(),
+        "uncommon_numbers": pd.DataFrame(),
+        "multi_cell_presence": pd.DataFrame(),
+        "repeat_presence": pd.DataFrame(),
+        "device_consistency": pd.DataFrame(),
+        "priority_leads": pd.DataFrame(),
+    }
+
+    if not store.table_exists(TABLE_EVENTS):
+        return empty
+
+    mode_value = str(mode).strip().lower()
+
+    if mode_value not in {"exact_second", "same_minute"}:
+        mode_value = "same_minute"
+
+    if mode_value == "exact_second":
+        current_filter = "TRY_CAST(event_time AS TIMESTAMP) = CAST(? AS TIMESTAMP)"
+        baseline_filter = "TRY_CAST(event_time AS TIMESTAMP) <> CAST(? AS TIMESTAMP)"
+        mode_label = "Exact second"
+    else:
+        current_filter = (
+            "DATE_TRUNC('minute', TRY_CAST(event_time AS TIMESTAMP)) "
+            "= DATE_TRUNC('minute', CAST(? AS TIMESTAMP))"
+        )
+        baseline_filter = (
+            "DATE_TRUNC('minute', TRY_CAST(event_time AS TIMESTAMP)) "
+            "<> DATE_TRUNC('minute', CAST(? AS TIMESTAMP))"
+        )
+        mode_label = "Same minute"
+
+    summary = store.query_df(
+        f"""
+        WITH current_part AS (
+            SELECT *
+            FROM {TABLE_EVENTS}
+            WHERE {current_filter}
+        )
+        SELECT
+            CAST(? AS TIMESTAMP) AS partition_time,
+            ? AS analysis_mode,
+            COUNT(*) AS records_found,
+            COUNT(DISTINCT subscriber_number) AS numbers_found,
+            COUNT(DISTINCT searched_cell_id) AS cells_involved,
+            COUNT(DISTINCT imei) AS imei_found,
+            COUNT(DISTINCT imsi) AS imsi_found,
+            MIN(TRY_CAST(event_time AS TIMESTAMP)) AS first_activity,
+            MAX(TRY_CAST(event_time AS TIMESTAMP)) AS last_activity
+        FROM current_part
+        """,
+        [partition_time, partition_time, mode_label],
+    )
+
+    common_numbers = store.query_df(
+        f"""
+        WITH current_part AS (
+            SELECT
+                subscriber_number,
+                COUNT(*) AS selected_time_records,
+                COUNT(DISTINCT searched_cell_id) AS selected_time_cells,
+                COUNT(DISTINCT imei) AS selected_time_imei,
+                COUNT(DISTINCT imsi) AS selected_time_imsi,
+                MIN(TRY_CAST(event_time AS TIMESTAMP)) AS first_seen_selected,
+                MAX(TRY_CAST(event_time AS TIMESTAMP)) AS last_seen_selected
+            FROM {TABLE_EVENTS}
+            WHERE {current_filter}
+              AND subscriber_number IS NOT NULL
+              AND subscriber_number <> ''
+            GROUP BY subscriber_number
+        ),
+        baseline AS (
+            SELECT
+                subscriber_number,
+                COUNT(*) AS other_time_records,
+                COUNT(DISTINCT searched_cell_id) AS other_time_cells,
+                MIN(TRY_CAST(event_time AS TIMESTAMP)) AS first_seen_other,
+                MAX(TRY_CAST(event_time AS TIMESTAMP)) AS last_seen_other
+            FROM {TABLE_EVENTS}
+            WHERE {baseline_filter}
+              AND subscriber_number IS NOT NULL
+              AND subscriber_number <> ''
+            GROUP BY subscriber_number
+        )
+        SELECT
+            current_part.subscriber_number AS mobile_number,
+            current_part.selected_time_records,
+            baseline.other_time_records,
+            current_part.selected_time_cells,
+            baseline.other_time_cells,
+            'Common Number' AS finding_type,
+            'This number is present in selected time and also seen in other loaded data.' AS meaning,
+            'May be a local/repeated number or linked person. Verify before conclusion.' AS why_it_matters,
+            'Medium' AS priority,
+            CASE
+                WHEN current_part.selected_time_cells >= 2 OR baseline.other_time_cells >= 2 THEN 'Medium'
+                ELSE 'Low'
+            END AS confidence_level,
+            'Verify with CDR, SDR/CAF, IMEI/IMSI and field information.' AS suggested_action
+        FROM current_part
+        INNER JOIN baseline
+          ON current_part.subscriber_number = baseline.subscriber_number
+        ORDER BY
+            current_part.selected_time_cells DESC,
+            current_part.selected_time_records DESC,
+            baseline.other_time_records DESC
+        LIMIT ?
+        """,
+        [partition_time, partition_time, int(lead_limit)],
+    )
+
+    uncommon_numbers = store.query_df(
+        f"""
+        WITH current_part AS (
+            SELECT
+                subscriber_number,
+                COUNT(*) AS selected_time_records,
+                COUNT(DISTINCT searched_cell_id) AS selected_time_cells,
+                COUNT(DISTINCT imei) AS selected_time_imei,
+                COUNT(DISTINCT imsi) AS selected_time_imsi,
+                MIN(TRY_CAST(event_time AS TIMESTAMP)) AS first_seen_selected,
+                MAX(TRY_CAST(event_time AS TIMESTAMP)) AS last_seen_selected
+            FROM {TABLE_EVENTS}
+            WHERE {current_filter}
+              AND subscriber_number IS NOT NULL
+              AND subscriber_number <> ''
+            GROUP BY subscriber_number
+        ),
+        baseline AS (
+            SELECT DISTINCT subscriber_number
+            FROM {TABLE_EVENTS}
+            WHERE {baseline_filter}
+              AND subscriber_number IS NOT NULL
+              AND subscriber_number <> ''
+        )
+        SELECT
+            current_part.subscriber_number AS mobile_number,
+            current_part.selected_time_records,
+            0 AS other_time_records,
+            current_part.selected_time_cells,
+            current_part.selected_time_imei,
+            current_part.selected_time_imsi,
+            current_part.first_seen_selected,
+            current_part.last_seen_selected,
+            'Uncommon / New Visitor' AS finding_type,
+            'This number is present in selected time but not found in other loaded data.' AS meaning,
+            'May indicate a new visitor, rare presence, or incident-time lead.' AS why_it_matters,
+            CASE
+                WHEN current_part.selected_time_cells >= 3 THEN 'High'
+                WHEN current_part.selected_time_cells >= 2 THEN 'Medium-High'
+                WHEN current_part.selected_time_records >= 10 THEN 'Medium'
+                ELSE 'Low'
+            END AS priority,
+            CASE
+                WHEN current_part.selected_time_cells >= 2 AND current_part.selected_time_records >= 5 THEN 'High'
+                WHEN current_part.selected_time_records >= 3 THEN 'Medium'
+                ELSE 'Low'
+            END AS confidence_level,
+            'Verify this number first with CDR/SDR/CAF, IMEI/IMSI continuity, and CCTV/field input.' AS suggested_action
+        FROM current_part
+        LEFT JOIN baseline
+          ON current_part.subscriber_number = baseline.subscriber_number
+        WHERE baseline.subscriber_number IS NULL
+        ORDER BY
+            CASE
+                WHEN current_part.selected_time_cells >= 3 THEN 1
+                WHEN current_part.selected_time_cells >= 2 THEN 2
+                WHEN current_part.selected_time_records >= 10 THEN 3
+                ELSE 4
+            END,
+            current_part.selected_time_records DESC
+        LIMIT ?
+        """,
+        [partition_time, partition_time, int(lead_limit)],
+    )
+
+    multi_cell_presence = store.query_df(
+        f"""
+        SELECT
+            subscriber_number AS mobile_number,
+            COUNT(*) AS records_found,
+            COUNT(DISTINCT searched_cell_id) AS cells_seen,
+            COUNT(DISTINCT imei) AS imei_count,
+            COUNT(DISTINCT imsi) AS imsi_count,
+            MIN(TRY_CAST(event_time AS TIMESTAMP)) AS first_seen,
+            MAX(TRY_CAST(event_time AS TIMESTAMP)) AS last_seen,
+            'Multi-Cell Presence' AS finding_type,
+            'This number appeared in more than one searched cell during selected time.' AS meaning,
+            'Multi-cell presence can be a stronger area-presence or movement lead.' AS why_it_matters,
+            CASE
+                WHEN COUNT(DISTINCT searched_cell_id) >= 3 THEN 'High'
+                ELSE 'Medium-High'
+            END AS priority,
+            CASE
+                WHEN COUNT(*) >= 5 THEN 'High'
+                ELSE 'Medium'
+            END AS confidence_level,
+            'Verify movement feasibility, tower locations, CDR location and field/CCTV information.' AS suggested_action
+        FROM {TABLE_EVENTS}
+        WHERE {current_filter}
+          AND subscriber_number IS NOT NULL
+          AND subscriber_number <> ''
+        GROUP BY subscriber_number
+        HAVING COUNT(DISTINCT searched_cell_id) >= 2
+        ORDER BY cells_seen DESC, records_found DESC
+        LIMIT ?
+        """,
+        [partition_time, int(lead_limit)],
+    )
+
+    repeat_presence = store.query_df(
+        f"""
+        WITH current_part AS (
+            SELECT DISTINCT subscriber_number
+            FROM {TABLE_EVENTS}
+            WHERE {current_filter}
+              AND subscriber_number IS NOT NULL
+              AND subscriber_number <> ''
+        ),
+        baseline AS (
+            SELECT
+                subscriber_number,
+                COUNT(*) AS other_time_records,
+                COUNT(DISTINCT DATE_TRUNC('minute', TRY_CAST(event_time AS TIMESTAMP))) AS other_minutes_seen,
+                COUNT(DISTINCT searched_cell_id) AS other_cells_seen
+            FROM {TABLE_EVENTS}
+            WHERE {baseline_filter}
+              AND subscriber_number IS NOT NULL
+              AND subscriber_number <> ''
+            GROUP BY subscriber_number
+        )
+        SELECT
+            current_part.subscriber_number AS mobile_number,
+            baseline.other_time_records,
+            baseline.other_minutes_seen,
+            baseline.other_cells_seen,
+            'Repeat Presence' AS finding_type,
+            'This number is seen at selected time and repeatedly in other loaded data.' AS meaning,
+            'May be local, regular visitor, or associated number depending on case context.' AS why_it_matters,
+            CASE
+                WHEN baseline.other_minutes_seen >= 10 OR baseline.other_cells_seen >= 3 THEN 'Medium'
+                ELSE 'Low'
+            END AS priority,
+            CASE
+                WHEN baseline.other_time_records >= 20 THEN 'Medium'
+                ELSE 'Low'
+            END AS confidence_level,
+            'Do not treat as suspect only because it is repeated. Verify role and location context.' AS suggested_action
+        FROM current_part
+        INNER JOIN baseline
+          ON current_part.subscriber_number = baseline.subscriber_number
+        ORDER BY
+            baseline.other_minutes_seen DESC,
+            baseline.other_time_records DESC
+        LIMIT ?
+        """,
+        [partition_time, partition_time, int(lead_limit)],
+    )
+
+    device_consistency = store.query_df(
+        f"""
+        SELECT
+            subscriber_number AS mobile_number,
+            COUNT(*) AS records_found,
+            COUNT(DISTINCT imei) AS imei_count,
+            COUNT(DISTINCT imsi) AS imsi_count,
+            COUNT(DISTINCT searched_cell_id) AS cells_seen,
+            'IMEI/IMSI Consistency' AS finding_type,
+            CASE
+                WHEN COUNT(DISTINCT imei) > 1 AND COUNT(DISTINCT imsi) > 1
+                    THEN 'Multiple device and SIM identifiers seen.'
+                WHEN COUNT(DISTINCT imei) > 1
+                    THEN 'Multiple device identifiers seen.'
+                WHEN COUNT(DISTINCT imsi) > 1
+                    THEN 'Multiple SIM identifiers seen.'
+                ELSE 'Device and SIM identifiers appear consistent in selected time.'
+            END AS meaning,
+            CASE
+                WHEN COUNT(DISTINCT imei) > 1 OR COUNT(DISTINCT imsi) > 1
+                    THEN 'May indicate SIM/device change, shared handset, data issue, or multiple records.'
+                ELSE 'Consistent identifiers increase confidence but still need verification.'
+            END AS why_it_matters,
+            CASE
+                WHEN COUNT(DISTINCT imei) > 1 OR COUNT(DISTINCT imsi) > 1
+                    THEN 'Medium'
+                ELSE 'Low'
+            END AS priority,
+            CASE
+                WHEN COUNT(*) >= 3 THEN 'Medium'
+                ELSE 'Low'
+            END AS confidence_level,
+            'Verify IMEI/IMSI with CDR, SDR/CAF and operator records before conclusion.' AS suggested_action
+        FROM {TABLE_EVENTS}
+        WHERE {current_filter}
+          AND subscriber_number IS NOT NULL
+          AND subscriber_number <> ''
+        GROUP BY subscriber_number
+        ORDER BY
+            imei_count DESC,
+            imsi_count DESC,
+            records_found DESC
+        LIMIT ?
+        """,
+        [partition_time, int(lead_limit)],
+    )
+
+    priority_leads = store.query_df(
+        f"""
+        WITH current_part AS (
+            SELECT
+                subscriber_number,
+                COUNT(*) AS selected_time_records,
+                COUNT(DISTINCT searched_cell_id) AS selected_time_cells,
+                COUNT(DISTINCT imei) AS imei_count,
+                COUNT(DISTINCT imsi) AS imsi_count,
+                MIN(TRY_CAST(event_time AS TIMESTAMP)) AS first_seen,
+                MAX(TRY_CAST(event_time AS TIMESTAMP)) AS last_seen
+            FROM {TABLE_EVENTS}
+            WHERE {current_filter}
+              AND subscriber_number IS NOT NULL
+              AND subscriber_number <> ''
+            GROUP BY subscriber_number
+        ),
+        baseline AS (
+            SELECT
+                subscriber_number,
+                COUNT(*) AS baseline_records
+            FROM {TABLE_EVENTS}
+            WHERE {baseline_filter}
+              AND subscriber_number IS NOT NULL
+              AND subscriber_number <> ''
+            GROUP BY subscriber_number
+        )
+        SELECT
+            current_part.subscriber_number AS mobile_number,
+            current_part.selected_time_records,
+            COALESCE(baseline.baseline_records, 0) AS baseline_records,
+            current_part.selected_time_cells,
+            current_part.imei_count,
+            current_part.imsi_count,
+            current_part.first_seen,
+            current_part.last_seen,
+            CASE
+                WHEN baseline.subscriber_number IS NULL AND current_part.selected_time_cells >= 2
+                    THEN 'High'
+                WHEN baseline.subscriber_number IS NULL
+                    THEN 'Medium'
+                WHEN current_part.selected_time_cells >= 2
+                    THEN 'Medium-High'
+                WHEN current_part.selected_time_records >= 10
+                    THEN 'Medium'
+                ELSE 'Low'
+            END AS priority,
+            CASE
+                WHEN current_part.selected_time_cells >= 2 AND current_part.selected_time_records >= 5
+                    THEN 'High'
+                WHEN current_part.selected_time_records >= 3
+                    THEN 'Medium'
+                ELSE 'Low'
+            END AS confidence_level,
+            CASE
+                WHEN baseline.subscriber_number IS NULL AND current_part.selected_time_cells >= 2
+                    THEN 'New/rare number with multi-cell presence'
+                WHEN baseline.subscriber_number IS NULL
+                    THEN 'New/rare number in selected time'
+                WHEN current_part.selected_time_cells >= 2
+                    THEN 'Common number with multi-cell presence'
+                WHEN current_part.selected_time_records >= 10
+                    THEN 'High activity in selected time'
+                ELSE 'Low-volume presence'
+            END AS simple_reason,
+            'Verify priority leads with CDR/SDR/CAF, IMEI/IMSI and field/CCTV information.' AS suggested_action
+        FROM current_part
+        LEFT JOIN baseline
+          ON current_part.subscriber_number = baseline.subscriber_number
+        ORDER BY
+            CASE
+                WHEN baseline.subscriber_number IS NULL AND current_part.selected_time_cells >= 2 THEN 1
+                WHEN baseline.subscriber_number IS NULL THEN 2
+                WHEN current_part.selected_time_cells >= 2 THEN 3
+                WHEN current_part.selected_time_records >= 10 THEN 4
+                ELSE 9
+            END,
+            current_part.selected_time_records DESC
+        LIMIT ?
+        """,
+        [partition_time, partition_time, int(lead_limit)],
+    )
+
+    lead_summary = pd.DataFrame(
+        [
+            {
+                "finding": "Common Numbers",
+                "records": len(common_numbers),
+                "meaning": "Numbers seen in selected time and also elsewhere in loaded data.",
+            },
+            {
+                "finding": "Uncommon / New Visitor",
+                "records": len(uncommon_numbers),
+                "meaning": "Numbers seen in selected time but not seen elsewhere in loaded data.",
+            },
+            {
+                "finding": "Multi-Cell Presence",
+                "records": len(multi_cell_presence),
+                "meaning": "Numbers seen in more than one searched cell.",
+            },
+            {
+                "finding": "Repeat Presence",
+                "records": len(repeat_presence),
+                "meaning": "Numbers repeatedly seen in other loaded data also.",
+            },
+            {
+                "finding": "IMEI/IMSI Consistency",
+                "records": len(device_consistency),
+                "meaning": "Device/SIM consistency or possible change indicators.",
+            },
+            {
+                "finding": "Priority Leads",
+                "records": len(priority_leads),
+                "meaning": "Combined ranking based on rarity, cells, activity and confidence.",
+            },
+        ]
+    )
+
+    return {
+        "summary": summary,
+        "lead_summary": lead_summary,
+        "common_numbers": common_numbers,
+        "uncommon_numbers": uncommon_numbers,
+        "multi_cell_presence": multi_cell_presence,
+        "repeat_presence": repeat_presence,
+        "device_consistency": device_consistency,
+        "priority_leads": priority_leads,
+    }
