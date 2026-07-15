@@ -553,3 +553,111 @@ def tower_ipdr_uncommon_at_time(
         """,
         [partition_time, partition_time, int(limit)],
     )
+
+
+def tower_ipdr_minute_count(
+    case_id: str,
+    partition_time: str,
+) -> pd.DataFrame:
+    """Count events in the same minute as the entered partition time."""
+
+    database_path = tower_ipdr_database_path(case_id)
+    store = DuckDBStore(database_path)
+
+    if not store.table_exists(TABLE_EVENTS):
+        return pd.DataFrame(
+            columns=[
+                "partition_minute",
+                "event_count",
+                "subscriber_count",
+            ]
+        )
+
+    return store.query_df(
+        f"""
+        SELECT
+            DATE_TRUNC('minute', CAST(? AS TIMESTAMP)) AS partition_minute,
+            COUNT(*) AS event_count,
+            COUNT(DISTINCT subscriber_number) AS subscriber_count
+        FROM {TABLE_EVENTS}
+        WHERE DATE_TRUNC('minute', TRY_CAST(event_time AS TIMESTAMP))
+              = DATE_TRUNC('minute', CAST(? AS TIMESTAMP))
+        """,
+        [partition_time, partition_time],
+    )
+
+
+def tower_ipdr_uncommon_in_minute(
+    case_id: str,
+    partition_time: str,
+    *,
+    limit: int = 50,
+) -> pd.DataFrame:
+    """Find uncommon subscribers in the same minute as the entered time."""
+
+    database_path = tower_ipdr_database_path(case_id)
+    store = DuckDBStore(database_path)
+
+    if not store.table_exists(TABLE_EVENTS):
+        return pd.DataFrame()
+
+    return store.query_df(
+        f"""
+        WITH current_part AS (
+            SELECT
+                subscriber_number,
+                COUNT(*) AS current_seen_count,
+                COUNT(DISTINCT searched_cell_id) AS cells_seen,
+                MIN(TRY_CAST(event_time AS TIMESTAMP)) AS first_seen,
+                MAX(TRY_CAST(event_time AS TIMESTAMP)) AS last_seen
+            FROM {TABLE_EVENTS}
+            WHERE DATE_TRUNC('minute', TRY_CAST(event_time AS TIMESTAMP))
+                  = DATE_TRUNC('minute', CAST(? AS TIMESTAMP))
+              AND subscriber_number IS NOT NULL
+              AND subscriber_number <> ''
+            GROUP BY subscriber_number
+        ),
+        baseline AS (
+            SELECT DISTINCT subscriber_number
+            FROM {TABLE_EVENTS}
+            WHERE DATE_TRUNC('minute', TRY_CAST(event_time AS TIMESTAMP))
+                  <> DATE_TRUNC('minute', CAST(? AS TIMESTAMP))
+              AND subscriber_number IS NOT NULL
+              AND subscriber_number <> ''
+        )
+        SELECT
+            current_part.subscriber_number,
+            current_part.current_seen_count,
+            0 AS baseline_seen_count,
+            current_part.first_seen,
+            current_part.last_seen,
+            current_part.cells_seen,
+            100 AS rarity_score,
+            CASE
+                WHEN current_part.cells_seen >= 3 THEN 'HIGH'
+                WHEN current_part.current_seen_count >= 100 THEN 'HIGH'
+                WHEN current_part.cells_seen >= 2 THEN 'MEDIUM_HIGH'
+                ELSE 'MEDIUM'
+            END AS priority_level,
+            CASE
+                WHEN current_part.cells_seen >= 3 THEN 'Multi-cell same-minute presence'
+                WHEN current_part.current_seen_count >= 100 THEN 'High activity in same minute'
+                WHEN current_part.cells_seen >= 2 THEN 'Seen on multiple cells in same minute'
+                ELSE 'Same-minute only presence'
+            END AS rank_reason
+        FROM current_part
+        LEFT JOIN baseline
+          ON current_part.subscriber_number = baseline.subscriber_number
+        WHERE baseline.subscriber_number IS NULL
+        ORDER BY
+            CASE priority_level
+                WHEN 'HIGH' THEN 1
+                WHEN 'MEDIUM_HIGH' THEN 2
+                WHEN 'MEDIUM' THEN 3
+                ELSE 9
+            END,
+            current_seen_count DESC
+        LIMIT ?
+        """,
+        [partition_time, partition_time, int(limit)],
+    )
