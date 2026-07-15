@@ -49,10 +49,10 @@ def _menu(case: dict[str, Any]) -> str:
     )
     print("=" * 78)
     print("1. Run Complete Multi-Cell Tower IPDR Analysis")
-    print("2. New CCTV Date-Time Partition Analysis")
-    print("3. List Current CCTV Date-Times")
+    print("2. New Date-Time Partition Partition Analysis")
+    print("3. List Current Date-Time Partitions")
     print("4. Re-run Partition Using Saved Date-Times")
-    print("5. Clear Saved CCTV Date-Times")
+    print("5. Clear Saved Date-Time Partitions")
     print("6. View Latest Tower IPDR Run")
     print("0. Back to Tower Dump Analysis")
     return input("\nChoose Action: ").strip()
@@ -118,7 +118,7 @@ def _print_sightings(case_id: str) -> None:
 
     print(
         f"{'#':<4}{'Partition':<12}"
-        f"{'CCTV Timestamp':<24}"
+        f"{'Partition Time':<24}"
         f"{'Window Start':<24}"
         f"{'Window End':<24}"
     )
@@ -128,7 +128,7 @@ def _print_sightings(case_id: str) -> None:
         print(
             f"{index:<4}"
             f"{'P' + str(index):<12}"
-            f"{str(item.get('cctv_timestamp', '')):<24}"
+            f"{str(item.get('partition_timestamp', '')):<24}"
             f"{str(item.get('window_start', '')):<24}"
             f"{str(item.get('window_end', '')):<24}"
         )
@@ -344,8 +344,8 @@ def _new_partition(case: dict[str, Any]) -> dict[str, Any] | None:
     replace_simple_sightings(
         str(case["case_id"]),
         pairs,
-        minutes_before=10,
-        minutes_after=10,
+        minutes_before=0,
+        minutes_after=0,
     )
     _print_sightings(str(case["case_id"]))
     return _execute(case, use_partitions=True)

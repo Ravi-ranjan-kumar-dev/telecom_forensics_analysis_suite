@@ -46,10 +46,10 @@ def _tower_cdr_menu(case: dict[str, Any]) -> str:
     )
     print("=" * 78)
     print("1. Run Complete Tower CDR Dump Analysis")
-    print("2. New CCTV Date-Time Partition Analysis")
-    print("3. List Current CCTV Date-Times")
+    print("2. New Date-Time Partition Partition Analysis")
+    print("3. List Current Date-Time Partitions")
     print("4. Re-run Partition Using Saved Date-Times")
-    print("5. Clear Saved CCTV Date-Times")
+    print("5. Clear Saved Date-Time Partitions")
     print("6. View Latest Partition Summary")
     print("0. Back to Case Workspace")
 
@@ -99,7 +99,7 @@ def _print_sightings(case_id: str) -> None:
         return
 
     print(
-        f"{'#':<4}{'ID':<8}{'CCTV Timestamp':<24}"
+        f"{'#':<4}{'ID':<8}{'Partition Time':<24}"
         f"{'Window Start':<24}{'Window End':<24}"
     )
     print("-" * 94)
@@ -108,7 +108,7 @@ def _print_sightings(case_id: str) -> None:
         print(
             f"{index:<4}"
             f"{str(item.get('sighting_id', '')):<8}"
-            f"{str(item.get('cctv_timestamp', '')):<24}"
+            f"{str(item.get('partition_timestamp', '')):<24}"
             f"{str(item.get('window_start', '')):<24}"
             f"{str(item.get('window_end', '')):<24}"
         )
@@ -304,7 +304,7 @@ def _run_partition_analysis(
     print("\n" + "=" * 82)
     print("COMMON CANDIDATE SUMMARY")
     print("=" * 82)
-    print(f"Total CCTV Date-Times : {result['total_sightings']}")
+    print(f"Total Date-Time Partitions : {result['total_sightings']}")
     print(f"Candidates in 2+      : {len(n_of_m):,}")
     print(f"Candidates in all     : {len(strict):,}")
 
@@ -425,12 +425,12 @@ def _new_partition_workflow(
     records = replace_simple_sightings(
         case_id,
         pairs,
-        minutes_before=10,
-        minutes_after=10,
+        minutes_before=0,
+        minutes_after=0,
     )
 
     print(
-        f"\n[+] {len(records)} CCTV windows automatically created."
+        f"\n[+] {len(records)} date-time partitions automatically created."
     )
     _print_sightings(case_id)
 
@@ -454,7 +454,7 @@ def _show_latest(case_id: str) -> None:
     for item in manifest.get("partition_summary", []):
         print(
             f"- {item.get('sighting_id')} | "
-            f"{item.get('cctv_timestamp')} | "
+            f"{item.get('partition_timestamp')} | "
             f"records={item.get('filtered_records', 0)} | "
             f"subscribers={item.get('unique_subscribers', 0)} | "
             f"cells={item.get('unique_searched_cells', 0)}"
