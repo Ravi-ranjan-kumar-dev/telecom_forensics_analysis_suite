@@ -50,6 +50,7 @@ from modules.staging.tower_ipdr_staging import (
     tower_ipdr_investigation_summary,
     print_tower_ipdr_investigation_summary,
     tower_ipdr_range_investigation_summary,
+    export_tower_ipdr_partwise_range_report,
 )
 from modules.reporting.tower_ipdr_console import (
     print_tower_ipdr_analysis,
@@ -755,20 +756,55 @@ def _run_partwise_analysis(case: dict[str, Any]) -> None:
 
 def _view_or_export_report(case: dict[str, Any]) -> None:
     case_id = str(case["case_id"])
+    parts = list_date_time_parts(case_id, TOWER_IPDR_WORKFLOW)
 
-    print("\n" + "=" * 78)
+    print("" + "=" * 78)
     print("VIEW / EXPORT REPORT")
     print("=" * 78)
 
-    parts = list_date_time_parts(case_id, TOWER_IPDR_WORKFLOW)
-
-    if parts:
-        print("[+] Current Date-Time Parts:")
-        print_date_time_parts(case_id, TOWER_IPDR_WORKFLOW)
-    else:
+    if not parts:
         print("[-] Date-Time Parts available nahi hain.")
+        print("[+] Pehle option 2: Create Date-Time Parts chalayein.")
+        return
 
-    print("\n[+] Report export part-wise analysis ke baad available hoga.")
+    if count_tower_ipdr_events(case_id) <= 0:
+        print("[-] Tower IPDR dump loaded nahi hai.")
+        print("[+] Pehle option 1: Load Dump Data chalayein.")
+        return
+
+    print_date_time_parts(case_id, TOWER_IPDR_WORKFLOW)
+    print_date_time_part_warnings(case_id, TOWER_IPDR_WORKFLOW)
+
+    print("1. Export Part-wise Investigation Report")
+    print("0. Back")
+
+    choice = input("Choose Action: ").strip()
+
+    if choice == "0":
+        return
+
+    if choice != "1":
+        print("[-] Invalid choice. Select 0 or 1.")
+        return
+
+    print("[+] Report export start ho raha hai...")
+    print("[+] Har Date-Time Part par analysis chalega aur report save hogi.")
+
+    manifest = export_tower_ipdr_partwise_range_report(
+        case_id,
+        parts,
+        lead_limit=50,
+        max_leads_in_text=20,
+    )
+
+    saved_files = manifest.get("saved_files", {})
+
+    print("[+] Part-wise investigation report generated successfully.")
+    print(f"[+] Report Folder : {manifest.get('output_dir')}")
+    print(f"[+] Main Report   : {saved_files.get('investigation_summary_all_parts')}")
+    print(f"[+] Summary CSV   : {saved_files.get('all_parts_summary')}")
+    print(f"[+] Manifest      : {saved_files.get('manifest')}")
+
 
 def _show_latest(case_id: str) -> None:
     manifest = load_latest_tower_ipdr_manifest(case_id)

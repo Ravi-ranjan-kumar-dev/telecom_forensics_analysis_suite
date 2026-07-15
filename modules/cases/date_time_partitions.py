@@ -186,7 +186,7 @@ def print_date_time_parts(case_id: str, workflow: str) -> None:
         return
 
     print(f"Method    : Start/End Pair")
-    print(f"Rule      : {payload.get('range_rule', 'start_time <= event_time < end_time')}")
+    print(f"Rule      : {payload.get('display_rule', 'Start aur End Date-Time ke beech ka data')}")
     print(f"Total Part: {len(parts)}")
 
     for part in parts:
