@@ -1187,6 +1187,8 @@ def print_tower_ipdr_investigation_summary(
     priority_leads = result.get("priority_leads", pd.DataFrame())
 
     partition_time = _safe_first_value(summary, "partition_time", "")
+    partition_start = _safe_first_value(summary, "partition_start", "")
+    partition_end = _safe_first_value(summary, "partition_end", "")
     analysis_mode = _safe_first_value(summary, "analysis_mode", "")
     records_found = _safe_first_value(summary, "records_found", 0)
     numbers_found = _safe_first_value(summary, "numbers_found", 0)
@@ -1197,7 +1199,12 @@ def print_tower_ipdr_investigation_summary(
     print("\n" + "=" * 78)
     print("TOWER IPDR INVESTIGATION SUMMARY")
     print("=" * 78)
-    print(f"Selected Date-Time : {partition_time}")
+
+    if partition_start and partition_end:
+        print(f"Selected Period    : {partition_start} to {partition_end}")
+    else:
+        print(f"Selected Date-Time : {partition_time}")
+
     print(f"Analysis Mode      : {analysis_mode}")
     print(f"Records Found      : {records_found:,}")
     print(f"Numbers Found      : {numbers_found:,}")
@@ -1258,6 +1265,15 @@ def print_tower_ipdr_investigation_summary(
     print("Meaning: Checks whether same number shows same or multiple device/SIM identifiers.")
     print("Use: Helps verify SIM/device continuity or possible device/SIM change.")
     _print_simple_leads(device_consistency, max_rows=max_leads)
+
+    suspicious_timing = result.get("suspicious_timing", pd.DataFrame())
+
+    print("\n" + "-" * 78)
+    print("SUSPICIOUS TIMING / HIGH ACTIVITY")
+    print("-" * 78)
+    print("Meaning: Numbers with notable activity during the selected period.")
+    print("Use: Compare timing with incident time, CCTV/field input and route.")
+    _print_simple_leads(suspicious_timing, max_rows=max_leads)
 
     print("\n" + "-" * 78)
     print("SUGGESTED VERIFICATION")
@@ -1362,10 +1378,730 @@ def export_tower_ipdr_investigation_summary(
         ),
     }
 
-    manifest_path = output_dir / "manifest.json"
     manifest_path.write_text(
         json.dumps(
             _json_safe(manifest),
+            ensure_ascii=False,
+            indent=2,
+            sort_keys=True,
+        ),
+        encoding="utf-8",
+    )
+    return manifest
+
+
+def tower_ipdr_range_investigation_summary(
+    case_id: str,
+    start_time: str,
+    end_time: str,
+    *,
+    lead_limit: int = 50,
+) -> dict[str, pd.DataFrame]:
+    """Investigation-friendly Tower IPDR summary for a Date-Time range.
+
+    Rule:
+    start_time <= event_time < end_time
+
+    This is the main production workflow for Date-Time Parts.
+    """
+
+    database_path = tower_ipdr_database_path(case_id)
+    store = DuckDBStore(database_path)
+
+    empty = {
+        "summary": pd.DataFrame(),
+        "lead_summary": pd.DataFrame(),
+        "common_numbers": pd.DataFrame(),
+        "uncommon_numbers": pd.DataFrame(),
+        "multi_cell_presence": pd.DataFrame(),
+        "repeat_presence": pd.DataFrame(),
+        "device_consistency": pd.DataFrame(),
+        "suspicious_timing": pd.DataFrame(),
+        "priority_leads": pd.DataFrame(),
+    }
+
+    if not store.table_exists(TABLE_EVENTS):
+        return empty
+
+    current_filter = (
+        "TRY_CAST(event_time AS TIMESTAMP) >= CAST(? AS TIMESTAMP) "
+        "AND TRY_CAST(event_time AS TIMESTAMP) < CAST(? AS TIMESTAMP)"
+    )
+
+    baseline_filter = (
+        "NOT (TRY_CAST(event_time AS TIMESTAMP) >= CAST(? AS TIMESTAMP) "
+        "AND TRY_CAST(event_time AS TIMESTAMP) < CAST(? AS TIMESTAMP))"
+    )
+
+    summary = store.query_df(
+        f"""
+        WITH current_part AS (
+            SELECT *
+            FROM {TABLE_EVENTS}
+            WHERE {current_filter}
+        )
+        SELECT
+            CAST(? AS TIMESTAMP) AS partition_start,
+            CAST(? AS TIMESTAMP) AS partition_end,
+            CONCAT(CAST(? AS VARCHAR), ' to ', CAST(? AS VARCHAR)) AS partition_time,
+            'Date-Time Range' AS analysis_mode,
+            COUNT(*) AS records_found,
+            COUNT(DISTINCT subscriber_number) AS numbers_found,
+            COUNT(DISTINCT searched_cell_id) AS cells_involved,
+            COUNT(DISTINCT imei) AS imei_found,
+            COUNT(DISTINCT imsi) AS imsi_found,
+            MIN(TRY_CAST(event_time AS TIMESTAMP)) AS first_activity,
+            MAX(TRY_CAST(event_time AS TIMESTAMP)) AS last_activity
+        FROM current_part
+        """,
+        [start_time, end_time, start_time, end_time, start_time, end_time],
+    )
+
+    common_numbers = store.query_df(
+        f"""
+        WITH current_part AS (
+            SELECT
+                subscriber_number,
+                COUNT(*) AS selected_period_records,
+                COUNT(DISTINCT searched_cell_id) AS selected_period_cells,
+                COUNT(DISTINCT imei) AS selected_period_imei,
+                COUNT(DISTINCT imsi) AS selected_period_imsi,
+                MIN(TRY_CAST(event_time AS TIMESTAMP)) AS first_seen_selected,
+                MAX(TRY_CAST(event_time AS TIMESTAMP)) AS last_seen_selected
+            FROM {TABLE_EVENTS}
+            WHERE {current_filter}
+              AND subscriber_number IS NOT NULL
+              AND subscriber_number <> ''
+            GROUP BY subscriber_number
+        ),
+        baseline AS (
+            SELECT
+                subscriber_number,
+                COUNT(*) AS other_period_records,
+                COUNT(DISTINCT searched_cell_id) AS other_period_cells,
+                MIN(TRY_CAST(event_time AS TIMESTAMP)) AS first_seen_other,
+                MAX(TRY_CAST(event_time AS TIMESTAMP)) AS last_seen_other
+            FROM {TABLE_EVENTS}
+            WHERE {baseline_filter}
+              AND subscriber_number IS NOT NULL
+              AND subscriber_number <> ''
+            GROUP BY subscriber_number
+        )
+        SELECT
+            current_part.subscriber_number AS mobile_number,
+            current_part.selected_period_records,
+            baseline.other_period_records,
+            current_part.selected_period_cells,
+            baseline.other_period_cells,
+            current_part.first_seen_selected,
+            current_part.last_seen_selected,
+            'Common Number' AS finding_type,
+            'This number is present in selected period and also seen in other loaded data.' AS meaning,
+            'May be a local/repeated number, associate, or linked person. Verify before conclusion.' AS why_it_matters,
+            CASE
+                WHEN current_part.selected_period_cells >= 2 OR baseline.other_period_cells >= 2 THEN 'Medium'
+                ELSE 'Low'
+            END AS priority,
+            CASE
+                WHEN current_part.selected_period_cells >= 2 THEN 'Medium'
+                ELSE 'Low'
+            END AS confidence_level,
+            'Verify with CDR, SDR/CAF, IMEI/IMSI and field information.' AS suggested_action
+        FROM current_part
+        INNER JOIN baseline
+          ON current_part.subscriber_number = baseline.subscriber_number
+        ORDER BY
+            current_part.selected_period_cells DESC,
+            current_part.selected_period_records DESC,
+            baseline.other_period_records DESC
+        LIMIT ?
+        """,
+        [start_time, end_time, start_time, end_time, int(lead_limit)],
+    )
+
+    uncommon_numbers = store.query_df(
+        f"""
+        WITH current_part AS (
+            SELECT
+                subscriber_number,
+                COUNT(*) AS selected_period_records,
+                COUNT(DISTINCT searched_cell_id) AS selected_period_cells,
+                COUNT(DISTINCT imei) AS selected_period_imei,
+                COUNT(DISTINCT imsi) AS selected_period_imsi,
+                MIN(TRY_CAST(event_time AS TIMESTAMP)) AS first_seen_selected,
+                MAX(TRY_CAST(event_time AS TIMESTAMP)) AS last_seen_selected
+            FROM {TABLE_EVENTS}
+            WHERE {current_filter}
+              AND subscriber_number IS NOT NULL
+              AND subscriber_number <> ''
+            GROUP BY subscriber_number
+        ),
+        baseline AS (
+            SELECT DISTINCT subscriber_number
+            FROM {TABLE_EVENTS}
+            WHERE {baseline_filter}
+              AND subscriber_number IS NOT NULL
+              AND subscriber_number <> ''
+        )
+        SELECT
+            current_part.subscriber_number AS mobile_number,
+            current_part.selected_period_records,
+            0 AS other_period_records,
+            current_part.selected_period_cells,
+            current_part.selected_period_imei,
+            current_part.selected_period_imsi,
+            current_part.first_seen_selected,
+            current_part.last_seen_selected,
+            'Uncommon / New Visitor' AS finding_type,
+            'This number is present in selected period but not found in other loaded data.' AS meaning,
+            'May indicate a new visitor, rare presence, or incident-period lead.' AS why_it_matters,
+            CASE
+                WHEN current_part.selected_period_cells >= 3 THEN 'High'
+                WHEN current_part.selected_period_cells >= 2 THEN 'Medium-High'
+                WHEN current_part.selected_period_records >= 10 THEN 'Medium'
+                ELSE 'Low'
+            END AS priority,
+            CASE
+                WHEN current_part.selected_period_cells >= 2 AND current_part.selected_period_records >= 5 THEN 'High'
+                WHEN current_part.selected_period_records >= 3 THEN 'Medium'
+                ELSE 'Low'
+            END AS confidence_level,
+            'Verify this number with CDR/SDR/CAF, IMEI/IMSI continuity, and CCTV/field input.' AS suggested_action
+        FROM current_part
+        LEFT JOIN baseline
+          ON current_part.subscriber_number = baseline.subscriber_number
+        WHERE baseline.subscriber_number IS NULL
+        ORDER BY
+            CASE
+                WHEN current_part.selected_period_cells >= 3 THEN 1
+                WHEN current_part.selected_period_cells >= 2 THEN 2
+                WHEN current_part.selected_period_records >= 10 THEN 3
+                ELSE 4
+            END,
+            current_part.selected_period_records DESC
+        LIMIT ?
+        """,
+        [start_time, end_time, start_time, end_time, int(lead_limit)],
+    )
+
+    multi_cell_presence = store.query_df(
+        f"""
+        SELECT
+            subscriber_number AS mobile_number,
+            COUNT(*) AS records_found,
+            COUNT(DISTINCT searched_cell_id) AS cells_seen,
+            COUNT(DISTINCT imei) AS imei_count,
+            COUNT(DISTINCT imsi) AS imsi_count,
+            MIN(TRY_CAST(event_time AS TIMESTAMP)) AS first_seen,
+            MAX(TRY_CAST(event_time AS TIMESTAMP)) AS last_seen,
+            'Multi-Cell Presence' AS finding_type,
+            'This number appeared in more than one searched cell during selected period.' AS meaning,
+            'Multi-cell presence can be a stronger area-presence or movement lead.' AS why_it_matters,
+            CASE
+                WHEN COUNT(DISTINCT searched_cell_id) >= 3 THEN 'High'
+                ELSE 'Medium-High'
+            END AS priority,
+            CASE
+                WHEN COUNT(*) >= 5 THEN 'High'
+                ELSE 'Medium'
+            END AS confidence_level,
+            'Verify tower route, movement feasibility, CDR location and field/CCTV information.' AS suggested_action
+        FROM {TABLE_EVENTS}
+        WHERE {current_filter}
+          AND subscriber_number IS NOT NULL
+          AND subscriber_number <> ''
+        GROUP BY subscriber_number
+        HAVING COUNT(DISTINCT searched_cell_id) >= 2
+        ORDER BY cells_seen DESC, records_found DESC
+        LIMIT ?
+        """,
+        [start_time, end_time, int(lead_limit)],
+    )
+
+    repeat_presence = store.query_df(
+        f"""
+        WITH current_part AS (
+            SELECT DISTINCT subscriber_number
+            FROM {TABLE_EVENTS}
+            WHERE {current_filter}
+              AND subscriber_number IS NOT NULL
+              AND subscriber_number <> ''
+        ),
+        baseline AS (
+            SELECT
+                subscriber_number,
+                COUNT(*) AS other_period_records,
+                COUNT(DISTINCT DATE_TRUNC('minute', TRY_CAST(event_time AS TIMESTAMP))) AS other_minutes_seen,
+                COUNT(DISTINCT searched_cell_id) AS other_cells_seen
+            FROM {TABLE_EVENTS}
+            WHERE {baseline_filter}
+              AND subscriber_number IS NOT NULL
+              AND subscriber_number <> ''
+            GROUP BY subscriber_number
+        )
+        SELECT
+            current_part.subscriber_number AS mobile_number,
+            baseline.other_period_records,
+            baseline.other_minutes_seen,
+            baseline.other_cells_seen,
+            'Repeat Presence' AS finding_type,
+            'This number is seen in selected period and repeatedly in other loaded data.' AS meaning,
+            'May be local, regular visitor, or associated number depending on case context.' AS why_it_matters,
+            CASE
+                WHEN baseline.other_minutes_seen >= 10 OR baseline.other_cells_seen >= 3 THEN 'Medium'
+                ELSE 'Low'
+            END AS priority,
+            CASE
+                WHEN baseline.other_period_records >= 20 THEN 'Medium'
+                ELSE 'Low'
+            END AS confidence_level,
+            'Do not treat as suspect only because it is repeated. Verify role and location context.' AS suggested_action
+        FROM current_part
+        INNER JOIN baseline
+          ON current_part.subscriber_number = baseline.subscriber_number
+        ORDER BY
+            baseline.other_minutes_seen DESC,
+            baseline.other_period_records DESC
+        LIMIT ?
+        """,
+        [start_time, end_time, start_time, end_time, int(lead_limit)],
+    )
+
+    device_consistency = store.query_df(
+        f"""
+        SELECT
+            subscriber_number AS mobile_number,
+            COUNT(*) AS records_found,
+            COUNT(DISTINCT imei) AS imei_count,
+            COUNT(DISTINCT imsi) AS imsi_count,
+            COUNT(DISTINCT searched_cell_id) AS cells_seen,
+            MIN(TRY_CAST(event_time AS TIMESTAMP)) AS first_seen,
+            MAX(TRY_CAST(event_time AS TIMESTAMP)) AS last_seen,
+            'IMEI/IMSI Consistency' AS finding_type,
+            CASE
+                WHEN COUNT(DISTINCT imei) > 1 AND COUNT(DISTINCT imsi) > 1
+                    THEN 'Multiple device and SIM identifiers seen.'
+                WHEN COUNT(DISTINCT imei) > 1
+                    THEN 'Multiple device identifiers seen.'
+                WHEN COUNT(DISTINCT imsi) > 1
+                    THEN 'Multiple SIM identifiers seen.'
+                ELSE 'Device and SIM identifiers appear consistent in selected period.'
+            END AS meaning,
+            CASE
+                WHEN COUNT(DISTINCT imei) > 1 OR COUNT(DISTINCT imsi) > 1
+                    THEN 'May indicate SIM/device change, shared handset, data issue, or multiple records.'
+                ELSE 'Consistent identifiers increase confidence but still need verification.'
+            END AS why_it_matters,
+            CASE
+                WHEN COUNT(DISTINCT imei) > 1 OR COUNT(DISTINCT imsi) > 1
+                    THEN 'Medium'
+                ELSE 'Low'
+            END AS priority,
+            CASE
+                WHEN COUNT(*) >= 3 THEN 'Medium'
+                ELSE 'Low'
+            END AS confidence_level,
+            'Verify IMEI/IMSI with CDR, SDR/CAF and operator records before conclusion.' AS suggested_action
+        FROM {TABLE_EVENTS}
+        WHERE {current_filter}
+          AND subscriber_number IS NOT NULL
+          AND subscriber_number <> ''
+        GROUP BY subscriber_number
+        ORDER BY
+            imei_count DESC,
+            imsi_count DESC,
+            records_found DESC
+        LIMIT ?
+        """,
+        [start_time, end_time, int(lead_limit)],
+    )
+
+    suspicious_timing = store.query_df(
+        f"""
+        SELECT
+            subscriber_number AS mobile_number,
+            COUNT(*) AS records_found,
+            COUNT(DISTINCT searched_cell_id) AS cells_seen,
+            COUNT(DISTINCT imei) AS imei_count,
+            COUNT(DISTINCT imsi) AS imsi_count,
+            MIN(TRY_CAST(event_time AS TIMESTAMP)) AS first_seen,
+            MAX(TRY_CAST(event_time AS TIMESTAMP)) AS last_seen,
+            'Suspicious Timing / High Activity' AS finding_type,
+            'This number has notable activity during the selected period.' AS meaning,
+            'High activity during an important period may be useful for investigation, but needs verification.' AS why_it_matters,
+            CASE
+                WHEN COUNT(DISTINCT searched_cell_id) >= 2 AND COUNT(*) >= 10 THEN 'High'
+                WHEN COUNT(*) >= 10 THEN 'Medium'
+                ELSE 'Low'
+            END AS priority,
+            CASE
+                WHEN COUNT(*) >= 10 OR COUNT(DISTINCT searched_cell_id) >= 2 THEN 'Medium'
+                ELSE 'Low'
+            END AS confidence_level,
+            'Compare timing with incident time, CCTV/field input, route and CDR location.' AS suggested_action
+        FROM {TABLE_EVENTS}
+        WHERE {current_filter}
+          AND subscriber_number IS NOT NULL
+          AND subscriber_number <> ''
+        GROUP BY subscriber_number
+        HAVING COUNT(*) >= 5 OR COUNT(DISTINCT searched_cell_id) >= 2
+        ORDER BY
+            cells_seen DESC,
+            records_found DESC
+        LIMIT ?
+        """,
+        [start_time, end_time, int(lead_limit)],
+    )
+
+    priority_leads = store.query_df(
+        f"""
+        WITH current_part AS (
+            SELECT
+                subscriber_number,
+                COUNT(*) AS selected_period_records,
+                COUNT(DISTINCT searched_cell_id) AS selected_period_cells,
+                COUNT(DISTINCT imei) AS imei_count,
+                COUNT(DISTINCT imsi) AS imsi_count,
+                MIN(TRY_CAST(event_time AS TIMESTAMP)) AS first_seen,
+                MAX(TRY_CAST(event_time AS TIMESTAMP)) AS last_seen
+            FROM {TABLE_EVENTS}
+            WHERE {current_filter}
+              AND subscriber_number IS NOT NULL
+              AND subscriber_number <> ''
+            GROUP BY subscriber_number
+        ),
+        baseline AS (
+            SELECT
+                subscriber_number,
+                COUNT(*) AS baseline_records
+            FROM {TABLE_EVENTS}
+            WHERE {baseline_filter}
+              AND subscriber_number IS NOT NULL
+              AND subscriber_number <> ''
+            GROUP BY subscriber_number
+        )
+        SELECT
+            current_part.subscriber_number AS mobile_number,
+            current_part.selected_period_records,
+            COALESCE(baseline.baseline_records, 0) AS baseline_records,
+            current_part.selected_period_cells,
+            current_part.imei_count,
+            current_part.imsi_count,
+            current_part.first_seen,
+            current_part.last_seen,
+            CASE
+                WHEN baseline.subscriber_number IS NULL AND current_part.selected_period_cells >= 2
+                    THEN 'High'
+                WHEN baseline.subscriber_number IS NULL AND current_part.selected_period_records >= 5
+                    THEN 'Medium'
+                WHEN current_part.selected_period_cells >= 2
+                    THEN 'Medium-High'
+                WHEN current_part.selected_period_records >= 10
+                    THEN 'Medium'
+                ELSE 'Low'
+            END AS priority,
+            CASE
+                WHEN current_part.selected_period_cells >= 2 AND current_part.selected_period_records >= 5
+                    THEN 'High'
+                WHEN current_part.selected_period_records >= 3
+                    THEN 'Medium'
+                ELSE 'Low'
+            END AS confidence_level,
+            CASE
+                WHEN baseline.subscriber_number IS NULL AND current_part.selected_period_cells >= 2
+                    THEN 'New/rare number with multi-cell presence'
+                WHEN baseline.subscriber_number IS NULL
+                    THEN 'New/rare number in selected period'
+                WHEN current_part.selected_period_cells >= 2
+                    THEN 'Common number with multi-cell presence'
+                WHEN current_part.selected_period_records >= 10
+                    THEN 'High activity in selected period'
+                ELSE 'Low-volume presence'
+            END AS simple_reason,
+            'Verify priority leads with CDR/SDR/CAF, IMEI/IMSI and field/CCTV information.' AS suggested_action
+        FROM current_part
+        LEFT JOIN baseline
+          ON current_part.subscriber_number = baseline.subscriber_number
+        ORDER BY
+            CASE
+                WHEN baseline.subscriber_number IS NULL AND current_part.selected_period_cells >= 2 THEN 1
+                WHEN baseline.subscriber_number IS NULL AND current_part.selected_period_records >= 5 THEN 2
+                WHEN current_part.selected_period_cells >= 2 THEN 3
+                WHEN current_part.selected_period_records >= 10 THEN 4
+                ELSE 9
+            END,
+            current_part.selected_period_records DESC
+        LIMIT ?
+        """,
+        [start_time, end_time, start_time, end_time, int(lead_limit)],
+    )
+
+    lead_summary = pd.DataFrame(
+        [
+            {
+                "finding": "Common Numbers",
+                "records": len(common_numbers),
+                "meaning": "Numbers seen in selected period and also elsewhere in loaded data.",
+            },
+            {
+                "finding": "Uncommon / New Visitor",
+                "records": len(uncommon_numbers),
+                "meaning": "Numbers seen in selected period but not seen elsewhere in loaded data.",
+            },
+            {
+                "finding": "Multi-Cell Presence",
+                "records": len(multi_cell_presence),
+                "meaning": "Numbers seen in more than one searched cell.",
+            },
+            {
+                "finding": "Repeat Presence",
+                "records": len(repeat_presence),
+                "meaning": "Numbers repeatedly seen in other loaded data also.",
+            },
+            {
+                "finding": "IMEI/IMSI Consistency",
+                "records": len(device_consistency),
+                "meaning": "Device/SIM consistency or possible change indicators.",
+            },
+            {
+                "finding": "Suspicious Timing",
+                "records": len(suspicious_timing),
+                "meaning": "Numbers with notable activity during the selected period.",
+            },
+            {
+                "finding": "Priority Leads",
+                "records": len(priority_leads),
+                "meaning": "Combined ranking based on rarity, cells, activity and confidence.",
+            },
+        ]
+    )
+
+    return {
+        "summary": summary,
+        "lead_summary": lead_summary,
+        "common_numbers": common_numbers,
+        "uncommon_numbers": uncommon_numbers,
+        "multi_cell_presence": multi_cell_presence,
+        "repeat_presence": repeat_presence,
+        "device_consistency": device_consistency,
+        "suspicious_timing": suspicious_timing,
+        "priority_leads": priority_leads,
+    }
+
+
+def tower_ipdr_partwise_range_report_root(case_id: str) -> Path:
+    return (
+        Path("cases")
+        / "active"
+        / str(case_id)
+        / "reports"
+        / "tower_dump"
+        / "ipdr"
+        / "partwise_range"
+    )
+
+
+def _report_json_safe(value: Any) -> Any:
+    if isinstance(value, dict):
+        return {str(k): _report_json_safe(v) for k, v in value.items()}
+
+    if isinstance(value, list):
+        return [_report_json_safe(item) for item in value]
+
+    if isinstance(value, tuple):
+        return [_report_json_safe(item) for item in value]
+
+    try:
+        if pd.isna(value):
+            return None
+    except Exception:
+        pass
+
+    if hasattr(value, "isoformat"):
+        try:
+            return value.isoformat()
+        except Exception:
+            return str(value)
+
+    return value
+
+
+def export_tower_ipdr_partwise_range_report(
+    case_id: str,
+    parts: list[dict[str, Any]],
+    *,
+    lead_limit: int = 50,
+    max_leads_in_text: int = 20,
+) -> dict[str, Any]:
+    """Export Tower IPDR report for saved Date-Time Parts.
+
+    Main production export:
+    - Each saved Date-Time Part is analyzed by range:
+      start_time <= event_time < end_time
+    - Officer-friendly TXT report is saved.
+    - Detailed CSV tables are saved for every part.
+    - manifest.json records the export details.
+    """
+
+    import io
+    from contextlib import redirect_stdout
+
+    if not parts:
+        raise ValueError("Date-Time Parts available nahi hain.")
+
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    run_id = f"tower_ipdr_partwise_range_{timestamp}"
+
+    output_dir = tower_ipdr_partwise_range_report_root(case_id) / run_id
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    saved_files: dict[str, str] = {}
+    part_summaries: list[dict[str, Any]] = []
+    part_manifests: list[dict[str, Any]] = []
+
+    text_buffer = io.StringIO()
+
+    print("=" * 78, file=text_buffer)
+    print("TOWER IPDR PART-WISE INVESTIGATION REPORT", file=text_buffer)
+    print("=" * 78, file=text_buffer)
+    print(f"Case ID     : {case_id}", file=text_buffer)
+    print(f"Report Run  : {run_id}", file=text_buffer)
+    print(f"Total Parts : {len(parts)}", file=text_buffer)
+    print("", file=text_buffer)
+    print("Important Note:", file=text_buffer)
+    print(
+        "This report gives investigation leads. "
+        "Every lead must be verified with CDR, SDR/CAF, IMEI/IMSI, "
+        "operator records and field information before conclusion.",
+        file=text_buffer,
+    )
+    print("", file=text_buffer)
+
+    try:
+        from modules.cases.date_time_partitions import find_overlapping_date_time_parts
+
+        overlap_warnings = find_overlapping_date_time_parts(parts)
+    except Exception:
+        overlap_warnings = []
+
+    if overlap_warnings:
+        print("-" * 78, file=text_buffer)
+        print("DATE-TIME PART WARNING", file=text_buffer)
+        print("-" * 78, file=text_buffer)
+
+        for warning in overlap_warnings:
+            print(f"[!] {warning.get('message')}", file=text_buffer)
+            print(f"    {warning.get('left_part')} : {warning.get('left_range')}", file=text_buffer)
+            print(f"    {warning.get('right_part')}: {warning.get('right_range')}", file=text_buffer)
+
+        print(
+            "Meaning: Overlap intentional ho sakta hai, lekin comparison karte time "
+            "dhyan rakhein ki same records multiple parts me aa sakte hain.",
+            file=text_buffer,
+        )
+        print("", file=text_buffer)
+
+    for part in parts:
+        part_no = int(part.get("part_no", 0))
+        part_name = str(part.get("part_name") or f"Part {part_no}")
+        start_time = str(part.get("start_time"))
+        end_time = str(part.get("end_time"))
+
+        print("\n" + "#" * 78, file=text_buffer)
+        print(f"{part_name.upper()} REPORT", file=text_buffer)
+        print("#" * 78, file=text_buffer)
+        print(f"Period: {start_time} to {end_time}", file=text_buffer)
+
+        result = tower_ipdr_range_investigation_summary(
+            case_id,
+            start_time,
+            end_time,
+            lead_limit=lead_limit,
+        )
+
+        part_prefix = f"part_{part_no:02d}"
+
+        for table_name, dataframe in result.items():
+            if not isinstance(dataframe, pd.DataFrame):
+                continue
+
+            csv_path = output_dir / f"{part_prefix}_{table_name}.csv"
+            dataframe.to_csv(csv_path, index=False)
+            saved_files[f"{part_prefix}_{table_name}"] = str(csv_path)
+
+        summary_df = result.get("summary", pd.DataFrame())
+
+        if isinstance(summary_df, pd.DataFrame) and not summary_df.empty:
+            summary_row = summary_df.iloc[0].to_dict()
+        else:
+            summary_row = {}
+
+        part_summary = {
+            "part_no": part_no,
+            "part_name": part_name,
+            "start_time": start_time,
+            "end_time": end_time,
+            "records_found": summary_row.get("records_found", 0),
+            "numbers_found": summary_row.get("numbers_found", 0),
+            "cells_involved": summary_row.get("cells_involved", 0),
+            "first_activity": summary_row.get("first_activity", ""),
+            "last_activity": summary_row.get("last_activity", ""),
+        }
+        part_summaries.append(part_summary)
+
+        with redirect_stdout(text_buffer):
+            print_tower_ipdr_investigation_summary(
+                result,
+                max_leads=max_leads_in_text,
+            )
+
+        part_manifests.append(
+            {
+                "part_no": part_no,
+                "part_name": part_name,
+                "start_time": start_time,
+                "end_time": end_time,
+                "saved_tables_prefix": part_prefix,
+                "summary": _report_json_safe(part_summary),
+            }
+        )
+
+    all_parts_summary = pd.DataFrame(part_summaries)
+    all_parts_summary_path = output_dir / "all_parts_summary.csv"
+    all_parts_summary.to_csv(all_parts_summary_path, index=False)
+    saved_files["all_parts_summary"] = str(all_parts_summary_path)
+
+    text_path = output_dir / "investigation_summary_all_parts.txt"
+    text_path.write_text(text_buffer.getvalue(), encoding="utf-8")
+    saved_files["investigation_summary_all_parts"] = str(text_path)
+
+    manifest_path = output_dir / "manifest.json"
+    saved_files["manifest"] = str(manifest_path)
+
+    manifest = {
+        "case_id": str(case_id),
+        "run_id": run_id,
+        "created_at": _now_iso(),
+        "analysis_type": "Tower IPDR Part-wise Date-Time Range Analysis",
+        "range_rule": "start_time <= event_time < end_time",
+        "display_rule": "Start aur End Date-Time ke beech ka data",
+        "parts_count": len(parts),
+        "lead_limit": int(lead_limit),
+        "max_leads_in_text": int(max_leads_in_text),
+        "output_dir": str(output_dir),
+        "overlap_warnings": _report_json_safe(overlap_warnings),
+        "parts": _report_json_safe(part_manifests),
+        "saved_files": _report_json_safe(saved_files),
+        "note": (
+            "This report provides investigation leads. "
+            "Final conclusion requires verification from independent sources."
+        ),
+    }
+
+    manifest_path = output_dir / "manifest.json"
+    manifest_path.write_text(
+        json.dumps(
+            _report_json_safe(manifest),
             ensure_ascii=False,
             indent=2,
             sort_keys=True,
