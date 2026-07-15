@@ -1118,3 +1118,153 @@ def tower_ipdr_investigation_summary(
         "device_consistency": device_consistency,
         "priority_leads": priority_leads,
     }
+
+
+def _safe_first_value(dataframe: pd.DataFrame, column: str, default: Any = "") -> Any:
+    if not isinstance(dataframe, pd.DataFrame) or dataframe.empty:
+        return default
+
+    if column not in dataframe.columns:
+        return default
+
+    value = dataframe.iloc[0].get(column, default)
+
+    try:
+        if pd.isna(value):
+            return default
+    except Exception:
+        pass
+
+    return value
+
+
+def _print_simple_leads(
+    dataframe: pd.DataFrame,
+    *,
+    number_col: str = "mobile_number",
+    max_rows: int = 10,
+) -> None:
+    if not isinstance(dataframe, pd.DataFrame) or dataframe.empty:
+        print("   No important lead found in this section.")
+        return
+
+    for index, row in dataframe.head(max_rows).reset_index(drop=True).iterrows():
+        number = row.get(number_col, "")
+        priority = row.get("priority", "")
+        confidence = row.get("confidence_level", "")
+        reason = (
+            row.get("simple_reason", "")
+            or row.get("meaning", "")
+            or row.get("finding_type", "")
+        )
+        action = row.get("suggested_action", "")
+
+        print(f"   {index + 1}. Mobile Number : {number}")
+        print(f"      Priority      : {priority or 'Not specified'}")
+        print(f"      Confidence    : {confidence or 'Not specified'}")
+        print(f"      Why important : {reason or 'Needs verification'}")
+
+        if action:
+            print(f"      Next Action   : {action}")
+
+        print()
+
+
+def print_tower_ipdr_investigation_summary(
+    result: dict[str, pd.DataFrame],
+    *,
+    max_leads: int = 10,
+) -> None:
+    """Print Tower IPDR partition analysis in simple investigation language."""
+
+    summary = result.get("summary", pd.DataFrame())
+    lead_summary = result.get("lead_summary", pd.DataFrame())
+    common_numbers = result.get("common_numbers", pd.DataFrame())
+    uncommon_numbers = result.get("uncommon_numbers", pd.DataFrame())
+    multi_cell_presence = result.get("multi_cell_presence", pd.DataFrame())
+    repeat_presence = result.get("repeat_presence", pd.DataFrame())
+    device_consistency = result.get("device_consistency", pd.DataFrame())
+    priority_leads = result.get("priority_leads", pd.DataFrame())
+
+    partition_time = _safe_first_value(summary, "partition_time", "")
+    analysis_mode = _safe_first_value(summary, "analysis_mode", "")
+    records_found = _safe_first_value(summary, "records_found", 0)
+    numbers_found = _safe_first_value(summary, "numbers_found", 0)
+    cells_involved = _safe_first_value(summary, "cells_involved", 0)
+    first_activity = _safe_first_value(summary, "first_activity", "")
+    last_activity = _safe_first_value(summary, "last_activity", "")
+
+    print("\n" + "=" * 78)
+    print("TOWER IPDR INVESTIGATION SUMMARY")
+    print("=" * 78)
+    print(f"Selected Date-Time : {partition_time}")
+    print(f"Analysis Mode      : {analysis_mode}")
+    print(f"Records Found      : {records_found:,}")
+    print(f"Numbers Found      : {numbers_found:,}")
+    print(f"Searched Cells     : {cells_involved:,}")
+    print(f"First Activity     : {first_activity}")
+    print(f"Last Activity      : {last_activity}")
+
+    print("\n" + "-" * 78)
+    print("IMPORTANT FINDINGS")
+    print("-" * 78)
+
+    if isinstance(lead_summary, pd.DataFrame) and not lead_summary.empty:
+        for _, row in lead_summary.iterrows():
+            print(
+                f"- {row.get('finding', '')}: "
+                f"{row.get('records', 0)} lead(s)"
+            )
+            print(f"  Meaning: {row.get('meaning', '')}")
+    else:
+        print("- No finding summary available.")
+
+    print("\n" + "-" * 78)
+    print("TOP PRIORITY LEADS")
+    print("-" * 78)
+    _print_simple_leads(priority_leads, max_rows=max_leads)
+
+    print("\n" + "-" * 78)
+    print("COMMON NUMBERS")
+    print("-" * 78)
+    print("Meaning: Numbers seen at selected time and also seen elsewhere in loaded data.")
+    print("Use: Check whether these are local, repeated visitor, associate, or linked person.")
+    _print_simple_leads(common_numbers, max_rows=max_leads)
+
+    print("\n" + "-" * 78)
+    print("UNCOMMON / NEW VISITOR NUMBERS")
+    print("-" * 78)
+    print("Meaning: Numbers seen at selected time but not found elsewhere in loaded data.")
+    print("Use: These may be new visitor, rare presence, or incident-time leads.")
+    _print_simple_leads(uncommon_numbers, max_rows=max_leads)
+
+    print("\n" + "-" * 78)
+    print("MULTI-CELL PRESENCE")
+    print("-" * 78)
+    print("Meaning: Numbers seen on more than one searched cell during selected time.")
+    print("Use: This may indicate stronger area presence or movement.")
+    _print_simple_leads(multi_cell_presence, max_rows=max_leads)
+
+    print("\n" + "-" * 78)
+    print("REPEAT PRESENCE")
+    print("-" * 78)
+    print("Meaning: Numbers repeatedly seen in other loaded data also.")
+    print("Use: Could be local/repeated visitor; do not treat as suspect without verification.")
+    _print_simple_leads(repeat_presence, max_rows=max_leads)
+
+    print("\n" + "-" * 78)
+    print("IMEI / IMSI CONSISTENCY")
+    print("-" * 78)
+    print("Meaning: Checks whether same number shows same or multiple device/SIM identifiers.")
+    print("Use: Helps verify SIM/device continuity or possible device/SIM change.")
+    _print_simple_leads(device_consistency, max_rows=max_leads)
+
+    print("\n" + "-" * 78)
+    print("SUGGESTED VERIFICATION")
+    print("-" * 78)
+    print("1. Verify high-priority and medium-priority numbers first.")
+    print("2. Check CDR/SDR/CAF details for identity and ownership.")
+    print("3. Verify IMEI/IMSI continuity with operator records.")
+    print("4. Compare with CCTV, field input, suspect route and tower location.")
+    print("5. Do not conclude only from tower/IPDR presence; corroboration is required.")
+    print("=" * 78)
