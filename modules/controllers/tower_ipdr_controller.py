@@ -1220,6 +1220,27 @@ def _run_complete_tower_ipdr_analysis(case: dict[str, Any]) -> None:
             except Exception:
                 return "0"
 
+        def _summary_value(metric_name: str) -> str:
+            matched = summary.loc[summary["metric"] == metric_name, "value"]
+            if matched.empty:
+                return "0"
+
+            value = str(matched.iloc[0])
+            try:
+                numeric_value = float(value)
+                if numeric_value.is_integer():
+                    return f"{int(numeric_value):,}"
+            except Exception:
+                pass
+
+            return value
+
+        def _count_rows(dataframe) -> str:
+            try:
+                return f"{len(dataframe):,}"
+            except Exception:
+                return "0"
+
         print("=" * 78)
         print("TOWER IPDR COMPLETE ANALYSIS GENERATED")
         print("=" * 78)
