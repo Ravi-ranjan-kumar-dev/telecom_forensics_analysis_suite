@@ -172,7 +172,10 @@ def _indicators_from_cached(results: dict[str, Any]) -> pd.DataFrame:
     ).reset_index(drop=True)
 
 
-def build_tower_dump_analysis_bundle(df: pd.DataFrame) -> dict[str, Any]:
+def build_tower_dump_analysis_bundle(
+    df: pd.DataFrame,
+    presence_tables_override: dict[str, pd.DataFrame] | None = None,
+) -> dict[str, Any]:
     results: dict[str, Any] = {}
     status: list[dict[str, Any]] = []
     errors: list[dict[str, Any]] = []
@@ -213,13 +216,35 @@ def build_tower_dump_analysis_bundle(df: pd.DataFrame) -> dict[str, Any]:
                 }
             )
 
-    presence_tables: dict[str, pd.DataFrame] | None = None
+    presence_tables: dict[str, pd.DataFrame] | None = presence_tables_override
+
+    presence_key_map = {
+        "common_numbers": "tower_cdr_common_numbers",
+        "uncommon_numbers": "tower_cdr_uncommon_numbers",
+        "multi_cell_presence": "tower_cdr_multi_cell_presence",
+        "device_consistency": "tower_cdr_device_consistency",
+        "suspicious_timing": "tower_cdr_suspicious_timing",
+        "priority_leads": "tower_cdr_priority_leads",
+    }
 
     def presence_table(name: str) -> pd.DataFrame:
         nonlocal presence_tables
+
         if presence_tables is None:
             presence_tables = build_tower_cdr_presence_intelligence(df)
-        return presence_tables.get(name, pd.DataFrame())
+
+        result = presence_tables.get(name)
+
+        if result is None:
+            result = presence_tables.get(
+                presence_key_map.get(name, ""),
+                pd.DataFrame(),
+            )
+
+        if isinstance(result, pd.DataFrame):
+            return result
+
+        return pd.DataFrame()
 
     execute("tower_dump_summary", lambda: tower_dump_summary(df))
     execute("operator_summary", lambda: operator_summary(df))

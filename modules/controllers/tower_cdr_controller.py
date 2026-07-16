@@ -152,10 +152,22 @@ def _collect_date_time_pairs() -> list[tuple[str, str]]:
 def _run_complete_analysis(
     case: dict[str, Any],
 ) -> dict[str, Any] | None:
-    from modules.controllers.tower_controller import run_tower_dump_analysis
+    from modules.analysis.towerdump import build_tower_dump_analysis_bundle
+    from modules.analysis.towerdump.duckdb_presence import (
+        build_tower_cdr_duckdb_presence,
+    )
+    from modules.loader.tower_dump_loader import load_tower_dump_case
+    from modules.pipeline.scalable_analysis_pipeline import (
+        run_scalable_analysis_pipeline,
+    )
     from modules.reporting.tower_dump_console import print_tower_dump_report
     from modules.reporting.tower_dump_excel import (
         generate_tower_dump_excel_report,
+    )
+    from modules.staging.tower_cdr_staging import (
+        TOWER_CDR_DATASET,
+        TOWER_CDR_TABLE,
+        TOWER_CDR_WORKFLOW,
     )
 
     case_id = str(case["case_id"])
@@ -169,22 +181,93 @@ def _run_complete_analysis(
     )
 
     try:
-        result = run_tower_dump_analysis(
+        pipeline_result = run_scalable_analysis_pipeline(
+            case_id=case_id,
+            workflow=TOWER_CDR_WORKFLOW,
             input_folder=input_folder,
-            enrich_cgi=True,
-            recursive=True,
+            loader=load_tower_dump_case,
+            loader_kwargs={
+                "enrich_cgi": True,
+                "recursive": True,
+                "remove_exact_duplicates": False,
+            },
+            table_name=TOWER_CDR_TABLE,
+            dataset_name=TOWER_CDR_DATASET,
+            dataframe_key="df",
+            sql_analysis=build_tower_cdr_duckdb_presence,
+            sql_analysis_kwargs={"top_limit": 200},
+            status_title="TOWER CDR FAST ANALYSIS BACKEND READY",
+            print_status=True,
         )
 
-        if not isinstance(result, dict) or not result.get("ok"):
+        load_result = pipeline_result.get("load_result", {})
+        dataframe = pipeline_result.get("dataframe")
+
+        if not isinstance(load_result, dict) or not load_result.get("ok"):
             errors = (
-                result.get("errors", [])
-                if isinstance(result, dict)
+                load_result.get("errors", [])
+                if isinstance(load_result, dict)
                 else []
             )
             raise ValueError(
                 "Tower CDR Dump load failed. "
                 + " | ".join(map(str, errors))
             )
+
+        if not isinstance(dataframe, pd.DataFrame) or dataframe.empty:
+            raise ValueError("Koi valid Tower CDR Dump record load nahi hua.")
+
+        sql_presence_tables = pipeline_result.get("sql_analysis", {}) or {}
+
+        analysis = build_tower_dump_analysis_bundle(
+            dataframe,
+            presence_tables_override=sql_presence_tables,
+        )
+
+        status = analysis.get("status")
+        if isinstance(status, pd.DataFrame):
+            sql_rows = pipeline_result.get("sql_result_rows", {}) or {}
+            sql_status = pd.DataFrame(
+                [
+                    {
+                        "analysis": "tower_cdr_duckdb_sql_presence_engine",
+                        "status": "COMPLETED",
+                        "rows": int(sql_rows.get("subscriber_rollup", 0) or 0),
+                        "duration_ms": pipeline_result.get("timings", {}).get(
+                            "sql_analysis_ms",
+                            0,
+                        ),
+                        "error": "",
+                    }
+                ]
+            )
+
+            analysis["status"] = pd.concat(
+                [sql_status, status],
+                ignore_index=True,
+            )
+            analysis["function_count"] = len(analysis["status"])
+            analysis["completed_count"] = int(
+                (analysis["status"]["status"] == "COMPLETED").sum()
+            )
+            analysis["failed_count"] = int(
+                (analysis["status"]["status"] == "FAILED").sum()
+            )
+
+        result = {
+            **load_result,
+            "df": dataframe,
+            "analysis": analysis,
+            "scalable_pipeline": {
+                "stage": pipeline_result.get("stage", {}),
+                "sql_result_rows": pipeline_result.get("sql_result_rows", {}),
+                "timings": pipeline_result.get("timings", {}),
+                "pipeline_state_path": pipeline_result.get(
+                    "pipeline_state_path",
+                    "",
+                ),
+            },
+        }
 
         print_tower_dump_report(result, row_limit=25)
 
@@ -200,49 +283,12 @@ def _run_complete_analysis(
             report_path=excel_path,
         )
 
-        dataframe = result.get("df")
-
-        if isinstance(dataframe, pd.DataFrame) and not dataframe.empty:
-            try:
-                from modules.staging.tower_cdr_staging import (
-                    print_tower_cdr_stage_summary,
-                    stage_tower_cdr_dataframe,
-                )
-
-                stage_payload = stage_tower_cdr_dataframe(
-                    case_id=case_id,
-                    dataframe=dataframe,
-                    input_folder=input_folder,
-                    stage_reason="complete_tower_cdr_analysis",
-                )
-                result["scalable_stage"] = stage_payload
-                print_tower_cdr_stage_summary(stage_payload)
-
-            except Exception as stage_error:
-                print(
-                    "[-] Tower CDR scalable backend staging failed: "
-                    f"{type(stage_error).__name__}: {stage_error}"
-                )
-                print(
-                    "[!] Main Tower CDR report continue hoga. "
-                    "Staging issue ko baad me fix kiya ja sakta hai."
-                )
-
         register_analysis_run(
             case_id,
             analysis_type="TOWER_CDR_DUMP",
             status="COMPLETED",
-            input_records=(
-                len(dataframe)
-                if isinstance(dataframe, pd.DataFrame)
-                else 0
-            ),
-            output_records=(
-                result.get("analysis", {}).get(
-                    "completed_count",
-                    0,
-                )
-            ),
+            input_records=len(dataframe),
+            output_records=analysis.get("completed_count", 0),
             report_path=str(excel_path),
         )
 
@@ -259,7 +305,6 @@ def _run_complete_analysis(
         )
         print(f"[-] Tower Dump analysis failed: {error}")
         return None
-
 
 def _run_partition_analysis(
     case: dict[str, Any],
