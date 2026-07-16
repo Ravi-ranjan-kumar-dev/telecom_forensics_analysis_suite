@@ -97,11 +97,11 @@ def _input_folder(case_id: str) -> Path:
 
 def _collect_date_time_pairs() -> list[tuple[str, str]]:
     print("\n" + "=" * 72)
-    print("ENTER CCTV DATE AND TIME")
+    print("ENTER DATE-TIME PARTS")
     print("=" * 72)
     print("Date example : 11-06-2026")
     print("Time example : 19:50 or 19:50:00")
-    print("Input complete hone par next Date blank chhodkar Enter dabayein.")
+    print("Sabhi parts enter karne ke baad Date blank chhodkar Enter dabayein.")
 
     pairs: list[tuple[str, str]] = []
     number = 1
@@ -132,11 +132,11 @@ def _print_sightings(case_id: str) -> None:
     sightings = list_sightings(case_id)
 
     print("\n" + "=" * 92)
-    print("SAVED CCTV DATE-TIME WINDOWS")
+    print("SAVED DATE-TIME PARTS")
     print("=" * 92)
 
     if not sightings:
-        print("No CCTV date-time configured.")
+        print("No date-time part configured.")
         return
 
     print(
@@ -229,7 +229,7 @@ def _execute(
 
             if not sightings:
                 raise CaseError(
-                    "CCTV date-time windows configured nahi hain."
+                    "Date-time parts configured nahi hain."
                 )
 
             partition = create_gprs_partitions(

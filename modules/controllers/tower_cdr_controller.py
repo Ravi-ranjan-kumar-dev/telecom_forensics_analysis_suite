@@ -95,7 +95,7 @@ def _print_sightings(case_id: str) -> None:
     print("=" * 94)
 
     if not sightings:
-        print("No CCTV date-time configured.")
+        print("No date-time part configured.")
         return
 
     print(
@@ -118,25 +118,25 @@ def _collect_date_time_pairs() -> list[tuple[str, str]]:
     """Ask only date and time. Blank date completes the input."""
 
     print("\n" + "=" * 72)
-    print("ENTER CCTV DATE AND TIME")
+    print("ENTER DATE-TIME PARTS")
     print("=" * 72)
     print("Date example : 10-07-2026")
     print("Time example : 13:00 or 13:00:00")
-    print("Sabhi sightings enter karne ke baad Date blank chhodkar Enter dabayein.")
+    print("Sabhi parts enter karne ke baad Date blank chhodkar Enter dabayein.")
 
     pairs: list[tuple[str, str]] = []
     number = 1
 
     while True:
         date_value = input(
-            f"\nSighting {number} - Date (blank = finish): "
+            f"\nPart {number} - Date (blank = finish): "
         ).strip()
 
         if not date_value:
             break
 
         time_value = input(
-            f"Sighting {number} - Time: "
+            f"Part {number} - Time: "
         ).strip()
 
         if not time_value:
@@ -419,7 +419,7 @@ def _new_partition_workflow(
     pairs = _collect_date_time_pairs()
 
     if not pairs:
-        print("[-] Koi CCTV date-time enter nahi hua.")
+        print("[-] Koi date-time part enter nahi hua.")
         return None
 
     records = replace_simple_sightings(

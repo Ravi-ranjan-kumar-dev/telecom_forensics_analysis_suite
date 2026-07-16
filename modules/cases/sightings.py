@@ -56,7 +56,7 @@ def _parse_datetime(value: str | datetime) -> datetime:
         return datetime.fromisoformat(text).replace(tzinfo=None, microsecond=0)
     except ValueError as error:
         raise CaseError(
-            "CCTV timestamp invalid hai. Example: 10-07-2026 13:00:00"
+            "Date-time invalid hai. Example: 10-07-2026 13:00:00"
         ) from error
 
 
