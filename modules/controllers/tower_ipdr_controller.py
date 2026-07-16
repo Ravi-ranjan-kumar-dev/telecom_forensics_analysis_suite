@@ -1199,9 +1199,79 @@ def _run_complete_tower_ipdr_analysis(case: dict[str, Any]) -> None:
 
         summary_path.write_text("\n".join(summary_lines), encoding="utf-8")
 
+        def _summary_value(metric_name: str) -> str:
+            matched = summary.loc[summary["metric"] == metric_name, "value"]
+            if matched.empty:
+                return "0"
+
+            value = str(matched.iloc[0])
+            try:
+                numeric_value = float(value)
+                if numeric_value.is_integer():
+                    return f"{int(numeric_value):,}"
+            except Exception:
+                pass
+
+            return value
+
+        def _count_rows(dataframe) -> str:
+            try:
+                return f"{len(dataframe):,}"
+            except Exception:
+                return "0"
+
         print("=" * 78)
         print("TOWER IPDR COMPLETE ANALYSIS GENERATED")
         print("=" * 78)
+        print()
+        print("QUICK INVESTIGATION SUMMARY")
+        print("-" * 78)
+        print(f"Total Events        : {_summary_value('Total Events')}")
+        print(f"Unique Subscribers  : {_summary_value('Unique Subscribers')}")
+        print(f"Unique IMEI         : {_summary_value('Unique IMEI')}")
+        print(f"Unique IMSI         : {_summary_value('Unique IMSI')}")
+        print(f"Unique Cells        : {_summary_value('Unique Searched Cells')}")
+        print(f"Priority Leads      : {_count_rows(priority_leads)}")
+        print(f"Multi-Cell Leads    : {_count_rows(multi_cell_presence)}")
+        print(f"Rare Presence Leads : {_count_rows(rare_presence)}")
+        print(f"Shared IMEI         : {_count_rows(shared_imei)}")
+        print(f"Shared IMSI         : {_count_rows(shared_imsi)}")
+        print()
+
+        print("TOP PRIORITY LEADS")
+        print("-" * 78)
+        if priority_leads.empty:
+            print("No priority leads found.")
+        else:
+            console_columns = [
+                column
+                for column in [
+                    "subscriber_number",
+                    "priority",
+                    "confidence",
+                    "priority_score",
+                    "event_count",
+                    "cells_seen",
+                    "imei_count",
+                    "imsi_count",
+                    "why_important",
+                ]
+                if column in priority_leads.columns
+            ]
+
+            with pd.option_context(
+                "display.max_columns",
+                20,
+                "display.max_colwidth",
+                60,
+                "display.width",
+                180,
+            ):
+                print(priority_leads[console_columns].head(10).to_string(index=False))
+
+        print()
+        print("REPORT FILES")
+        print("-" * 78)
         print(f"Report Folder : {report_dir}")
         print(f"Main Summary  : {summary_path}")
         print(f"Excel Report  : {excel_path}")
