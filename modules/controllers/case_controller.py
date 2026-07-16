@@ -226,6 +226,43 @@ def _print_latest_tower_ipdr_report(case_id: str) -> None:
 
 
 
+
+def _print_latest_tower_ipdr_complete_report(case_id: str) -> None:
+    """Print latest Complete Tower IPDR report paths in View Case Reports."""
+
+    import json
+    from pathlib import Path
+
+    pointer_path = (
+        Path("cases")
+        / "active"
+        / str(case_id)
+        / "reports"
+        / "tower_dump"
+        / "ipdr"
+        / "complete"
+        / "latest_complete_report.json"
+    )
+
+    if not pointer_path.exists():
+        return
+
+    try:
+        payload = json.loads(pointer_path.read_text(encoding="utf-8"))
+    except Exception as error:
+        print("[-] Latest Complete Tower IPDR report pointer read nahi ho saka.")
+        print(f"    Error: {type(error).__name__}: {error}")
+        return
+
+    print()
+    print("LATEST COMPLETE TOWER IPDR REPORT")
+    print("-" * 78)
+    print(f"Run ID       : {payload.get('run_id', '')}")
+    print(f"Generated At : {payload.get('generated_at', '')}")
+    print(f"Report Folder: {payload.get('report_folder', '')}")
+    print(f"Main Summary : {payload.get('main_summary', '')}")
+    print(f"Excel Report : {payload.get('excel_report', '')}")
+
 def show_case_reports(case_id: str) -> None:
     """Show clean investigator-friendly case report summary."""
 
@@ -268,6 +305,7 @@ def show_case_reports(case_id: str) -> None:
     print("-" * 72)
 
     _print_latest_tower_ipdr_report(case_id)
+    _print_latest_tower_ipdr_complete_report(case_id)
 
     reports = list_case_reports(case_id)
 

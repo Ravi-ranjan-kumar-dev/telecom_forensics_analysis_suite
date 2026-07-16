@@ -1199,6 +1199,24 @@ def _run_complete_tower_ipdr_analysis(case: dict[str, Any]) -> None:
 
         summary_path.write_text("\n".join(summary_lines), encoding="utf-8")
 
+        import json
+
+        latest_pointer_path = report_dir.parent / "latest_complete_report.json"
+        latest_pointer_payload = {
+            "case_id": case_id,
+            "run_id": run_id,
+            "report_type": "tower_ipdr_complete",
+            "report_folder": str(report_dir),
+            "main_summary": str(summary_path),
+            "excel_report": str(excel_path),
+            "database": str(db_path),
+            "generated_at": datetime.now().isoformat(timespec="seconds"),
+        }
+        latest_pointer_path.write_text(
+            json.dumps(latest_pointer_payload, indent=2, ensure_ascii=False),
+            encoding="utf-8",
+        )
+
         def _summary_value(metric_name: str) -> str:
             matched = summary.loc[summary["metric"] == metric_name, "value"]
             if matched.empty:
