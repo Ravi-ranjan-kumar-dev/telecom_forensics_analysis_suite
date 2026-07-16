@@ -238,7 +238,7 @@ def _priority_from_row(row: pd.Series) -> tuple[str, str, str]:
         return (
             "HIGH",
             "Multi-cell uncommon presence",
-            "Verify CCTV route, tower sequence, IMEI/IMSI continuity and field location.",
+            "Verify route, tower sequence, IMEI/IMSI continuity and field/local information.",
         )
 
     if score >= 100 and current_count >= 100:
@@ -273,13 +273,13 @@ def _priority_from_row(row: pd.Series) -> tuple[str, str, str]:
         return (
             "MEDIUM",
             "Window-only presence",
-            "Verify CAF/SDR, address, local status and CCTV relevance.",
+            "Verify CAF/SDR, address, local status and incident relevance.",
         )
 
     return (
         "LOW",
         "Low-priority uncommon presence",
-        "Keep as secondary lead unless linked with CCTV, device, or other suspects.",
+        "Keep as secondary lead unless linked with device, route, field input, or other suspects.",
     )
 
 
@@ -480,7 +480,7 @@ def split_current_and_baseline_by_window(
 
     current_mask = (
         event_time.ge(start)
-        & event_time.le(end)
+        & event_time.lt(end)
     )
 
     current = prepared.loc[current_mask].copy()
