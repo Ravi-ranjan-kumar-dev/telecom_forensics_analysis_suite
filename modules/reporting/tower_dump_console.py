@@ -5,6 +5,158 @@ from typing import Any
 import pandas as pd
 
 
+DISPLAY_COLUMNS: dict[str, list[str]] = {
+    "cell_summary": [
+        "searched_cell_id",
+        "records",
+        "unique_subscribers",
+        "unique_imei",
+        "unique_imsi",
+        "first_seen",
+        "last_seen",
+    ],
+    "call_type_summary": [
+        "call_type",
+        "records",
+        "percentage",
+    ],
+    "tower_cdr_priority_leads": [
+        "subscriber_number",
+        "priority",
+        "confidence",
+        "priority_score",
+        "event_count",
+        "cells_seen",
+        "imei_count",
+        "imsi_count",
+        "night_event_count",
+        "first_seen",
+        "last_seen",
+        "why_important",
+        "next_action",
+    ],
+    "tower_cdr_uncommon_numbers": [
+        "subscriber_number",
+        "priority",
+        "confidence",
+        "event_count",
+        "first_seen",
+        "last_seen",
+        "cells_seen",
+        "night_event_count",
+        "searched_cells",
+        "why_important",
+        "next_action",
+    ],
+    "tower_cdr_common_numbers": [
+        "subscriber_number",
+        "priority",
+        "confidence",
+        "event_count",
+        "cells_seen",
+        "other_party_count",
+        "first_seen",
+        "last_seen",
+        "why_important",
+        "next_action",
+    ],
+    "tower_cdr_multi_cell_presence": [
+        "subscriber_number",
+        "priority",
+        "confidence",
+        "event_count",
+        "cells_seen",
+        "searched_cells",
+        "first_seen",
+        "last_seen",
+        "why_important",
+        "next_action",
+    ],
+    "tower_cdr_device_consistency": [
+        "subscriber_number",
+        "priority",
+        "confidence",
+        "event_count",
+        "imei_count",
+        "imsi_count",
+        "cells_seen",
+        "first_seen",
+        "last_seen",
+        "why_important",
+        "next_action",
+    ],
+    "tower_cdr_suspicious_timing": [
+        "subscriber_number",
+        "priority",
+        "confidence",
+        "event_count",
+        "night_event_count",
+        "cells_seen",
+        "first_seen",
+        "last_seen",
+        "why_important",
+        "next_action",
+    ],
+    "shared_imei": [
+        "imei",
+        "total_events",
+        "unique_subscribers",
+        "unique_cells",
+        "subscribers",
+        "searched_cells",
+    ],
+    "shared_imsi": [
+        "imsi",
+        "total_events",
+        "unique_subscribers",
+        "unique_cells",
+        "subscribers",
+        "searched_cells",
+    ],
+    "investigative_indicators": [
+        "indicator",
+        "entity",
+        "severity",
+        "details",
+        "caution",
+    ],
+}
+
+
+def _short_text(value: Any, *, max_chars: int = 70) -> str:
+    if value is None:
+        return ""
+
+    text = str(value).strip()
+
+    if text in {"nan", "NaT", "None", "<NA>"}:
+        return ""
+
+    if len(text) <= max_chars:
+        return text
+
+    return text[: max_chars - 3] + "..."
+
+
+def _prepare_dataframe_for_console(
+    name: str,
+    dataframe: pd.DataFrame,
+) -> pd.DataFrame:
+    wanted = DISPLAY_COLUMNS.get(name)
+
+    if wanted:
+        columns = [column for column in wanted if column in dataframe.columns]
+        output = dataframe.loc[:, columns].copy()
+    else:
+        output = dataframe.copy()
+
+    for column in output.columns:
+        if pd.api.types.is_object_dtype(output[column]):
+            output[column] = output[column].map(_short_text)
+
+    return output
+
+
 def _print_value(name: str, value: Any, limit: int) -> None:
     print("\n" + "=" * 78)
     print(name.replace("_", " ").upper())
@@ -14,9 +166,19 @@ def _print_value(name: str, value: Any, limit: int) -> None:
         if value.empty:
             print("No records found.")
         else:
-            print(value.head(limit).to_string(index=False))
+            output = _prepare_dataframe_for_console(name, value)
+            with pd.option_context(
+                "display.max_columns",
+                30,
+                "display.max_colwidth",
+                72,
+                "display.width",
+                220,
+            ):
+                print(output.head(limit).to_string(index=False))
+
             if len(value) > limit:
-                print(f"\n[+] Showing first {limit} of {len(value):,} rows.")
+                print(f"\n[+] Showing first {limit} of {len(value):,} rows. Full details are in Excel.")
     elif isinstance(value, pd.Series):
         print(value.head(limit).to_string())
     elif isinstance(value, dict):
@@ -49,6 +211,7 @@ def print_tower_dump_report(
     row_limit: int = 15,
 ) -> None:
     metadata = result.get("metadata", {})
+    display_limit = min(int(row_limit or 15), 15)
 
     print("\n" + "#" * 78)
     print("TOWER CDR DUMP ANALYSIS")
@@ -72,17 +235,17 @@ def print_tower_dump_report(
 
     sections = [
         ("tower_dump_summary", 50),
-        ("cell_summary", row_limit),
-        ("call_type_summary", row_limit),
-        ("tower_cdr_priority_leads", row_limit),
-        ("tower_cdr_uncommon_numbers", row_limit),
-        ("tower_cdr_common_numbers", row_limit),
-        ("tower_cdr_multi_cell_presence", row_limit),
-        ("tower_cdr_device_consistency", row_limit),
-        ("tower_cdr_suspicious_timing", row_limit),
-        ("shared_imei", row_limit),
-        ("shared_imsi", row_limit),
-        ("investigative_indicators", row_limit),
+        ("cell_summary", display_limit),
+        ("call_type_summary", display_limit),
+        ("tower_cdr_priority_leads", display_limit),
+        ("tower_cdr_uncommon_numbers", display_limit),
+        ("tower_cdr_common_numbers", display_limit),
+        ("tower_cdr_multi_cell_presence", display_limit),
+        ("tower_cdr_device_consistency", display_limit),
+        ("tower_cdr_suspicious_timing", display_limit),
+        ("shared_imei", display_limit),
+        ("shared_imsi", display_limit),
+        ("investigative_indicators", display_limit),
     ]
 
     for name, limit in sections:
