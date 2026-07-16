@@ -198,21 +198,77 @@ def show_case_health() -> None:
         if item.get("error"):
             print(f"    - {item['error']}")
 
+def _print_latest_tower_ipdr_report(case_id: str) -> None:
+    """Show latest Tower IPDR part-wise report paths without rerunning analysis."""
+
+    try:
+        from modules.staging.tower_ipdr_staging import load_tower_ipdr_partwise_latest_report
+    except Exception as exc:
+        print("\n[!] Tower IPDR latest report check available nahi hai.")
+        print(f"    Reason: {exc}")
+        return
+
+    latest = load_tower_ipdr_partwise_latest_report(case_id)
+
+    if not latest:
+        return
+
+    print("\n" + "-" * 72)
+    print("LATEST TOWER IPDR PART-WISE REPORT")
+    print("-" * 72)
+    print(f"Report Folder : {latest.get('output_dir') or 'Not available'}")
+    print(f"Main Report   : {latest.get('main_report') or 'Not available'}")
+    print(f"Summary CSV   : {latest.get('summary_csv') or 'Not available'}")
+    print(f"Excel Report  : {latest.get('excel_workbook') or 'Not available'}")
+    print(f"Manifest      : {latest.get('manifest') or 'Not available'}")
+    print(f"Updated At    : {latest.get('updated_at') or 'Not available'}")
+    print("Meaning       : Latest Tower IPDR Date-Time Part-wise investigation report.")
+
+
+
 def show_case_reports(case_id: str) -> None:
+    """Show case reports, including latest Tower IPDR part-wise report."""
+
+    print("" + "=" * 72)
+    print("CASE REPORTS")
+    print("=" * 72)
+
+    _print_latest_tower_ipdr_report(case_id)
+
     reports = list_case_reports(case_id)
 
-    print("\n" + "=" * 100)
-    print(f"CASE REPORTS: {case_id}")
-    print("=" * 100)
+    print("\n" + "-" * 72)
+    print("REGISTERED CASE REPORTS")
+    print("-" * 72)
 
     if not reports:
-        print("No reports registered.")
+        print("No registered case reports found.")
         return
 
     for index, report in enumerate(reports, start=1):
-        print(
-            f"{index}. "
-            f"{report.get('report_type', '')} | "
-            f"{report.get('status', '')} | "
-            f"{report.get('report_path', '')}"
-        )
+        if isinstance(report, dict):
+            title = (
+                report.get("title")
+                or report.get("report_name")
+                or report.get("name")
+                or report.get("type")
+                or f"Report {index}"
+            )
+            report_path = (
+                report.get("path")
+                or report.get("file_path")
+                or report.get("report_path")
+                or report.get("output_path")
+                or "Path not available"
+            )
+            created_at = report.get("created_at") or report.get("timestamp") or ""
+
+            print(f"{index}. {title}")
+            print(f"   Path      : {report_path}")
+            if created_at:
+                print(f"   Created At: {created_at}")
+        else:
+            print(f"{index}. {report}")
+
+
+
