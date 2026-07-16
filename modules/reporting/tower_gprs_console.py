@@ -53,6 +53,26 @@ def print_gprs_analysis(
         limit=row_limit,
     )
     _print_table(
+        "GPRS COMMON / REPEAT NUMBERS",
+        result.get("gprs_common_numbers"),
+        limit=row_limit,
+    )
+    _print_table(
+        "GPRS UNCOMMON / NEW VISITOR NUMBERS",
+        result.get("gprs_uncommon_numbers"),
+        limit=row_limit,
+    )
+    _print_table(
+        "GPRS MULTI-CELL PRESENCE",
+        result.get("gprs_multi_cell_presence"),
+        limit=row_limit,
+    )
+    _print_table(
+        "GPRS PRIORITY LEADS",
+        result.get("gprs_priority_leads"),
+        limit=row_limit,
+    )
+    _print_table(
         "SHARED IMEI",
         result.get("shared_imei"),
         limit=row_limit,

@@ -12,6 +12,10 @@ from modules.analysis.partition_scope import (
     resolve_sighting_scope,
 )
 
+from modules.analysis.gprsdump.uncommon_presence import (
+    build_tower_gprs_presence_intelligence,
+)
+
 
 def _clean_text(series: pd.Series) -> pd.Series:
     return (
@@ -315,6 +319,7 @@ def run_gprs_analysis(
     subscriber_summary = _subscriber_summary(df)
     imei_summary = _identity_summary(df, "imei")
     imsi_summary = _identity_summary(df, "imsi")
+    presence = build_tower_gprs_presence_intelligence(df)
 
     return {
         "summary": _summary(df),
@@ -338,6 +343,12 @@ def run_gprs_analysis(
         ].reset_index(drop=True)
         if not subscriber_summary.empty
         else subscriber_summary,
+        "gprs_common_numbers": presence.get("common_numbers", pd.DataFrame()),
+        "gprs_uncommon_numbers": presence.get("uncommon_numbers", pd.DataFrame()),
+        "gprs_multi_cell_presence": presence.get("multi_cell_presence", pd.DataFrame()),
+        "gprs_device_consistency": presence.get("device_consistency", pd.DataFrame()),
+        "gprs_suspicious_timing": presence.get("suspicious_timing", pd.DataFrame()),
+        "gprs_priority_leads": presence.get("priority_leads", pd.DataFrame()),
         "imei_summary": imei_summary,
         "shared_imei": imei_summary.loc[
             imei_summary["Subscriber_Count"] >= 2
