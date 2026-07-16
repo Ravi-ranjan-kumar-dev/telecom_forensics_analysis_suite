@@ -14,3 +14,25 @@ cases/active/*/staging/
 *.duckdb
 *.duckdb.wal
 *.parquet
+
+# ------------------------------------------------------------------
+# Runtime case workspace artifacts
+# ------------------------------------------------------------------
+cases/active/*/case.json
+cases/active/*/configuration/*.json
+cases/active/*/logs/
+cases/active/*/results/
+cases/active/*/reports/
+cases/active/*/staging/
+
+# Generated analysis outputs
+output/logs/
+output/reports/
+
+# Local cache/runtime
+__pycache__/
+*.pyc
+*.pyo
+*.duckdb
+*.duckdb.wal
+*.parquet
