@@ -806,6 +806,14 @@ def _view_or_export_report(case: dict[str, Any]) -> None:
 
     saved_files = manifest.get("saved_files", {})
     saved_files["excel_workbook"] = excel_path
+    manifest["saved_files"] = saved_files
+
+    latest_report_path = save_tower_ipdr_partwise_latest_report(
+        case_id,
+        manifest,
+    )
+    saved_files["latest_report"] = str(latest_report_path)
+    manifest["saved_files"] = saved_files
 
     print("[+] Part-wise investigation report generated successfully.")
     print(f"[+] Report Folder : {manifest.get('output_dir')}")
