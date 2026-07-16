@@ -51,6 +51,8 @@ from modules.staging.tower_ipdr_staging import (
     print_tower_ipdr_investigation_summary,
     tower_ipdr_range_investigation_summary,
     export_tower_ipdr_partwise_range_report,
+    export_tower_ipdr_excel_workbook_from_manifest,
+    save_tower_ipdr_partwise_latest_report,
 )
 from modules.reporting.tower_ipdr_console import (
     print_tower_ipdr_analysis,
@@ -797,13 +799,21 @@ def _view_or_export_report(case: dict[str, Any]) -> None:
         max_leads_in_text=20,
     )
 
+    excel_path = export_tower_ipdr_excel_workbook_from_manifest(
+        manifest,
+        max_rows_per_sheet=50000,
+    )
+
     saved_files = manifest.get("saved_files", {})
+    saved_files["excel_workbook"] = excel_path
 
     print("[+] Part-wise investigation report generated successfully.")
     print(f"[+] Report Folder : {manifest.get('output_dir')}")
     print(f"[+] Main Report   : {saved_files.get('investigation_summary_all_parts')}")
     print(f"[+] Summary CSV   : {saved_files.get('all_parts_summary')}")
+    print(f"[+] Excel Report  : {saved_files.get('excel_workbook')}")
     print(f"[+] Manifest      : {saved_files.get('manifest')}")
+
 
 
 def _show_latest(case_id: str) -> None:
