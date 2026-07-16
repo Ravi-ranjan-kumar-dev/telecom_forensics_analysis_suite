@@ -265,6 +265,12 @@ def generate_tower_dump_excel_report(
     _style_section_sheet(ws)
 
     _write_dataframe(wb, "10. Review Indicators", results.get("investigative_indicators"), max_rows=100000)
+    _write_dataframe(wb, "10A. CDR Common Repeat", results.get("tower_cdr_common_numbers"), max_rows=50000)
+    _write_dataframe(wb, "10B. CDR Uncommon", results.get("tower_cdr_uncommon_numbers"), max_rows=50000)
+    _write_dataframe(wb, "10C. CDR Multi Cell", results.get("tower_cdr_multi_cell_presence"), max_rows=50000)
+    _write_dataframe(wb, "10D. CDR Device Check", results.get("tower_cdr_device_consistency"), max_rows=50000)
+    _write_dataframe(wb, "10E. CDR Timing", results.get("tower_cdr_suspicious_timing"), max_rows=50000)
+    _write_dataframe(wb, "10F. CDR Priority Leads", results.get("tower_cdr_priority_leads"), max_rows=50000)
     _write_dataframe(wb, "11. Analysis Status", analysis.get("status", pd.DataFrame()))
     _write_dataframe(wb, "12. Analysis Errors", analysis.get("errors", pd.DataFrame()))
 
