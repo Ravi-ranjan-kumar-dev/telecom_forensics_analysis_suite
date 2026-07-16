@@ -36,3 +36,6 @@ __pycache__/
 *.duckdb
 *.duckdb.wal
 *.parquet
+
+# Ignore complete active case workspaces
+cases/active/*/
