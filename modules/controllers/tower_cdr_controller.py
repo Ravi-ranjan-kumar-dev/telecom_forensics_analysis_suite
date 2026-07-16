@@ -46,7 +46,7 @@ def _tower_cdr_menu(case: dict[str, Any]) -> str:
     )
     print("=" * 78)
     print("1. Run Complete Tower CDR Dump Analysis")
-    print("2. New Date-Time Partition Partition Analysis")
+    print("2. New Date-Time Partition Analysis")
     print("3. List Current Date-Time Partitions")
     print("4. Re-run Partition Using Saved Date-Times")
     print("5. Clear Saved Date-Time Partitions")
