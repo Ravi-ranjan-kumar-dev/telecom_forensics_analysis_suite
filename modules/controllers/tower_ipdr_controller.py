@@ -1147,6 +1147,55 @@ def _run_complete_tower_ipdr_analysis(case: dict[str, Any]) -> None:
                     dataframe = pd.DataFrame()
                 dataframe.to_excel(writer, sheet_name=sheet_name[:31], index=False)
 
+        from openpyxl import load_workbook
+        from openpyxl.styles import Alignment, Font, PatternFill
+        from openpyxl.utils import get_column_letter
+
+        workbook = load_workbook(excel_path)
+
+        header_fill = PatternFill(
+            fill_type="solid",
+            fgColor="D9EAF7",
+        )
+        header_font = Font(bold=True)
+
+        for worksheet in workbook.worksheets:
+            worksheet.freeze_panes = "A2"
+
+            if worksheet.max_row >= 1 and worksheet.max_column >= 1:
+                worksheet.auto_filter.ref = worksheet.dimensions
+
+            for cell in worksheet[1]:
+                cell.font = header_font
+                cell.fill = header_fill
+                cell.alignment = Alignment(
+                    horizontal="center",
+                    vertical="center",
+                    wrap_text=True,
+                )
+
+            for column_cells in worksheet.columns:
+                column_letter = get_column_letter(column_cells[0].column)
+                max_length = 0
+
+                for cell in column_cells[:200]:
+                    value = cell.value
+                    if value is None:
+                        continue
+                    max_length = max(max_length, len(str(value)))
+
+                width = min(max(max_length + 2, 12), 45)
+                worksheet.column_dimensions[column_letter].width = width
+
+            for row in worksheet.iter_rows(min_row=2):
+                for cell in row:
+                    cell.alignment = Alignment(
+                        vertical="top",
+                        wrap_text=False,
+                    )
+
+        workbook.save(excel_path)
+
         summary_lines = [
             "=" * 78,
             "TOWER IPDR COMPLETE ANALYSIS",
