@@ -202,6 +202,32 @@ def _run_complete_analysis(
 
         dataframe = result.get("df")
 
+        if isinstance(dataframe, pd.DataFrame) and not dataframe.empty:
+            try:
+                from modules.staging.tower_cdr_staging import (
+                    print_tower_cdr_stage_summary,
+                    stage_tower_cdr_dataframe,
+                )
+
+                stage_payload = stage_tower_cdr_dataframe(
+                    case_id=case_id,
+                    dataframe=dataframe,
+                    input_folder=input_folder,
+                    stage_reason="complete_tower_cdr_analysis",
+                )
+                result["scalable_stage"] = stage_payload
+                print_tower_cdr_stage_summary(stage_payload)
+
+            except Exception as stage_error:
+                print(
+                    "[-] Tower CDR scalable backend staging failed: "
+                    f"{type(stage_error).__name__}: {stage_error}"
+                )
+                print(
+                    "[!] Main Tower CDR report continue hoga. "
+                    "Staging issue ko baad me fix kiya ja sakta hai."
+                )
+
         register_analysis_run(
             case_id,
             analysis_type="TOWER_CDR_DUMP",
@@ -271,6 +297,31 @@ def _run_partition_analysis(
         f"[+] Loaded {len(dataframe):,} records. "
         f"Creating {len(sightings)} automatic time partitions..."
     )
+
+    try:
+        from modules.staging.tower_cdr_staging import (
+            print_tower_cdr_stage_summary,
+            stage_tower_cdr_dataframe,
+        )
+
+        stage_payload = stage_tower_cdr_dataframe(
+            case_id=case_id,
+            dataframe=dataframe,
+            input_folder=input_folder,
+            stage_reason="tower_cdr_partition_analysis",
+        )
+        load_result["scalable_stage"] = stage_payload
+        print_tower_cdr_stage_summary(stage_payload)
+
+    except Exception as stage_error:
+        print(
+            "[-] Tower CDR scalable backend staging failed: "
+            f"{type(stage_error).__name__}: {stage_error}"
+        )
+        print(
+            "[!] Partition analysis continue hoga. "
+            "Staging issue ko baad me fix kiya ja sakta hai."
+        )
 
     result = create_sighting_partitions(
         dataframe,
