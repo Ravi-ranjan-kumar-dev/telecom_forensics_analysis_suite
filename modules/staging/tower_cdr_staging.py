@@ -179,17 +179,31 @@ def count_tower_cdr_events(case_id: str) -> int:
 
 
 def print_tower_cdr_stage_summary(payload: dict[str, Any]) -> None:
-    """Print investigator-friendly Tower CDR staging summary."""
+    """Print user-friendly Tower CDR scalable backend status.
 
-    print()
-    print("TOWER CDR SCALABLE BACKEND READY")
-    print("-" * 78)
-    print(f"Records staged : {int(payload.get('record_count', 0)):,}")
-    print(f"Columns staged : {int(payload.get('column_count', 0)):,}")
-    print(f"Parquet file   : {payload.get('parquet_path', '')}")
-    print(f"DuckDB file    : {payload.get('duckdb_path', '')}")
-    print(f"Manifest       : {payload.get('manifest_path', '')}")
+    Normal users should not see backend file paths such as DuckDB, Parquet,
+    or JSON manifest files. Those are internal software cache files.
+    """
+
+    import os
 
     fingerprint = payload.get("input_fingerprint", {}) or {}
-    print(f"Input files    : {int(fingerprint.get('file_count', 0)):,}")
+    debug_backend = os.environ.get("TELECOM_DEBUG_BACKEND") == "1"
+
+    print()
+    print("TOWER CDR FAST ANALYSIS BACKEND READY")
     print("-" * 78)
+    print(f"Records indexed : {int(payload.get('record_count', 0)):,}")
+    print(f"Columns indexed : {int(payload.get('column_count', 0)):,}")
+    print(f"Input files     : {int(fingerprint.get('file_count', 0)):,}")
+    print("Speed mode      : DuckDB SQL + Parquet internal backend")
+    print("User output     : Excel report only")
+    print("-" * 78)
+
+    if debug_backend:
+        print("DEBUG BACKEND FILES")
+        print("-" * 78)
+        print(f"Parquet file    : {payload.get('parquet_path', '')}")
+        print(f"DuckDB file     : {payload.get('duckdb_path', '')}")
+        print(f"Manifest        : {payload.get('manifest_path', '')}")
+        print("-" * 78)
