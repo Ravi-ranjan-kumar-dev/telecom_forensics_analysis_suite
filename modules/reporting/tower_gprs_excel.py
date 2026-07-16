@@ -485,7 +485,7 @@ def generate_tower_gprs_excel_report(
         f"Tower GPRS Dump Analysis - {case_id}"
     )
     workbook.properties.subject = (
-        "GPRS session and CCTV date-time overlap analysis"
+        "GPRS session and date-time part overlap analysis"
     )
     workbook.properties.creator = "Telecom Forensics Analysis Suite"
     append_methodology_sheet(workbook, "Tower GPRS Dump Analysis")

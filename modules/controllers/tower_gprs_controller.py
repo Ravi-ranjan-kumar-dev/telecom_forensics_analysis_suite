@@ -416,7 +416,7 @@ def handle_tower_gprs_workspace(
 
             elif choice == "5":
                 clear_sightings(case_id)
-                print("[+] Saved CCTV date-times cleared.")
+                print("[+] Saved date-time parts cleared.")
 
             elif choice == "6":
                 _show_latest(case_id)

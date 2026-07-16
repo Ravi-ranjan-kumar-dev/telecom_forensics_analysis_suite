@@ -244,7 +244,7 @@ def _run_partition_analysis(
     sightings = list_sightings(case_id)
 
     if not sightings:
-        print("[-] Pehle CCTV date-time enter karein.")
+        print("[-] Pehle date-time part enter karein.")
         return None
 
     input_folder = _input_folder(case_id)
@@ -493,7 +493,7 @@ def handle_tower_cdr_workspace(
 
             elif choice == "5":
                 clear_sightings(case_id)
-                print("[+] Saved CCTV date-times cleared.")
+                print("[+] Saved date-time parts cleared.")
 
             elif choice == "6":
                 _show_latest(case_id)
