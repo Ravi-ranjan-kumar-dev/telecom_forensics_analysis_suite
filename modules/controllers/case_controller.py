@@ -227,48 +227,90 @@ def _print_latest_tower_ipdr_report(case_id: str) -> None:
 
 
 def show_case_reports(case_id: str) -> None:
-    """Show case reports, including latest Tower IPDR part-wise report."""
+    """Show clean investigator-friendly case report summary."""
+
+    def _report_title(report, index: int) -> str:
+        if not isinstance(report, dict):
+            return f"Report {index}"
+
+        return (
+            report.get("title")
+            or report.get("report_name")
+            or report.get("name")
+            or report.get("type")
+            or f"Report {index}"
+        )
+
+    def _report_path(report) -> str:
+        if not isinstance(report, dict):
+            return str(report)
+
+        return (
+            report.get("path")
+            or report.get("file_path")
+            or report.get("report_path")
+            or report.get("output_path")
+            or "Path not available"
+        )
+
+    def _report_created_at(report) -> str:
+        if not isinstance(report, dict):
+            return ""
+
+        return report.get("created_at") or report.get("timestamp") or ""
 
     print("" + "=" * 72)
     print("CASE REPORTS")
     print("=" * 72)
+
+    print("\n" + "-" * 72)
+    print("LATEST IMPORTANT REPORTS")
+    print("-" * 72)
 
     _print_latest_tower_ipdr_report(case_id)
 
     reports = list_case_reports(case_id)
 
     print("\n" + "-" * 72)
-    print("REGISTERED CASE REPORTS")
+    print("REGISTERED REPORT HISTORY")
     print("-" * 72)
 
     if not reports:
         print("No registered case reports found.")
         return
 
+    print(f"Total Registered Reports: {len(reports)}")
+    print("Meaning: Purane generated reports case history me safely registered hain.")
+
+    latest_report = reports[-1]
+    latest_index = len(reports)
+
+    print("\nLatest Registered Report:")
+    print(f"{latest_index}. {_report_title(latest_report, latest_index)}")
+    print(f"   Path      : {_report_path(latest_report)}")
+
+    created_at = _report_created_at(latest_report)
+    if created_at:
+        print(f"   Created At: {created_at}")
+
+    print("\nNote: Normal screen par full old report list hide rakhi gayi hai.")
+    print("      Full list dekhne ke liye developer/debug mode use karein:")
+    print("      TELECOM_DEBUG_REPORTS=1 python3 -u main.py")
+
+    import os
+
+    if os.environ.get("TELECOM_DEBUG_REPORTS") != "1":
+        return
+
+    print("\n" + "-" * 72)
+    print("FULL REGISTERED REPORT HISTORY - DEBUG MODE")
+    print("-" * 72)
+
     for index, report in enumerate(reports, start=1):
-        if isinstance(report, dict):
-            title = (
-                report.get("title")
-                or report.get("report_name")
-                or report.get("name")
-                or report.get("type")
-                or f"Report {index}"
-            )
-            report_path = (
-                report.get("path")
-                or report.get("file_path")
-                or report.get("report_path")
-                or report.get("output_path")
-                or "Path not available"
-            )
-            created_at = report.get("created_at") or report.get("timestamp") or ""
+        print(f"{index}. {_report_title(report, index)}")
+        print(f"   Path      : {_report_path(report)}")
 
-            print(f"{index}. {title}")
-            print(f"   Path      : {report_path}")
-            if created_at:
-                print(f"   Created At: {created_at}")
-        else:
-            print(f"{index}. {report}")
-
-
+        created_at = _report_created_at(report)
+        if created_at:
+            print(f"   Created At: {created_at}")
 
