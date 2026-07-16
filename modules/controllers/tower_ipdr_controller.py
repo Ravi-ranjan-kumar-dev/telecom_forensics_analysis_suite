@@ -64,6 +64,135 @@ SUPPORTED_SUFFIXES = {".csv", ".txt"}
 TOWER_IPDR_WORKFLOW = "tower_ipdr"
 
 
+
+def _tower_ipdr_input_fingerprint() -> dict:
+    """Return a simple fingerprint of Tower IPDR input files.
+
+    This is used only to decide whether backend data needs refresh.
+    It avoids unnecessary reload when input files are unchanged.
+    """
+
+    from pathlib import Path
+
+    input_dir = Path("data/tower_dump/ipdr/input")
+    allowed_suffixes = {".csv", ".txt", ".xlsx", ".xls"}
+
+    files = []
+    total_size = 0
+
+    if input_dir.exists():
+        for file_path in sorted(input_dir.rglob("*")):
+            if not file_path.is_file():
+                continue
+
+            if file_path.suffix.lower() not in allowed_suffixes:
+                continue
+
+            stat = file_path.stat()
+            relative_path = file_path.relative_to(input_dir).as_posix()
+
+            files.append(
+                {
+                    "path": relative_path,
+                    "size": stat.st_size,
+                    "mtime_ns": stat.st_mtime_ns,
+                }
+            )
+            total_size += stat.st_size
+
+    return {
+        "input_dir": str(input_dir),
+        "file_count": len(files),
+        "total_size": total_size,
+        "files": files,
+    }
+
+
+def _tower_ipdr_fingerprint_path(case_id: str):
+    from pathlib import Path
+
+    path = Path("cases") / "active" / str(case_id) / "staging" / "tower_ipdr"
+    path.mkdir(parents=True, exist_ok=True)
+    return path / "input_fingerprint.json"
+
+
+def _read_tower_ipdr_saved_fingerprint(case_id: str) -> dict:
+    import json
+
+    path = _tower_ipdr_fingerprint_path(case_id)
+
+    if not path.exists():
+        return {}
+
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        return {}
+
+
+def _save_tower_ipdr_input_fingerprint(case_id: str, fingerprint: dict) -> None:
+    import json
+
+    path = _tower_ipdr_fingerprint_path(case_id)
+    path.write_text(
+        json.dumps(fingerprint, indent=2, ensure_ascii=False),
+        encoding="utf-8",
+    )
+
+
+def _tower_ipdr_database_has_rows(case_id: str) -> bool:
+    try:
+        from modules.staging.tower_ipdr_staging import count_tower_ipdr_events
+
+        return int(count_tower_ipdr_events(case_id)) > 0
+    except Exception:
+        return False
+
+
+def _ensure_tower_ipdr_data_ready(case_id: str, load_function) -> bool:
+    """Ensure Tower IPDR backend data is ready before analysis/report.
+
+    Returns True when data is ready, False when no input files are available
+    or load failed.
+    """
+
+    current_fingerprint = _tower_ipdr_input_fingerprint()
+    saved_fingerprint = _read_tower_ipdr_saved_fingerprint(case_id)
+
+    print("[+] Tower IPDR data status check ho raha hai...")
+
+    if current_fingerprint.get("file_count", 0) <= 0:
+        print("[-] Tower IPDR input folder me koi supported file nahi mili.")
+        print("    Folder: data/tower_dump/ipdr/input")
+        return False
+
+    database_ready = _tower_ipdr_database_has_rows(case_id)
+    fingerprint_same = current_fingerprint == saved_fingerprint
+
+    if database_ready and fingerprint_same:
+        print("[OK] Existing Tower IPDR data fresh hai. Reload ki zarurat nahi.")
+        return True
+
+    if not database_ready:
+        print("[!] Tower IPDR backend database ready nahi hai.")
+    elif not fingerprint_same:
+        old_count = saved_fingerprint.get("file_count", 0)
+        new_count = current_fingerprint.get("file_count", 0)
+        print("[!] Tower IPDR input files me change mila.")
+        print(f"    Previous files: {old_count}")
+        print(f"    Current files : {new_count}")
+
+    print("[+] Backend load/refresh start ho raha hai...")
+    load_function(case_id)
+
+    if not _tower_ipdr_database_has_rows(case_id):
+        print("[-] Tower IPDR backend load ke baad bhi data ready nahi hua.")
+        return False
+
+    _save_tower_ipdr_input_fingerprint(case_id, current_fingerprint)
+    print("[OK] Tower IPDR backend data ready hai.")
+    return True
+
 def _menu(case: dict[str, Any]) -> str:
     print("" + "=" * 78)
     print(
@@ -72,10 +201,10 @@ def _menu(case: dict[str, Any]) -> str:
         f"{case.get('case_name', '')}"
     )
     print("=" * 78)
-    print("1. Load Dump Data")
+    print("1. Run Complete Tower IPDR Dump Analysis")
     print("2. Create Date-Time Parts")
-    print("3. Run Part-wise Analysis")
-    print("4. View / Export Report")
+    print("3. Part-wise Analysis")
+    print("4. View / Export Latest Report")
     print("0. Back to Tower Dump Analysis")
     return input("Choose Action: ").strip()
 
@@ -559,7 +688,7 @@ def _run_fast_partition_analysis(case: dict[str, Any]) -> None:
 
     if count_tower_ipdr_events(case_id) <= 0:
         print("[-] Tower IPDR dump loaded nahi hai.")
-        print("[+] Pehle option 1: Load / Rebuild Tower IPDR Dump chalayein.")
+        print("[+] Pehle option 1: Run Complete Tower IPDR Dump Analysis chalakar backend data ready karein.")
         return
 
     partition_time = _ask_partition_time(case_id)
@@ -660,6 +789,427 @@ def _collect_date_time_ranges() -> list[tuple[str, str]]:
     return ranges
 
 
+
+def _run_complete_tower_ipdr_analysis(case: dict[str, Any]) -> None:
+    """Run total Tower IPDR analysis on the full loaded backend dataset.
+
+    This is different from Part-wise Analysis.
+    Complete Analysis = full database analysis.
+    Part-wise Analysis = saved Date-Time Parts analysis.
+    """
+
+    case_id = str(case["case_id"])
+
+    if not _ensure_tower_ipdr_data_ready(
+        case_id,
+        lambda _case_id: _import_staging(case),
+    ):
+        return
+
+    print("[+] Complete Tower IPDR total analysis start ho raha hai...")
+
+    from datetime import datetime
+    from pathlib import Path
+
+    import duckdb
+    import pandas as pd
+
+    from modules.staging.tower_ipdr_staging import tower_ipdr_database_path
+
+    db_path = tower_ipdr_database_path(case_id)
+
+    if not Path(db_path).exists():
+        print("[-] Tower IPDR database nahi mila.")
+        print(f"    Database: {db_path}")
+        return
+
+    run_id = datetime.now().strftime("tower_ipdr_complete_%Y%m%d_%H%M%S")
+    report_dir = (
+        Path("cases")
+        / "active"
+        / case_id
+        / "reports"
+        / "tower_dump"
+        / "ipdr"
+        / "complete"
+        / run_id
+    )
+    report_dir.mkdir(parents=True, exist_ok=True)
+
+    excel_path = report_dir / "tower_ipdr_complete_analysis.xlsx"
+    summary_path = report_dir / "tower_ipdr_complete_summary.txt"
+
+    con = duckdb.connect(str(db_path), read_only=True)
+
+    try:
+        columns = [
+            row[1]
+            for row in con.execute("PRAGMA table_info('tower_ipdr_events')").fetchall()
+        ]
+
+        def has(column: str) -> bool:
+            return column in columns
+
+        def q(column: str) -> str:
+            return '"' + column.replace('"', '""') + '"'
+
+        def text_column(column: str) -> str:
+            if has(column):
+                return f"NULLIF(TRIM(CAST({q(column)} AS VARCHAR)), '')"
+            return "NULL"
+
+        def count_distinct(column: str) -> str:
+            return f"COUNT(DISTINCT {text_column(column)})" if has(column) else "0"
+
+        subscriber = text_column("subscriber_number")
+        searched_cell = text_column("searched_cell_id")
+        imei = text_column("imei")
+        imsi = text_column("imsi")
+        source_file = text_column("source_file")
+
+        if has("event_time"):
+            event_ts = 'TRY_CAST("event_time" AS TIMESTAMP)'
+        elif has("event_datetime"):
+            event_ts = 'TRY_CAST("event_datetime" AS TIMESTAMP)'
+        elif has("start_time"):
+            event_ts = 'TRY_CAST("start_time" AS TIMESTAMP)'
+        else:
+            event_ts = "NULL"
+
+        def read_sql(sql: str) -> pd.DataFrame:
+            return con.execute(sql).fetchdf()
+
+        summary = read_sql(
+            f"""
+            SELECT 'Total Events' AS metric, CAST(COUNT(*) AS VARCHAR) AS value FROM tower_ipdr_events
+            UNION ALL SELECT 'Unique Subscribers', CAST({count_distinct('subscriber_number')} AS VARCHAR) FROM tower_ipdr_events
+            UNION ALL SELECT 'Unique IMEI', CAST({count_distinct('imei')} AS VARCHAR) FROM tower_ipdr_events
+            UNION ALL SELECT 'Unique IMSI', CAST({count_distinct('imsi')} AS VARCHAR) FROM tower_ipdr_events
+            UNION ALL SELECT 'Unique Searched Cells', CAST({count_distinct('searched_cell_id')} AS VARCHAR) FROM tower_ipdr_events
+            UNION ALL SELECT 'Unique Source Files', CAST({count_distinct('source_file')} AS VARCHAR) FROM tower_ipdr_events
+            UNION ALL SELECT 'First Event Time', CAST(MIN({event_ts}) AS VARCHAR) FROM tower_ipdr_events
+            UNION ALL SELECT 'Last Event Time', CAST(MAX({event_ts}) AS VARCHAR) FROM tower_ipdr_events
+            """
+        )
+
+        cell_summary = read_sql(
+            f"""
+            SELECT
+                {searched_cell} AS searched_cell_id,
+                COUNT(*) AS event_count,
+                COUNT(DISTINCT {subscriber}) AS subscriber_count,
+                COUNT(DISTINCT {imei}) AS imei_count,
+                COUNT(DISTINCT {imsi}) AS imsi_count,
+                MIN({event_ts}) AS first_seen,
+                MAX({event_ts}) AS last_seen
+            FROM tower_ipdr_events
+            WHERE {searched_cell} IS NOT NULL
+            GROUP BY 1
+            ORDER BY event_count DESC
+            LIMIT 500
+            """
+        )
+
+        top_subscribers = read_sql(
+            f"""
+            SELECT
+                {subscriber} AS subscriber_number,
+                COUNT(*) AS event_count,
+                COUNT(DISTINCT {searched_cell}) AS cells_seen,
+                COUNT(DISTINCT {imei}) AS imei_count,
+                COUNT(DISTINCT {imsi}) AS imsi_count,
+                MIN({event_ts}) AS first_seen,
+                MAX({event_ts}) AS last_seen
+            FROM tower_ipdr_events
+            WHERE {subscriber} IS NOT NULL
+            GROUP BY 1
+            ORDER BY event_count DESC
+            LIMIT 1000
+            """
+        )
+
+        repeat_presence = top_subscribers.query("event_count >= 2").head(500).copy()
+
+        rare_presence = read_sql(
+            f"""
+            SELECT
+                {subscriber} AS subscriber_number,
+                COUNT(*) AS event_count,
+                COUNT(DISTINCT {searched_cell}) AS cells_seen,
+                COUNT(DISTINCT {imei}) AS imei_count,
+                COUNT(DISTINCT {imsi}) AS imsi_count,
+                MIN({event_ts}) AS first_seen,
+                MAX({event_ts}) AS last_seen
+            FROM tower_ipdr_events
+            WHERE {subscriber} IS NOT NULL
+            GROUP BY 1
+            HAVING COUNT(*) <= 2
+            ORDER BY event_count ASC, first_seen ASC
+            LIMIT 500
+            """
+        )
+
+        multi_cell_presence = read_sql(
+            f"""
+            SELECT
+                {subscriber} AS subscriber_number,
+                COUNT(*) AS event_count,
+                COUNT(DISTINCT {searched_cell}) AS cells_seen,
+                STRING_AGG(DISTINCT CAST({searched_cell} AS VARCHAR), ', ') AS searched_cells,
+                COUNT(DISTINCT {imei}) AS imei_count,
+                COUNT(DISTINCT {imsi}) AS imsi_count,
+                MIN({event_ts}) AS first_seen,
+                MAX({event_ts}) AS last_seen
+            FROM tower_ipdr_events
+            WHERE {subscriber} IS NOT NULL
+              AND {searched_cell} IS NOT NULL
+            GROUP BY 1
+            HAVING COUNT(DISTINCT {searched_cell}) >= 2
+            ORDER BY cells_seen DESC, event_count DESC
+            LIMIT 500
+            """
+        )
+
+        shared_imei = read_sql(
+            f"""
+            SELECT
+                {imei} AS imei,
+                COUNT(*) AS event_count,
+                COUNT(DISTINCT {subscriber}) AS subscriber_count,
+                STRING_AGG(DISTINCT CAST({subscriber} AS VARCHAR), ', ') AS subscribers,
+                COUNT(DISTINCT {searched_cell}) AS cells_seen,
+                MIN({event_ts}) AS first_seen,
+                MAX({event_ts}) AS last_seen
+            FROM tower_ipdr_events
+            WHERE {imei} IS NOT NULL
+              AND {subscriber} IS NOT NULL
+            GROUP BY 1
+            HAVING COUNT(DISTINCT {subscriber}) >= 2
+            ORDER BY subscriber_count DESC, event_count DESC
+            LIMIT 500
+            """
+        )
+
+        shared_imsi = read_sql(
+            f"""
+            SELECT
+                {imsi} AS imsi,
+                COUNT(*) AS event_count,
+                COUNT(DISTINCT {subscriber}) AS subscriber_count,
+                STRING_AGG(DISTINCT CAST({subscriber} AS VARCHAR), ', ') AS subscribers,
+                COUNT(DISTINCT {searched_cell}) AS cells_seen,
+                MIN({event_ts}) AS first_seen,
+                MAX({event_ts}) AS last_seen
+            FROM tower_ipdr_events
+            WHERE {imsi} IS NOT NULL
+              AND {subscriber} IS NOT NULL
+            GROUP BY 1
+            HAVING COUNT(DISTINCT {subscriber}) >= 2
+            ORDER BY subscriber_count DESC, event_count DESC
+            LIMIT 500
+            """
+        )
+
+        if event_ts != "NULL":
+            hourly_activity = read_sql(
+                f"""
+                SELECT
+                    STRFTIME({event_ts}, '%H') AS hour,
+                    COUNT(*) AS event_count,
+                    COUNT(DISTINCT {subscriber}) AS subscriber_count,
+                    COUNT(DISTINCT {searched_cell}) AS cell_count
+                FROM tower_ipdr_events
+                WHERE {event_ts} IS NOT NULL
+                GROUP BY 1
+                ORDER BY 1
+                """
+            )
+        else:
+            hourly_activity = pd.DataFrame(
+                columns=["hour", "event_count", "subscriber_count", "cell_count"]
+            )
+
+        source_file_summary = read_sql(
+            f"""
+            SELECT
+                {source_file} AS source_file,
+                COUNT(*) AS event_count,
+                COUNT(DISTINCT {subscriber}) AS subscriber_count,
+                COUNT(DISTINCT {searched_cell}) AS cell_count,
+                MIN({event_ts}) AS first_seen,
+                MAX({event_ts}) AS last_seen
+            FROM tower_ipdr_events
+            WHERE {source_file} IS NOT NULL
+            GROUP BY 1
+            ORDER BY event_count DESC
+            LIMIT 1000
+            """
+        )
+
+        checks = []
+        total_events = int(
+            con.execute("SELECT COUNT(*) FROM tower_ipdr_events").fetchone()[0] or 0
+        )
+
+        def missing_count(column: str) -> int:
+            if not has(column):
+                return total_events
+            return int(
+                con.execute(
+                    f"""
+                    SELECT COUNT(*)
+                    FROM tower_ipdr_events
+                    WHERE {text_column(column)} IS NULL
+                    """
+                ).fetchone()[0]
+                or 0
+            )
+
+        for label, column in [
+            ("Missing subscriber number", "subscriber_number"),
+            ("Missing searched cell", "searched_cell_id"),
+            ("Missing IMEI", "imei"),
+            ("Missing IMSI", "imsi"),
+            ("Missing source file", "source_file"),
+        ]:
+            rows = missing_count(column)
+            percentage = round((rows / total_events * 100), 4) if total_events else 0
+            checks.append(
+                {
+                    "check": label,
+                    "rows": rows,
+                    "percentage": percentage,
+                }
+            )
+
+        data_quality = pd.DataFrame(checks)
+
+        priority_leads = top_subscribers.copy()
+
+        if not priority_leads.empty:
+            priority_leads["priority_score"] = (
+                priority_leads["event_count"].clip(upper=100)
+                + (priority_leads["cells_seen"].clip(upper=10) * 10)
+                + ((priority_leads["imei_count"] > 1).astype(int) * 20)
+                + ((priority_leads["imsi_count"] > 1).astype(int) * 20)
+            )
+
+            def priority(value: int) -> str:
+                if value >= 120:
+                    return "High"
+                if value >= 70:
+                    return "Medium"
+                return "Low"
+
+            def reason(row) -> str:
+                reasons = []
+                if row.get("cells_seen", 0) >= 2:
+                    reasons.append("multi-cell presence")
+                if row.get("event_count", 0) >= 10:
+                    reasons.append("repeat/high activity")
+                if row.get("imei_count", 0) >= 2:
+                    reasons.append("multiple IMEI")
+                if row.get("imsi_count", 0) >= 2:
+                    reasons.append("multiple IMSI")
+                return ", ".join(reasons) or "low/normal activity"
+
+            priority_leads["priority"] = priority_leads["priority_score"].map(priority)
+            priority_leads["confidence"] = priority_leads["cells_seen"].map(
+                lambda value: "High" if value >= 2 else "Medium"
+            )
+            priority_leads["why_important"] = priority_leads.apply(reason, axis=1)
+            priority_leads["next_action"] = (
+                "Verify with IPDR details, CDR/SDR/CAF, IMEI/IMSI, tower location and field input."
+            )
+            priority_leads = priority_leads.sort_values(
+                ["priority_score", "cells_seen", "event_count"],
+                ascending=False,
+            ).head(500)
+
+        sheets = {
+            "1. Executive Summary": summary,
+            "2. Cell Summary": cell_summary,
+            "3. Top Subscribers": top_subscribers,
+            "4. Repeat Presence": repeat_presence,
+            "5. Rare Presence": rare_presence,
+            "6. Multi Cell Presence": multi_cell_presence,
+            "7. Priority Leads": priority_leads,
+            "8. Shared IMEI": shared_imei,
+            "9. Shared IMSI": shared_imsi,
+            "10. Hourly Activity": hourly_activity,
+            "11. Source Files": source_file_summary,
+            "12. Data Quality": data_quality,
+        }
+
+        with pd.ExcelWriter(excel_path, engine="openpyxl") as writer:
+            for sheet_name, dataframe in sheets.items():
+                if dataframe is None:
+                    dataframe = pd.DataFrame()
+                dataframe.to_excel(writer, sheet_name=sheet_name[:31], index=False)
+
+        summary_lines = [
+            "=" * 78,
+            "TOWER IPDR COMPLETE ANALYSIS",
+            "=" * 78,
+            f"Case ID      : {case_id}",
+            f"Run ID       : {run_id}",
+            f"Database     : {db_path}",
+            f"Report Folder: {report_dir}",
+            f"Excel Report : {excel_path}",
+            "",
+            "EXECUTIVE SUMMARY",
+            "-" * 78,
+        ]
+
+        for _, row in summary.iterrows():
+            summary_lines.append(f"{row['metric']}: {row['value']}")
+
+        summary_lines.extend(
+            [
+                "",
+                "IMPORTANT LEADS",
+                "-" * 78,
+            ]
+        )
+
+        if priority_leads.empty:
+            summary_lines.append("No priority leads found.")
+        else:
+            display_columns = [
+                column
+                for column in [
+                    "subscriber_number",
+                    "priority",
+                    "confidence",
+                    "priority_score",
+                    "event_count",
+                    "cells_seen",
+                    "imei_count",
+                    "imsi_count",
+                    "first_seen",
+                    "last_seen",
+                    "why_important",
+                    "next_action",
+                ]
+                if column in priority_leads.columns
+            ]
+            summary_lines.append(
+                priority_leads[display_columns].head(50).to_string(index=False)
+            )
+
+        summary_path.write_text("\n".join(summary_lines), encoding="utf-8")
+
+        print("=" * 78)
+        print("TOWER IPDR COMPLETE ANALYSIS GENERATED")
+        print("=" * 78)
+        print(f"Report Folder : {report_dir}")
+        print(f"Main Summary  : {summary_path}")
+        print(f"Excel Report  : {excel_path}")
+        print("=" * 78)
+
+    finally:
+        con.close()
+
 def _create_date_time_parts(case: dict[str, Any]) -> None:
     case_id = str(case["case_id"])
 
@@ -680,7 +1230,7 @@ def _create_date_time_parts(case: dict[str, Any]) -> None:
 
     print("\n[+] Date-Time Parts saved.")
     print(f"[+] Total Parts: {payload.get('parts_count', 0)}")
-    print("[+] Ab option 3: Run Part-wise Analysis chalayein.")
+    print("[+] Ab option 3: Part-wise Analysis chalayein.")
 
 
 def _run_partwise_analysis(case: dict[str, Any]) -> None:
@@ -700,9 +1250,9 @@ def _run_partwise_analysis(case: dict[str, Any]) -> None:
     print_date_time_parts(case_id, TOWER_IPDR_WORKFLOW)
 
     print("" + "=" * 78)
-    print("RUN PART-WISE ANALYSIS")
+    print("PART-WISE TOWER IPDR ANALYSIS")
     print("=" * 78)
-    print("A. Analyze All Parts")
+    print("A. Analyze All Date-Time Parts")
     print("0. Back")
 
     for part in parts:
@@ -860,13 +1410,18 @@ def handle_tower_ipdr_workspace(
             choice = _menu(case)
 
             if choice == "1":
-                _import_staging(case)
+                _run_complete_tower_ipdr_analysis(case)
 
             elif choice == "2":
                 _create_date_time_parts(case)
 
             elif choice == "3":
-                _run_partwise_analysis(case)
+                case_id = str(case["case_id"])
+                if _ensure_tower_ipdr_data_ready(
+                    case_id,
+                    lambda _case_id: _import_staging(case),
+                ):
+                    _run_partwise_analysis(case)
 
             elif choice == "4":
                 _view_or_export_report(case)
