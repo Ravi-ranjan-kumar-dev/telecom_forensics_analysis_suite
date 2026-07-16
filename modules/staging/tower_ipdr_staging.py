@@ -1073,6 +1073,50 @@ def tower_ipdr_investigation_summary(
         [partition_time, partition_time, int(lead_limit)],
     )
 
+    total_loaded_records = int(count_tower_ipdr_events(case_id))
+
+    selected_records_for_warning = 0
+    selected_start_for_warning = start_time
+    selected_end_for_warning = end_time
+
+    if isinstance(summary, pd.DataFrame) and not summary.empty:
+        try:
+            selected_records_for_warning = int(summary.iloc[0].get("records_found", 0) or 0)
+        except Exception:
+            selected_records_for_warning = 0
+
+        selected_start_for_warning = summary.iloc[0].get("partition_start", start_time)
+        selected_end_for_warning = summary.iloc[0].get("partition_end", end_time)
+
+    data_scope_warnings = _build_tower_ipdr_scope_warnings(
+        selected_records=selected_records_for_warning,
+        total_records=total_loaded_records,
+        selected_start=selected_start_for_warning,
+        selected_end=selected_end_for_warning,
+    )
+
+    total_loaded_records = int(count_tower_ipdr_events(case_id))
+
+    selected_records_for_warning = 0
+    selected_start_for_warning = start_time
+    selected_end_for_warning = end_time
+
+    if isinstance(summary, pd.DataFrame) and not summary.empty:
+        try:
+            selected_records_for_warning = int(summary.iloc[0].get("records_found", 0) or 0)
+        except Exception:
+            selected_records_for_warning = 0
+
+        selected_start_for_warning = summary.iloc[0].get("partition_start", start_time)
+        selected_end_for_warning = summary.iloc[0].get("partition_end", end_time)
+
+    data_scope_warnings = _build_tower_ipdr_scope_warnings(
+        selected_records=selected_records_for_warning,
+        total_records=total_loaded_records,
+        selected_start=selected_start_for_warning,
+        selected_end=selected_end_for_warning,
+    )
+
     lead_summary = pd.DataFrame(
         [
             {
@@ -1111,6 +1155,7 @@ def tower_ipdr_investigation_summary(
     return {
         "summary": summary,
         "lead_summary": lead_summary,
+        "data_scope_warnings": data_scope_warnings,
         "common_numbers": common_numbers,
         "uncommon_numbers": uncommon_numbers,
         "multi_cell_presence": multi_cell_presence,
@@ -1178,6 +1223,23 @@ def print_tower_ipdr_investigation_summary(
     """Print Tower IPDR partition analysis in simple investigation language."""
 
     summary = result.get("summary", pd.DataFrame())
+    data_scope_warnings = result.get("data_scope_warnings", pd.DataFrame())
+
+    if isinstance(data_scope_warnings, pd.DataFrame) and not data_scope_warnings.empty:
+        print("\n" + "-" * 78)
+        print("DATA SCOPE WARNING")
+        print("-" * 78)
+
+        for _, warning in data_scope_warnings.iterrows():
+            print(f"[!] {warning.get('simple_warning')}")
+            print(f"    Severity        : {warning.get('severity')}")
+            print(f"    Coverage        : {warning.get('coverage_percent')}% of loaded dump")
+            print(f"    Selected Records: {warning.get('selected_records')}")
+            print(f"    Total Records   : {warning.get('total_records')}")
+            print(f"    Baseline Records: {warning.get('baseline_records')}")
+            print(f"    Why important   : {warning.get('why_it_matters')}")
+            print(f"    Suggested Action: {warning.get('suggested_action')}")
+
     lead_summary = result.get("lead_summary", pd.DataFrame())
     common_numbers = result.get("common_numbers", pd.DataFrame())
     uncommon_numbers = result.get("uncommon_numbers", pd.DataFrame())
@@ -1836,6 +1898,28 @@ def tower_ipdr_range_investigation_summary(
         [start_time, end_time, start_time, end_time, int(lead_limit)],
     )
 
+    total_loaded_records = int(count_tower_ipdr_events(case_id))
+
+    selected_records_for_warning = 0
+    selected_start_for_warning = start_time
+    selected_end_for_warning = end_time
+
+    if isinstance(summary, pd.DataFrame) and not summary.empty:
+        try:
+            selected_records_for_warning = int(summary.iloc[0].get("records_found", 0) or 0)
+        except Exception:
+            selected_records_for_warning = 0
+
+        selected_start_for_warning = summary.iloc[0].get("partition_start", start_time)
+        selected_end_for_warning = summary.iloc[0].get("partition_end", end_time)
+
+    data_scope_warnings = _build_tower_ipdr_scope_warnings(
+        selected_records=selected_records_for_warning,
+        total_records=total_loaded_records,
+        selected_start=selected_start_for_warning,
+        selected_end=selected_end_for_warning,
+    )
+
     lead_summary = pd.DataFrame(
         [
             {
@@ -1879,6 +1963,7 @@ def tower_ipdr_range_investigation_summary(
     return {
         "summary": summary,
         "lead_summary": lead_summary,
+        "data_scope_warnings": data_scope_warnings,
         "common_numbers": common_numbers,
         "uncommon_numbers": uncommon_numbers,
         "multi_cell_presence": multi_cell_presence,
@@ -2129,6 +2214,23 @@ def export_tower_ipdr_partwise_range_report(
         encoding="utf-8",
     )
     saved_files["manifest"] = str(manifest_path)
+
+    latest_report_path = save_tower_ipdr_partwise_latest_report(
+        case_id,
+        manifest,
+    )
+    saved_files["latest_report"] = str(latest_report_path)
+    manifest["saved_files"] = _report_json_safe(saved_files)
+
+    manifest_path.write_text(
+        json.dumps(
+            _report_json_safe(manifest),
+            ensure_ascii=False,
+            indent=2,
+            sort_keys=True,
+        ),
+        encoding="utf-8",
+    )
 
     return manifest
 
@@ -2468,3 +2570,503 @@ def print_tower_ipdr_part_comparison_summary(
     print("Meaning: Numbers found in only one selected Date-Time Part.")
     print("Use: These may be period-specific visitors or one-time presence leads.")
     _print_simple_leads(part_only_numbers, max_rows=max_rows)
+
+
+def _excel_safe_sheet_name(name: Any, used_names: set[str]) -> str:
+    """Create Excel-safe unique sheet name."""
+
+    raw = str(name or "Sheet").strip()
+    cleaned = ""
+
+    for char in raw:
+        if char in r'[]:*?/\\':
+            cleaned += "_"
+        else:
+            cleaned += char
+
+    cleaned = cleaned.strip() or "Sheet"
+    cleaned = cleaned[:31]
+
+    candidate = cleaned
+    counter = 2
+
+    while candidate in used_names:
+        suffix = f"_{counter}"
+        candidate = cleaned[: 31 - len(suffix)] + suffix
+        counter += 1
+
+    used_names.add(candidate)
+    return candidate
+
+
+def _excel_column_letter(index: int) -> str:
+    """1-based column number to Excel letter."""
+
+    letters = ""
+
+    while index:
+        index, remainder = divmod(index - 1, 26)
+        letters = chr(65 + remainder) + letters
+
+    return letters or "A"
+
+
+def _write_dataframe_to_excel_sheet(
+    workbook: Any,
+    sheet_name: str,
+    dataframe: pd.DataFrame,
+    *,
+    used_names: set[str],
+    max_rows: int = 50000,
+) -> None:
+    """Write a DataFrame to an Excel worksheet with safe formatting."""
+
+    from openpyxl.styles import Alignment, Font, PatternFill
+    from openpyxl.utils.dataframe import dataframe_to_rows
+
+    safe_name = _excel_safe_sheet_name(sheet_name, used_names)
+    worksheet = workbook.create_sheet(title=safe_name)
+
+    if dataframe is None or not isinstance(dataframe, pd.DataFrame) or dataframe.empty:
+        worksheet["A1"] = "No data available in this section."
+        worksheet["A1"].font = Font(bold=True)
+        return
+
+    original_rows = len(dataframe)
+
+    export_df = dataframe.copy()
+
+    if len(export_df) > max_rows:
+        export_df = export_df.head(max_rows)
+
+    for row in dataframe_to_rows(export_df, index=False, header=True):
+        worksheet.append(row)
+
+    header_fill = PatternFill("solid", fgColor="D9EAF7")
+    header_font = Font(bold=True)
+    wrap_alignment = Alignment(wrap_text=True, vertical="top")
+
+    for cell in worksheet[1]:
+        cell.font = header_font
+        cell.fill = header_fill
+        cell.alignment = wrap_alignment
+
+    for row in worksheet.iter_rows(min_row=2):
+        for cell in row:
+            cell.alignment = wrap_alignment
+
+    worksheet.freeze_panes = "A2"
+    worksheet.auto_filter.ref = worksheet.dimensions
+
+    for column_index, column_cells in enumerate(worksheet.columns, start=1):
+        max_length = 10
+
+        for cell in column_cells[:200]:
+            value = cell.value
+            if value is None:
+                continue
+            max_length = max(max_length, min(len(str(value)), 50))
+
+        worksheet.column_dimensions[_excel_column_letter(column_index)].width = min(
+            max_length + 2,
+            55,
+        )
+
+    if original_rows > max_rows:
+        note_row = worksheet.max_row + 2
+        worksheet.cell(
+            row=note_row,
+            column=1,
+            value=(
+                f"Note: Sheet truncated for Excel performance. "
+                f"Showing first {max_rows:,} of {original_rows:,} rows."
+            ),
+        )
+        worksheet.cell(row=note_row, column=1).font = Font(bold=True)
+
+
+def export_tower_ipdr_excel_workbook_from_manifest(
+    manifest: dict[str, Any],
+    *,
+    max_rows_per_sheet: int = 50000,
+) -> str:
+    """Create consolidated Excel workbook from an exported part-wise report manifest.
+
+    This function uses already exported CSV files, so it does not rerun heavy analysis.
+    """
+
+    from openpyxl import Workbook
+    from openpyxl.styles import Alignment, Font, PatternFill
+
+    output_dir = Path(str(manifest.get("output_dir", "")))
+
+    if not output_dir.exists():
+        raise ValueError("Report output folder nahi mila.")
+
+    saved_files = dict(manifest.get("saved_files", {}))
+
+    workbook_path = output_dir / "tower_ipdr_partwise_investigation_report.xlsx"
+
+    workbook = Workbook()
+    default_sheet = workbook.active
+    workbook.remove(default_sheet)
+
+    used_names: set[str] = set()
+
+    # ------------------------------------------------------------------
+    # Report Index Sheet
+    # ------------------------------------------------------------------
+    index_sheet = workbook.create_sheet(
+        title=_excel_safe_sheet_name("Report Index", used_names)
+    )
+
+    index_rows = [
+        ("Report Type", manifest.get("analysis_type", "Tower IPDR Part-wise Analysis")),
+        ("Case ID", manifest.get("case_id", "")),
+        ("Run ID", manifest.get("run_id", "")),
+        ("Created At", manifest.get("created_at", "")),
+        ("Parts Count", manifest.get("parts_count", "")),
+        ("Display Rule", manifest.get("display_rule", "")),
+        ("Internal Range Rule", manifest.get("range_rule", "")),
+        (
+            "Important Note",
+            "This report provides investigation leads. Final conclusion requires verification.",
+        ),
+    ]
+
+    for row_no, (key, value) in enumerate(index_rows, start=1):
+        index_sheet.cell(row=row_no, column=1, value=key)
+        index_sheet.cell(row=row_no, column=2, value=value)
+
+    index_sheet["A1"].font = Font(bold=True)
+    index_sheet["B1"].font = Font(bold=True)
+
+    for cell in index_sheet["A"]:
+        cell.font = Font(bold=True)
+
+    index_sheet.column_dimensions["A"].width = 24
+    index_sheet.column_dimensions["B"].width = 90
+
+    start_row = len(index_rows) + 3
+    index_sheet.cell(row=start_row, column=1, value="Saved Excel Sections")
+    index_sheet.cell(row=start_row, column=1).font = Font(bold=True)
+    index_sheet.cell(row=start_row, column=1).fill = PatternFill("solid", fgColor="D9EAF7")
+
+    row_no = start_row + 1
+
+    for key, path_value in sorted(saved_files.items()):
+        if str(path_value).lower().endswith(".csv"):
+            index_sheet.cell(row=row_no, column=1, value=key)
+            index_sheet.cell(row=row_no, column=2, value=str(path_value))
+            row_no += 1
+
+    for row in index_sheet.iter_rows():
+        for cell in row:
+            cell.alignment = Alignment(wrap_text=True, vertical="top")
+
+    # ------------------------------------------------------------------
+    # Preferred sheet order
+    # ------------------------------------------------------------------
+    preferred_order = [
+        ("all_parts_summary", "All Parts Summary"),
+        ("comparison_comparison_summary", "Comparison Summary"),
+        ("comparison_part_level_counts", "Part Counts"),
+        ("comparison_common_across_parts", "Common Across Parts"),
+        ("comparison_part_only_numbers", "Part Only Numbers"),
+        ("comparison_combined_priority_leads", "Combined Priority"),
+        ("comparison_all_part_presence", "All Part Presence"),
+    ]
+
+    written_keys: set[str] = set()
+
+    for key, sheet_name in preferred_order:
+        csv_path = saved_files.get(key)
+
+        if not csv_path:
+            continue
+
+        path = Path(str(csv_path))
+
+        if not path.exists():
+            continue
+
+        dataframe = _read_csv_for_excel_safe(path)
+        _write_dataframe_to_excel_sheet(
+            workbook,
+            sheet_name,
+            dataframe,
+            used_names=used_names,
+            max_rows=max_rows_per_sheet,
+        )
+        written_keys.add(key)
+
+    # ------------------------------------------------------------------
+    # Part-specific sections
+    # ------------------------------------------------------------------
+    part_section_order = [
+        "summary",
+        "lead_summary",
+        "priority_leads",
+        "common_numbers",
+        "uncommon_numbers",
+        "multi_cell_presence",
+        "repeat_presence",
+        "device_consistency",
+        "suspicious_timing",
+    ]
+
+    for part_no in range(1, int(manifest.get("parts_count", 0)) + 1):
+        prefix = f"part_{part_no:02d}"
+
+        for section in part_section_order:
+            key = f"{prefix}_{section}"
+            csv_path = saved_files.get(key)
+
+            if not csv_path:
+                continue
+
+            path = Path(str(csv_path))
+
+            if not path.exists():
+                continue
+
+            sheet_name = f"P{part_no} {section.replace('_', ' ').title()}"
+            dataframe = _read_csv_for_excel_safe(path)
+
+            _write_dataframe_to_excel_sheet(
+                workbook,
+                sheet_name,
+                dataframe,
+                used_names=used_names,
+                max_rows=max_rows_per_sheet,
+            )
+            written_keys.add(key)
+
+    # ------------------------------------------------------------------
+    # Any remaining CSVs
+    # ------------------------------------------------------------------
+    for key, csv_path in sorted(saved_files.items()):
+        if key in written_keys:
+            continue
+
+        path = Path(str(csv_path))
+
+        if not str(path).lower().endswith(".csv"):
+            continue
+
+        if not path.exists():
+            continue
+
+        dataframe = _read_csv_for_excel_safe(path)
+        sheet_name = key.replace("_", " ").title()
+
+        _write_dataframe_to_excel_sheet(
+            workbook,
+            sheet_name,
+            dataframe,
+            used_names=used_names,
+            max_rows=max_rows_per_sheet,
+        )
+
+    workbook.save(workbook_path)
+
+    return str(workbook_path)
+
+
+def _build_tower_ipdr_scope_warnings(
+    *,
+    selected_records: int,
+    total_records: int,
+    selected_start: object,
+    selected_end: object,
+) -> pd.DataFrame:
+    """Build warnings when selected Date-Time Part covers too much or no data."""
+
+    columns = [
+        "warning_type",
+        "severity",
+        "selected_period",
+        "selected_records",
+        "total_records",
+        "coverage_percent",
+        "baseline_records",
+        "simple_warning",
+        "why_it_matters",
+        "suggested_action",
+    ]
+
+    warnings: list[dict[str, object]] = []
+
+    selected_records = int(selected_records or 0)
+    total_records = int(total_records or 0)
+
+    coverage_percent = 0.0
+    baseline_records = 0
+
+    if total_records > 0:
+        coverage_percent = round((selected_records / total_records) * 100, 2)
+        baseline_records = max(total_records - selected_records, 0)
+
+    if total_records <= 0:
+        warnings.append(
+            {
+                "warning_type": "No Loaded Data",
+                "severity": "High",
+                "selected_period": f"{selected_start} to {selected_end}",
+                "selected_records": selected_records,
+                "total_records": total_records,
+                "coverage_percent": coverage_percent,
+                "baseline_records": baseline_records,
+                "simple_warning": "Loaded Tower IPDR data available nahi hai.",
+                "why_it_matters": "Analysis result reliable nahi hoga jab dump data loaded na ho.",
+                "suggested_action": "Pehle option 1: Load Dump Data chalayein.",
+            }
+        )
+
+    elif selected_records <= 0:
+        warnings.append(
+            {
+                "warning_type": "No Records In Selected Period",
+                "severity": "Medium",
+                "selected_period": f"{selected_start} to {selected_end}",
+                "selected_records": selected_records,
+                "total_records": total_records,
+                "coverage_percent": coverage_percent,
+                "baseline_records": baseline_records,
+                "simple_warning": "Selected Date-Time Part me koi record nahi mila.",
+                "why_it_matters": "Is part se investigation lead nahi niklega.",
+                "suggested_action": "Date-Time range, dump period aur operator data verify karein.",
+            }
+        )
+
+    elif coverage_percent >= 95:
+        warnings.append(
+            {
+                "warning_type": "Selected Period Covers Almost Full Dump",
+                "severity": "High",
+                "selected_period": f"{selected_start} to {selected_end}",
+                "selected_records": selected_records,
+                "total_records": total_records,
+                "coverage_percent": coverage_percent,
+                "baseline_records": baseline_records,
+                "simple_warning": "Selected Date-Time Part lagbhag poora loaded dump cover kar raha hai.",
+                "why_it_matters": (
+                    "Common/Uncommon comparison weak ho sakta hai, kyunki selected period ke bahar "
+                    "comparison ke liye data bahut kam ya zero hai."
+                ),
+                "suggested_action": (
+                    "Chhota incident-specific Date-Time Part banayein, ya incident se pehle/baad ka "
+                    "comparison dump load karein."
+                ),
+            }
+        )
+
+    elif coverage_percent >= 75:
+        warnings.append(
+            {
+                "warning_type": "Selected Period Covers Large Dump Portion",
+                "severity": "Medium",
+                "selected_period": f"{selected_start} to {selected_end}",
+                "selected_records": selected_records,
+                "total_records": total_records,
+                "coverage_percent": coverage_percent,
+                "baseline_records": baseline_records,
+                "simple_warning": "Selected Date-Time Part loaded dump ka bada hissa cover kar raha hai.",
+                "why_it_matters": "Common/Uncommon result useful hai, lekin comparison limited ho sakta hai.",
+                "suggested_action": "Report interpret karte waqt baseline data size check karein.",
+            }
+        )
+
+    return pd.DataFrame(warnings, columns=columns)
+
+
+def tower_ipdr_partwise_latest_report_path(case_id: str) -> Path:
+    return tower_ipdr_partwise_range_report_root(case_id) / "latest_report.json"
+
+
+def save_tower_ipdr_partwise_latest_report(
+    case_id: str,
+    manifest: dict[str, Any],
+) -> Path:
+    """Save latest Tower IPDR part-wise report pointer.
+
+    This is useful for:
+    - View Case Reports
+    - GUI report opening
+    - quick latest report lookup
+    """
+
+    path = tower_ipdr_partwise_latest_report_path(case_id)
+    path.parent.mkdir(parents=True, exist_ok=True)
+
+    saved_files = dict(manifest.get("saved_files", {}))
+
+    payload = {
+        "case_id": str(case_id),
+        "updated_at": _now_iso(),
+        "report_type": "Tower IPDR Part-wise Date-Time Range Report",
+        "run_id": manifest.get("run_id"),
+        "output_dir": manifest.get("output_dir"),
+        "main_report": saved_files.get("investigation_summary_all_parts"),
+        "summary_csv": saved_files.get("all_parts_summary"),
+        "excel_workbook": saved_files.get("excel_workbook"),
+        "manifest": saved_files.get("manifest"),
+        "parts_count": manifest.get("parts_count"),
+        "note": (
+            "Latest Tower IPDR part-wise report pointer. "
+            "Generated files are investigation reports and should be verified before conclusion."
+        ),
+    }
+
+    path.write_text(
+        json.dumps(
+            _report_json_safe(payload),
+            ensure_ascii=False,
+            indent=2,
+            sort_keys=True,
+        ),
+        encoding="utf-8",
+    )
+
+    return path
+
+
+def load_tower_ipdr_partwise_latest_report(case_id: str) -> dict[str, Any]:
+    path = tower_ipdr_partwise_latest_report_path(case_id)
+
+    if not path.exists():
+        return {}
+
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
+def _read_csv_for_excel_safe(path: Path) -> pd.DataFrame:
+    """Read CSV safely for Excel export.
+
+    Empty CSV sections should not stop the full Excel workbook export.
+    """
+
+    try:
+        dataframe = pd.read_csv(path)
+    except pd.errors.EmptyDataError:
+        return pd.DataFrame(
+            [
+                {
+                    "message": "No data available in this section.",
+                    "source_file": str(path),
+                }
+            ]
+        )
+
+    if dataframe is None or (dataframe.empty and len(dataframe.columns) == 0):
+        return pd.DataFrame(
+            [
+                {
+                    "message": "No data available in this section.",
+                    "source_file": str(path),
+                }
+            ]
+        )
+
+    return dataframe
+
