@@ -842,7 +842,7 @@ def tower_ipdr_investigation_summary(
                 WHEN current_part.selected_time_records >= 3 THEN 'Medium'
                 ELSE 'Low'
             END AS confidence_level,
-            'Verify this number first with CDR/SDR/CAF, IMEI/IMSI continuity, and CCTV/field input.' AS suggested_action
+            'Verify this number first with CDR/SDR/CAF, IMEI/IMSI continuity, and field/local input.' AS suggested_action
         FROM current_part
         LEFT JOIN baseline
           ON current_part.subscriber_number = baseline.subscriber_number
@@ -881,7 +881,7 @@ def tower_ipdr_investigation_summary(
                 WHEN COUNT(*) >= 5 THEN 'High'
                 ELSE 'Medium'
             END AS confidence_level,
-            'Verify movement feasibility, tower locations, CDR location and field/CCTV information.' AS suggested_action
+            'Verify movement feasibility, tower locations, CDR location and field/local information.' AS suggested_action
         FROM {TABLE_EVENTS}
         WHERE {current_filter}
           AND subscriber_number IS NOT NULL
@@ -1055,7 +1055,7 @@ def tower_ipdr_investigation_summary(
                     THEN 'High activity in selected time'
                 ELSE 'Low-volume presence'
             END AS simple_reason,
-            'Verify priority leads with CDR/SDR/CAF, IMEI/IMSI and field/CCTV information.' AS suggested_action
+            'Verify priority leads with CDR/SDR/CAF, IMEI/IMSI and field/local information.' AS suggested_action
         FROM current_part
         LEFT JOIN baseline
           ON current_part.subscriber_number = baseline.subscriber_number
@@ -1223,23 +1223,6 @@ def print_tower_ipdr_investigation_summary(
     """Print Tower IPDR partition analysis in simple investigation language."""
 
     summary = result.get("summary", pd.DataFrame())
-    data_scope_warnings = result.get("data_scope_warnings", pd.DataFrame())
-
-    if isinstance(data_scope_warnings, pd.DataFrame) and not data_scope_warnings.empty:
-        print("\n" + "-" * 78)
-        print("DATA SCOPE WARNING")
-        print("-" * 78)
-
-        for _, warning in data_scope_warnings.iterrows():
-            print(f"[!] {warning.get('simple_warning')}")
-            print(f"    Severity        : {warning.get('severity')}")
-            print(f"    Coverage        : {warning.get('coverage_percent')}% of loaded dump")
-            print(f"    Selected Records: {warning.get('selected_records')}")
-            print(f"    Total Records   : {warning.get('total_records')}")
-            print(f"    Baseline Records: {warning.get('baseline_records')}")
-            print(f"    Why important   : {warning.get('why_it_matters')}")
-            print(f"    Suggested Action: {warning.get('suggested_action')}")
-
     lead_summary = result.get("lead_summary", pd.DataFrame())
     common_numbers = result.get("common_numbers", pd.DataFrame())
     uncommon_numbers = result.get("uncommon_numbers", pd.DataFrame())
@@ -1273,6 +1256,24 @@ def print_tower_ipdr_investigation_summary(
     print(f"Searched Cells     : {cells_involved:,}")
     print(f"First Activity     : {first_activity}")
     print(f"Last Activity      : {last_activity}")
+
+    data_scope_warnings = result.get("data_scope_warnings", pd.DataFrame())
+
+    if isinstance(data_scope_warnings, pd.DataFrame) and not data_scope_warnings.empty:
+        print("\n" + "-" * 78)
+        print("DATA SCOPE WARNING")
+        print("-" * 78)
+
+        for _, warning in data_scope_warnings.iterrows():
+            print(f"[!] {warning.get('simple_warning')}")
+            print(f"    Severity        : {warning.get('severity')}")
+            print(f"    Coverage        : {warning.get('coverage_percent')}% of loaded dump")
+            print(f"    Selected Records: {warning.get('selected_records')}")
+            print(f"    Total Records   : {warning.get('total_records')}")
+            print(f"    Baseline Records: {warning.get('baseline_records')}")
+            print(f"    Why important   : {warning.get('why_it_matters')}")
+            print(f"    Suggested Action: {warning.get('suggested_action')}")
+
 
     print("\n" + "-" * 78)
     print("IMPORTANT FINDINGS")
@@ -1334,7 +1335,7 @@ def print_tower_ipdr_investigation_summary(
     print("SUSPICIOUS TIMING / HIGH ACTIVITY")
     print("-" * 78)
     print("Meaning: Numbers with notable activity during the selected period.")
-    print("Use: Compare timing with incident time, CCTV/field input and route.")
+    print("Use: Compare timing with incident time, field/local input and route.")
     _print_simple_leads(suspicious_timing, max_rows=max_leads)
 
     print("\n" + "-" * 78)
@@ -1343,7 +1344,7 @@ def print_tower_ipdr_investigation_summary(
     print("1. Verify high-priority and medium-priority numbers first.")
     print("2. Check CDR/SDR/CAF details for identity and ownership.")
     print("3. Verify IMEI/IMSI continuity with operator records.")
-    print("4. Compare with CCTV, field input, suspect route and tower location.")
+    print("4. Compare with field/local input, suspect route and tower location.")
     print("5. Do not conclude only from tower/IPDR presence; corroboration is required.")
     print("=" * 78)
 
@@ -1628,7 +1629,7 @@ def tower_ipdr_range_investigation_summary(
                 WHEN current_part.selected_period_records >= 3 THEN 'Medium'
                 ELSE 'Low'
             END AS confidence_level,
-            'Verify this number with CDR/SDR/CAF, IMEI/IMSI continuity, and CCTV/field input.' AS suggested_action
+            'Verify this number with CDR/SDR/CAF, IMEI/IMSI continuity, and field/local input.' AS suggested_action
         FROM current_part
         LEFT JOIN baseline
           ON current_part.subscriber_number = baseline.subscriber_number
@@ -1667,7 +1668,7 @@ def tower_ipdr_range_investigation_summary(
                 WHEN COUNT(*) >= 5 THEN 'High'
                 ELSE 'Medium'
             END AS confidence_level,
-            'Verify tower route, movement feasibility, CDR location and field/CCTV information.' AS suggested_action
+            'Verify tower route, movement feasibility, CDR location and field/local information.' AS suggested_action
         FROM {TABLE_EVENTS}
         WHERE {current_filter}
           AND subscriber_number IS NOT NULL
@@ -1800,7 +1801,7 @@ def tower_ipdr_range_investigation_summary(
                 WHEN COUNT(*) >= 10 OR COUNT(DISTINCT searched_cell_id) >= 2 THEN 'Medium'
                 ELSE 'Low'
             END AS confidence_level,
-            'Compare timing with incident time, CCTV/field input, route and CDR location.' AS suggested_action
+            'Compare timing with incident time, field/local input, route and CDR location.' AS suggested_action
         FROM {TABLE_EVENTS}
         WHERE {current_filter}
           AND subscriber_number IS NOT NULL
@@ -1880,7 +1881,7 @@ def tower_ipdr_range_investigation_summary(
                     THEN 'High activity in selected period'
                 ELSE 'Low-volume presence'
             END AS simple_reason,
-            'Verify priority leads with CDR/SDR/CAF, IMEI/IMSI and field/CCTV information.' AS suggested_action
+            'Verify priority leads with CDR/SDR/CAF, IMEI/IMSI and field/local information.' AS suggested_action
         FROM current_part
         LEFT JOIN baseline
           ON current_part.subscriber_number = baseline.subscriber_number
