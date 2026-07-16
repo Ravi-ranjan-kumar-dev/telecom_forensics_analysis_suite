@@ -26,6 +26,7 @@ from .subscribers import (
 )
 from .summary import call_type_summary, cell_summary, operator_summary, tower_dump_summary
 from .time_analysis import daily_activity, hourly_activity, night_activity
+from .uncommon_presence import build_tower_cdr_presence_intelligence
 
 
 ANALYSIS_NAMES = [
@@ -36,6 +37,12 @@ ANALYSIS_NAMES = [
     "subscriber_summary",
     "repeat_visitors",
     "frequent_visitors",
+    "tower_cdr_common_numbers",
+    "tower_cdr_uncommon_numbers",
+    "tower_cdr_multi_cell_presence",
+    "tower_cdr_device_consistency",
+    "tower_cdr_suspicious_timing",
+    "tower_cdr_priority_leads",
     "imei_summary",
     "imsi_summary",
     "shared_imei",
@@ -206,6 +213,14 @@ def build_tower_dump_analysis_bundle(df: pd.DataFrame) -> dict[str, Any]:
                 }
             )
 
+    presence_tables: dict[str, pd.DataFrame] | None = None
+
+    def presence_table(name: str) -> pd.DataFrame:
+        nonlocal presence_tables
+        if presence_tables is None:
+            presence_tables = build_tower_cdr_presence_intelligence(df)
+        return presence_tables.get(name, pd.DataFrame())
+
     execute("tower_dump_summary", lambda: tower_dump_summary(df))
     execute("operator_summary", lambda: operator_summary(df))
     execute("cell_summary", lambda: cell_summary(df))
@@ -214,6 +229,13 @@ def build_tower_dump_analysis_bundle(df: pd.DataFrame) -> dict[str, Any]:
     execute("subscriber_summary", lambda: subscriber_summary(df))
     execute("repeat_visitors", lambda: repeat_visitors_from_summary(results["subscriber_summary"]))
     execute("frequent_visitors", lambda: frequent_visitors_from_summary(results["subscriber_summary"]))
+
+    execute("tower_cdr_common_numbers", lambda: presence_table("common_numbers"))
+    execute("tower_cdr_uncommon_numbers", lambda: presence_table("uncommon_numbers"))
+    execute("tower_cdr_multi_cell_presence", lambda: presence_table("multi_cell_presence"))
+    execute("tower_cdr_device_consistency", lambda: presence_table("device_consistency"))
+    execute("tower_cdr_suspicious_timing", lambda: presence_table("suspicious_timing"))
+    execute("tower_cdr_priority_leads", lambda: presence_table("priority_leads"))
 
     execute("imei_summary", lambda: imei_summary(df))
     execute("imsi_summary", lambda: imsi_summary(df))
