@@ -11,7 +11,7 @@ def _print_table(
     title: str,
     value: Any,
     *,
-    limit: int = 20,
+    limit: int = 15,
 ) -> None:
     print("\n" + "=" * 90)
     print(title)
@@ -24,18 +24,29 @@ def _print_table(
     print(value.head(limit).to_string(index=False))
 
     if len(value) > limit:
-        print(f"[+] Showing first {limit} of {len(value):,} rows.")
+        print(f"\n[+] Showing first {limit} of {len(value):,} rows.")
 
 
 def print_gprs_analysis(
     result: dict[str, Any],
     *,
-    row_limit: int = 20,
+    row_limit: int = 15,
 ) -> None:
+    """Print short investigator-focused Tower GPRS console report."""
+
+    print("\n" + "#" * 90)
+    print("TOWER GPRS DUMP ANALYSIS")
+    print("#" * 90)
+
+    print("\n" + "-" * 90)
+    print("Console par sirf important investigation leads dikhaye ja rahe hain.")
+    print("Full details Excel report me available rahenge.")
+    print("-" * 90)
+
     _print_table(
         "TOWER GPRS DUMP EXECUTIVE SUMMARY",
         result.get("summary"),
-        limit=100,
+        limit=50,
     )
     _print_table(
         "TECHNOLOGY SUMMARY",
@@ -48,13 +59,8 @@ def print_gprs_analysis(
         limit=row_limit,
     )
     _print_table(
-        "TOP SUBSCRIBERS",
-        result.get("subscriber_summary"),
-        limit=row_limit,
-    )
-    _print_table(
-        "GPRS COMMON / REPEAT NUMBERS",
-        result.get("gprs_common_numbers"),
+        "GPRS PRIORITY LEADS",
+        result.get("gprs_priority_leads"),
         limit=row_limit,
     )
     _print_table(
@@ -63,13 +69,23 @@ def print_gprs_analysis(
         limit=row_limit,
     )
     _print_table(
+        "GPRS COMMON / REPEAT NUMBERS",
+        result.get("gprs_common_numbers"),
+        limit=row_limit,
+    )
+    _print_table(
         "GPRS MULTI-CELL PRESENCE",
         result.get("gprs_multi_cell_presence"),
         limit=row_limit,
     )
     _print_table(
-        "GPRS PRIORITY LEADS",
-        result.get("gprs_priority_leads"),
+        "GPRS DEVICE CONSISTENCY",
+        result.get("gprs_device_consistency"),
+        limit=row_limit,
+    )
+    _print_table(
+        "GPRS SUSPICIOUS TIMING",
+        result.get("gprs_suspicious_timing"),
         limit=row_limit,
     )
     _print_table(
@@ -85,8 +101,18 @@ def print_gprs_analysis(
     _print_table(
         "DATA QUALITY",
         result.get("data_quality"),
-        limit=100,
+        limit=50,
     )
+
+
+def print_tower_gprs_report(
+    result: dict[str, Any],
+    *,
+    row_limit: int = 15,
+) -> None:
+    """Backward/alternate name for the same GPRS console report."""
+
+    print_gprs_analysis(result, row_limit=row_limit)
 
 
 def print_gprs_partition(
@@ -94,6 +120,8 @@ def print_gprs_partition(
     *,
     row_limit: int = 50,
 ) -> None:
+    """Print Tower GPRS date-time partition report."""
+
     _print_table(
         "GPRS PARTITION WINDOWS",
         result.get("partition_windows"),
@@ -112,5 +140,10 @@ def print_gprs_partition(
     _print_table(
         "STRICT COMMON CANDIDATES",
         result.get("strict_common_candidates"),
+        limit=row_limit,
+    )
+    _print_table(
+        "PARTITION SUBSCRIBER PRESENCE",
+        result.get("subscriber_presence"),
         limit=row_limit,
     )
