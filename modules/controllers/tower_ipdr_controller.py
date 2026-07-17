@@ -1404,6 +1404,25 @@ def _run_complete_tower_ipdr_analysis(case: dict[str, Any]) -> None:
             encoding="utf-8",
         )
 
+        from modules.cases.latest_reports import save_latest_report
+
+        save_latest_report(
+            case_id,
+            "tower_ipdr_complete",
+            title="Tower IPDR Complete Analysis",
+            report_path=excel_path,
+            summary_path=summary_path,
+            report_folder=report_dir,
+            generated_at=latest_pointer_payload.get("generated_at", ""),
+            metadata={
+                "total_events": _summary_value("Total Events"),
+                "unique_subscribers": _summary_value("Unique Subscribers"),
+                "priority_leads": _count_rows(priority_leads),
+                "multi_cell_leads": _count_rows(multi_cell_presence),
+                "rare_presence_leads": _count_rows(rare_presence),
+            },
+        )
+
         def _summary_value(metric_name: str) -> str:
             matched = summary.loc[summary["metric"] == metric_name, "value"]
             if matched.empty:

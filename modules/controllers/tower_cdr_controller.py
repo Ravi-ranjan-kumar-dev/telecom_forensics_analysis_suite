@@ -283,6 +283,21 @@ def _run_complete_analysis(
             report_path=excel_path,
         )
 
+        from modules.cases.latest_reports import save_latest_report
+
+        save_latest_report(
+            case_id,
+            "tower_cdr_dump",
+            title="Tower CDR Dump Analysis",
+            report_path=excel_path,
+            report_folder=case_report_dir(case_id, "tower_cdr_dump"),
+            metadata={
+                "input_records": len(dataframe),
+                "analysis_completed": analysis.get("completed_count", 0),
+                "analysis_failed": analysis.get("failed_count", 0),
+            },
+        )
+
         register_analysis_run(
             case_id,
             analysis_type="TOWER_CDR_DUMP",

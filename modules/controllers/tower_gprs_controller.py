@@ -384,6 +384,23 @@ def _execute(
             report_path=excel_path,
         )
 
+        from modules.cases.latest_reports import save_latest_report
+
+        save_latest_report(
+            case_id,
+            "tower_gprs_dump",
+            title="Tower GPRS Dump Analysis",
+            report_path=excel_path,
+            report_folder=case_report_dir(case_id, "tower_gprs_dump"),
+            metadata={
+                "input_records": len(dataframe),
+                "sql_engine_ms": (
+                    pipeline_result.get("timings", {}) or {}
+                ).get("sql_analysis_ms", 0),
+                "partition_report": bool(partition),
+            },
+        )
+
         register_analysis_run(
             case_id,
             analysis_type=(
