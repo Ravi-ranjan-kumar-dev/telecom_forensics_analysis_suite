@@ -2101,7 +2101,30 @@ def _load_jio_dynamic_ipdr_csv_fallback(path: str | Path) -> dict[str, Any]:
     normalized["source_file"] = str(source_path)
     normalized["source_file_name"] = source_path.name
     normalized["raw_row_number"] = range(1, len(normalized) + 1)
+
+    # Jio dynamic IPDR rows are real internet activity rows, not empty
+    # allocation-only rows. These aliases help the common IPDR analysis
+    # engine count them as event records.
     normalized["is_allocation_only"] = False
+    normalized["record_type"] = "EVENT"
+    normalized["row_type"] = "EVENT"
+    normalized["event_type"] = "IPDR_EVENT"
+    normalized["ipdr_record_type"] = "EVENT"
+
+    normalized["event_start_time"] = normalized["event_time"]
+    normalized["session_start"] = normalized["event_time"]
+    normalized["session_end"] = normalized["event_time"]
+    normalized["start_time"] = normalized["event_time"]
+    normalized["end_time"] = normalized["event_time"]
+
+    normalized["cgi"] = normalized["first_cell_id"]
+    normalized["cell_id"] = normalized["first_cell_id"]
+    normalized["searched_cell_id"] = normalized["first_cell_id"]
+
+    normalized["total_volume"] = (
+        normalized["uplink_volume"].fillna(0)
+        + normalized["downlink_volume"].fillna(0)
+    )
 
     event_mask = (
         normalized["subscriber_number"].astype(str).str.strip().ne("")
