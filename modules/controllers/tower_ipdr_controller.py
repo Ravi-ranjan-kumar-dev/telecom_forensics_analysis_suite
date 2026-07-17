@@ -521,6 +521,143 @@ def _print_dataframe(title: str, dataframe: pd.DataFrame, *, max_rows: int = 20)
     print(dataframe.head(max_rows).to_string(index=False))
 
 
+
+def _tower_ipdr_column_count(case_id: str) -> int:
+    """Return Tower IPDR staged table column count."""
+
+    database_path = tower_ipdr_database_path(case_id)
+
+    if not database_path.exists():
+        return 0
+
+    try:
+        import duckdb
+
+        con = duckdb.connect(str(database_path), read_only=False)
+
+        try:
+            return len(
+                con.execute("PRAGMA table_info('tower_ipdr_events')").fetchall()
+            )
+        finally:
+            con.close()
+    except Exception:
+        return 0
+
+
+def _save_tower_ipdr_backend_state(
+    case_id: str,
+    *,
+    import_summary: dict[str, Any] | None = None,
+    source: str = "tower_ipdr",
+) -> dict[str, Any]:
+    """Save Tower IPDR backend state in common pipeline-state style."""
+
+    from datetime import datetime
+
+    from modules.pipeline.scalable_analysis_pipeline import (
+        write_latest_pipeline_state,
+    )
+
+    database_path = tower_ipdr_database_path(case_id)
+    manifest_path = tower_ipdr_manifest_path(case_id)
+    row_count = count_tower_ipdr_events(case_id)
+    column_count = _tower_ipdr_column_count(case_id)
+    fingerprint = _tower_ipdr_input_fingerprint()
+
+    payload: dict[str, Any] = {
+        "ok": bool(row_count > 0 and database_path.exists()),
+        "case_id": str(case_id),
+        "workflow": TOWER_IPDR_WORKFLOW,
+        "source": source,
+        "input_fingerprint": fingerprint,
+        "stage": {
+            "record_count": int(row_count),
+            "column_count": int(column_count),
+            "duckdb_path": str(database_path),
+            "manifest_path": str(manifest_path),
+            "parquet_path": "",
+        },
+        "sql_result_rows": {
+            "tower_ipdr_events": int(row_count),
+        },
+        "timings": {},
+        "import_summary": import_summary or {},
+        "notes": (
+            "Tower IPDR currently uses existing DuckDB staging. "
+            "Parquet is not required in this cleanup step."
+        ),
+        "updated_at": datetime.now().isoformat(timespec="seconds"),
+    }
+
+    pipeline_state_path = write_latest_pipeline_state(
+        case_id,
+        TOWER_IPDR_WORKFLOW,
+        payload,
+    )
+    payload["pipeline_state_path"] = str(pipeline_state_path)
+
+    write_latest_pipeline_state(
+        case_id,
+        TOWER_IPDR_WORKFLOW,
+        payload,
+    )
+
+    return payload
+
+
+def _print_tower_ipdr_backend_status(
+    payload: dict[str, Any],
+    *,
+    title: str = "TOWER IPDR FAST ANALYSIS BACKEND READY",
+) -> None:
+    """Print user-friendly Tower IPDR backend status.
+
+    Normal users should not see DuckDB/manifest/pipeline JSON paths.
+    Developer can show backend paths using:
+    TELECOM_DEBUG_BACKEND=1 python3 -u main.py
+    """
+
+    import os
+
+    debug_backend = os.environ.get("TELECOM_DEBUG_BACKEND") == "1"
+
+    stage = payload.get("stage", {}) or {}
+    fingerprint = payload.get("input_fingerprint", {}) or {}
+    import_summary = payload.get("import_summary", {}) or {}
+
+    input_files = (
+        import_summary.get("candidate_files")
+        or fingerprint.get("file_count")
+        or 0
+    )
+
+    print()
+    print("=" * 78)
+    print(title)
+    print("=" * 78)
+    print(f"Records indexed : {int(stage.get('record_count', 0)):,}")
+    print(f"Columns indexed : {int(stage.get('column_count', 0)):,}")
+    print(f"Input files     : {int(input_files):,}")
+
+    if import_summary:
+        print(f"Loaded files    : {int(import_summary.get('loaded_files', 0)):,}")
+        print(f"Skipped files   : {int(import_summary.get('skipped_files', 0)):,}")
+        print(f"Failed files    : {int(import_summary.get('failed_files', 0)):,}")
+        print(f"Rows this run   : {int(import_summary.get('rows_loaded_this_run', 0)):,}")
+
+    print("Speed mode      : DuckDB SQL internal backend")
+    print("User output     : Excel / GUI report only")
+    print("=" * 78)
+
+    if debug_backend:
+        print("DEBUG BACKEND FILES")
+        print("-" * 78)
+        print(f"DuckDB file     : {stage.get('duckdb_path', '')}")
+        print(f"Manifest        : {stage.get('manifest_path', '')}")
+        print(f"Pipeline state  : {payload.get('pipeline_state_path', '')}")
+        print("-" * 78)
+
 def _import_staging(case: dict[str, Any]) -> None:
     case_id = str(case["case_id"])
     input_folder = _input_folder(case_id)
@@ -534,17 +671,15 @@ def _import_staging(case: dict[str, Any]) -> None:
         force_rebuild=True,
     )
 
-    print("" + "=" * 78)
-    print("TOWER IPDR STAGING IMPORT COMPLETED")
-    print("=" * 78)
-    print(f"Candidate Files : {summary.get('candidate_files', 0):,}")
-    print(f"Loaded Files    : {summary.get('loaded_files', 0):,}")
-    print(f"Skipped Files   : {summary.get('skipped_files', 0):,}")
-    print(f"Failed Files    : {summary.get('failed_files', 0):,}")
-    print(f"Rows This Run   : {summary.get('rows_loaded_this_run', 0):,}")
-    print(f"Rows In DB      : {summary.get('total_rows_in_database', 0):,}")
-    print(f"Database        : {summary.get('database_path', '')}")
-    print(f"Manifest        : {summary.get('manifest_path', '')}")
+    backend_state = _save_tower_ipdr_backend_state(
+        case_id,
+        import_summary=summary,
+        source="staging_import",
+    )
+    _print_tower_ipdr_backend_status(
+        backend_state,
+        title="TOWER IPDR FAST ANALYSIS BACKEND READY",
+    )
 
     _print_dataframe(
         "TOP CELL COUNTS",
@@ -554,18 +689,16 @@ def _import_staging(case: dict[str, Any]) -> None:
 
 
 def _show_staging_status(case_id: str) -> None:
-    database_path = tower_ipdr_database_path(case_id)
-    manifest_path = tower_ipdr_manifest_path(case_id)
-    row_count = count_tower_ipdr_events(case_id)
+    backend_state = _save_tower_ipdr_backend_state(
+        case_id,
+        source="status_check",
+    )
+    _print_tower_ipdr_backend_status(
+        backend_state,
+        title="TOWER IPDR BACKEND STATUS",
+    )
 
-    print("" + "=" * 78)
-    print("TOWER IPDR STAGING STATUS")
-    print("=" * 78)
-    print(f"Database Exists : {database_path.exists()}")
-    print(f"Manifest Exists : {manifest_path.exists()}")
-    print(f"Database Path   : {database_path}")
-    print(f"Manifest Path   : {manifest_path}")
-    print(f"Rows In DB      : {row_count:,}")
+    row_count = count_tower_ipdr_events(case_id)
 
     if row_count:
         _print_dataframe(
@@ -839,7 +972,7 @@ def _run_complete_tower_ipdr_analysis(case: dict[str, Any]) -> None:
     excel_path = report_dir / "tower_ipdr_complete_analysis.xlsx"
     summary_path = report_dir / "tower_ipdr_complete_summary.txt"
 
-    con = duckdb.connect(str(db_path), read_only=True)
+    con = duckdb.connect(str(db_path), read_only=False)
 
     try:
         columns = [
@@ -1251,6 +1384,11 @@ def _run_complete_tower_ipdr_analysis(case: dict[str, Any]) -> None:
         import json
 
         latest_pointer_path = report_dir.parent / "latest_complete_report.json"
+        backend_state = _save_tower_ipdr_backend_state(
+            case_id,
+            source="complete_analysis",
+        )
+
         latest_pointer_payload = {
             "case_id": case_id,
             "run_id": run_id,
@@ -1258,7 +1396,7 @@ def _run_complete_tower_ipdr_analysis(case: dict[str, Any]) -> None:
             "report_folder": str(report_dir),
             "main_summary": str(summary_path),
             "excel_report": str(excel_path),
-            "database": str(db_path),
+            "backend_state": backend_state.get("pipeline_state_path", ""),
             "generated_at": datetime.now().isoformat(timespec="seconds"),
         }
         latest_pointer_path.write_text(
