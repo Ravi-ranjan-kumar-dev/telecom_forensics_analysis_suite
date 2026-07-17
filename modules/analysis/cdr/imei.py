@@ -1,80 +1,224 @@
-#imei.py
-
 import pandas as pd
 
+from .contact_classifier import classify_contact
 from .datetime_utils import canonical_datetime
+from .tower_utils import valid_cell_mask
+
+
+def _prepare_imei_data(df):
+    if df is None or df.empty or "imei" not in df.columns:
+        return pd.DataFrame()
+
+    data = df.copy()
+    data["imei"] = data["imei"].astype("string").fillna("").str.strip()
+    data = data[data["imei"].ne("")].copy()
+
+    if data.empty:
+        return pd.DataFrame()
+
+    data["_event_datetime"] = canonical_datetime(data)
+    data["_duration"] = (
+        pd.to_numeric(data["call_duration"], errors="coerce").fillna(0)
+        if "call_duration" in data.columns
+        else 0
+    )
+
+    if "b_party" in data.columns:
+        data["_contact_category"] = data["b_party"].map(classify_contact)
+    else:
+        data["_contact_category"] = "unknown_contact"
+        data["b_party"] = ""
+
+    if "first_cell_id" in data.columns:
+        data["_valid_cell_id"] = data["first_cell_id"].where(valid_cell_mask(data["first_cell_id"]), "")
+    else:
+        data["_valid_cell_id"] = ""
+
+    return data
+
+
+def _top_value_by_imei(data, category, output_column):
+    subset = data[
+        data["_contact_category"].eq(category)
+        & data["b_party"].astype(str).str.strip().ne("")
+    ].copy()
+
+    if subset.empty:
+        return pd.DataFrame(columns=["IMEI", output_column])
+
+    counts = (
+        subset.groupby(["imei", "b_party"], dropna=False)
+        .size()
+        .reset_index(name="cnt")
+        .sort_values(["imei", "cnt"], ascending=[True, False])
+        .drop_duplicates("imei")
+        .rename(columns={"imei": "IMEI", "b_party": output_column})
+    )
+
+    return counts[["IMEI", output_column]]
+
+
+def _count_events_by_imei(data, category, output_column):
+    subset = data[data["_contact_category"].eq(category)].copy()
+
+    if subset.empty:
+        return pd.DataFrame(columns=["IMEI", output_column])
+
+    counts = (
+        subset.groupby("imei")
+        .size()
+        .reset_index(name=output_column)
+        .rename(columns={"imei": "IMEI"})
+    )
+
+    return counts[["IMEI", output_column]]
+
+
+def _most_used_valid_tower(data):
+    subset = data[data["_valid_cell_id"].astype(str).str.strip().ne("")].copy()
+
+    if subset.empty:
+        return pd.DataFrame(columns=["IMEI", "Most Used Valid Tower"])
+
+    counts = (
+        subset.groupby(["imei", "_valid_cell_id"], dropna=False)
+        .size()
+        .reset_index(name="cnt")
+        .sort_values(["imei", "cnt"], ascending=[True, False])
+        .drop_duplicates("imei")
+        .rename(columns={"imei": "IMEI", "_valid_cell_id": "Most Used Valid Tower"})
+    )
+
+    return counts[["IMEI", "Most Used Valid Tower"]]
+
 
 def imei_summary(df):
-    """
-    Generate a summary report for IMEIs in the dataset using optimized groupby.
-    """
-    # 1. Prepare Data
-    data = df[df["imei"].notnull() & (df["imei"] != "")].copy()
-    
-    # 2. Consume the loader-created canonical timestamp.
-    data["datetime"] = canonical_datetime(data)
-    data = data.dropna(subset=["datetime"])
+    data = _prepare_imei_data(df)
 
-    # 3. Optimized Aggregation (Groupby is much faster than loops)
-    summary = data.groupby("imei").agg(
-        First_Seen=("datetime", "min"),
-        Last_Seen=("datetime", "max"),
-        Total_Events=("imei", "size"),
-        Unique_Contacts=("b_party", "nunique"),
-        Unique_Towers=("first_cell_id", "nunique"),
-        Total_Duration_Sec=("call_duration", "sum")
-    ).reset_index()
+    if data.empty:
+        return pd.DataFrame(
+            columns=[
+                "imei",
+                "First Seen",
+                "Last Seen",
+                "Total Events",
+                "Unique Human Contacts",
+                "Unique Valid Towers",
+                "Total Duration (Sec)",
+            ]
+        )
 
-    # Rename columns for cleaner output
-    summary = summary.rename(columns={
-        "First_Seen": "First Seen",
-        "Last_Seen": "Last Seen",
-        "Total_Events": "Total Events",
-        "Unique_Contacts": "Unique Contacts",
-        "Unique_Towers": "Unique Towers",
-        "Total_Duration_Sec": "Total Duration (Sec)"
-    })
+    human = data[data["_contact_category"].eq("human_mobile")].copy()
 
-    return summary
+    result = (
+        data.groupby("imei")
+        .agg(
+            **{
+                "First Seen": ("_event_datetime", "min"),
+                "Last Seen": ("_event_datetime", "max"),
+                "Total Events": ("imei", "count"),
+                "Unique Valid Towers": ("_valid_cell_id", lambda x: x.replace("", pd.NA).dropna().nunique()),
+                "Total Duration (Sec)": ("_duration", "sum"),
+            }
+        )
+        .reset_index()
+    )
 
+    human_counts = (
+        human.groupby("imei")["b_party"]
+        .nunique()
+        .reset_index(name="Unique Human Contacts")
+    )
 
+    result = result.merge(human_counts, on="imei", how="left")
+    result["Unique Human Contacts"] = result["Unique Human Contacts"].fillna(0).astype(int)
+
+    return result[
+        [
+            "imei",
+            "First Seen",
+            "Last Seen",
+            "Total Events",
+            "Unique Human Contacts",
+            "Unique Valid Towers",
+            "Total Duration (Sec)",
+        ]
+    ].sort_values("Total Events", ascending=False)
 
 
 def imei_intelligence(df):
-    """
-    Generate intelligence report for every IMEI.
+    data = _prepare_imei_data(df)
 
-    Returns:
-        DataFrame
-    """
+    if data.empty:
+        return pd.DataFrame(
+            columns=[
+                "IMEI",
+                "First Seen",
+                "Last Seen",
+                "Total Events",
+                "Unique Human Contacts",
+                "Unique Valid Towers",
+                "Total Duration (Sec)",
+                "Most Used Valid Tower",
+                "Most Human Contacted",
+                "Top Service Sender ID",
+                "Service Sender Events",
+                "Short Code Events",
+            ]
+        )
 
-    # Remove blank IMEIs
-    data = df[df["imei"] != ""].copy()
+    summary = (
+        data.groupby("imei")
+        .agg(
+            **{
+                "First Seen": ("_event_datetime", "min"),
+                "Last Seen": ("_event_datetime", "max"),
+                "Total Events": ("imei", "count"),
+                "Unique Valid Towers": ("_valid_cell_id", lambda x: x.replace("", pd.NA).dropna().nunique()),
+                "Total Duration (Sec)": ("_duration", "sum"),
+            }
+        )
+        .reset_index()
+        .rename(columns={"imei": "IMEI"})
+    )
 
-    # Consume the loader-created canonical timestamp.
-    data["datetime"] = canonical_datetime(data)
-    data = data.dropna(subset=["datetime"])
+    human = data[data["_contact_category"].eq("human_mobile")].copy()
+    human_counts = (
+        human.groupby("imei")["b_party"]
+        .nunique()
+        .reset_index(name="Unique Human Contacts")
+        .rename(columns={"imei": "IMEI"})
+    )
 
-    intelligence = []
+    most_tower = _most_used_valid_tower(data)
+    most_human = _top_value_by_imei(data, "human_mobile", "Most Human Contacted")
+    top_service = _top_value_by_imei(data, "service_sender_id", "Top Service Sender ID")
+    service_events = _count_events_by_imei(data, "service_sender_id", "Service Sender Events")
+    short_code_events = _count_events_by_imei(data, "short_code", "Short Code Events")
 
-    for imei in data["imei"].unique():
+    for extra in [human_counts, most_tower, most_human, top_service, service_events, short_code_events]:
+        summary = summary.merge(extra, on="IMEI", how="left")
 
-        imei_df = data[data["imei"] == imei]
+    summary["Unique Human Contacts"] = summary["Unique Human Contacts"].fillna(0).astype(int)
+    summary["Service Sender Events"] = summary["Service Sender Events"].fillna(0).astype(int)
+    summary["Short Code Events"] = summary["Short Code Events"].fillna(0).astype(int)
+    summary["Most Used Valid Tower"] = summary["Most Used Valid Tower"].fillna("N/A")
+    summary["Most Human Contacted"] = summary["Most Human Contacted"].fillna("N/A")
+    summary["Top Service Sender ID"] = summary["Top Service Sender ID"].fillna("N/A")
 
-        report = {
-            "IMEI": imei,
-            "First Seen": imei_df["datetime"].min(),
-            "Last Seen": imei_df["datetime"].max(),
-            "Total Events": len(imei_df),
-            "Unique Contacts": imei_df["b_party"].nunique(),
-            "Unique Towers": imei_df["first_cell_id"].nunique(),
-            "Total Duration (Sec)": int(imei_df["call_duration"].sum()),
-            "Most Used Tower": imei_df["first_cell_id"].mode().iloc[0]
-            if not imei_df["first_cell_id"].mode().empty else "",
-            "Most Contacted": imei_df["b_party"].mode().iloc[0]
-            if not imei_df["b_party"].mode().empty else ""
-        }
-
-        intelligence.append(report)
-
-    return pd.DataFrame(intelligence)
+    return summary[
+        [
+            "IMEI",
+            "First Seen",
+            "Last Seen",
+            "Total Events",
+            "Unique Human Contacts",
+            "Unique Valid Towers",
+            "Total Duration (Sec)",
+            "Most Used Valid Tower",
+            "Most Human Contacted",
+            "Top Service Sender ID",
+            "Service Sender Events",
+            "Short Code Events",
+        ]
+    ].sort_values("Total Events", ascending=False)

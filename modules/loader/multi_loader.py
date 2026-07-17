@@ -34,6 +34,24 @@ from modules.loader.single_loader import (
 
 
 # MULTI_CDR_EXACT_DUPLICATE_FILE_GUARD_V1
+
+IGNORED_CDR_INPUT_FOLDERS = {
+    "duplicate",
+    "duplicates",
+    "backup",
+    "backups",
+    "archive",
+    "archives",
+    "__pycache__",
+}
+
+
+def _is_ignored_cdr_input_file(file_path):
+    path = Path(file_path)
+    parts = {part.lower() for part in path.parts}
+    return bool(parts.intersection(IGNORED_CDR_INPUT_FOLDERS))
+
+
 def _sha256_file_for_duplicate_guard(file_path):
     """Return SHA256 hash of an input CDR file without changing file content."""
     digest = hashlib.sha256()
@@ -546,6 +564,21 @@ def load_multiple_cdr(folder):
     print("\n" + "=" * 70)
     print("MULTIPLE CDR LOADER")
     print("=" * 70)
+    ignored_input_files = [
+        file_path for file_path in files
+        if _is_ignored_cdr_input_file(file_path)
+    ]
+    files = [
+        file_path for file_path in files
+        if not _is_ignored_cdr_input_file(file_path)
+    ]
+
+    if ignored_input_files:
+        print(
+            f"[+] Ignored archived/duplicate CDR input files: "
+            f"{len(ignored_input_files)}"
+        )
+
     print(f"[+] CSV Files Found: {len(files)}")
 
     files, exact_duplicate_files = _remove_exact_duplicate_input_files(files)
@@ -555,7 +588,7 @@ def load_multiple_cdr(folder):
         original_path = duplicate_info["original"]
         print(
             "[!] Skipping exact duplicate CDR input file: "
-            f"{duplicate_path.name} | Original already loaded: {original_path.name}"
+            f"{Path(duplicate_path).name} | Original already loaded: {Path(original_path).name}"
         )
 
     if exact_duplicate_files:

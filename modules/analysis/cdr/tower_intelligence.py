@@ -1,149 +1,262 @@
 import pandas as pd
 
+from .contact_classifier import classify_contact
 from .datetime_utils import canonical_datetime
-from .rules import HOME_WINDOW, RULESET_VERSION, WORK_WINDOW
 from .tower_utils import filter_valid_first_cell_rows
 
-def tower_intelligence(df):
-    """
-    Generate a highly optimized forensic intelligence report for every Cell ID.
-    Replaces slow python loops with blazing-fast vectorized operations.
-    """
+
+def _prepare_tower_data(df):
     if df is None or df.empty or "first_cell_id" not in df.columns:
-        return pd.DataFrame(columns=[
-            "Cell ID", "First Seen", "Last Seen", "Total Events", 
-            "Unique Contacts", "Unique IMEIs", "Total Duration (Sec)", 
-            "Most Used IMEI", "Most Contacted"
-        ])
+        return pd.DataFrame()
 
-    # Clean and filter invalid/broken cell IDs for derived tower analysis.
     data = filter_valid_first_cell_rows(df)
-    if data.empty:
-        return pd.DataFrame(columns=["Cell ID", "First Seen", "Last Seen", "Total Events"])
-
-    # Combine date and time safely into a single datetime index
-    data["datetime"] = canonical_datetime(data)
-    data = data.dropna(subset=["datetime"])
     if data.empty:
         return pd.DataFrame()
 
-    # 1. Vectorized Core Metrics Aggregation (Super Fast)
-    agg_dict = {
-        "First Seen": ("datetime", "min"),
-        "Last Seen": ("datetime", "max"),
-        "Total Events": ("datetime", "size")
-    }
+    data = data.copy()
+    data["_event_datetime"] = canonical_datetime(data)
+    data["_duration"] = (
+        pd.to_numeric(data["call_duration"], errors="coerce").fillna(0)
+        if "call_duration" in data.columns
+        else 0
+    )
+
     if "b_party" in data.columns:
-        agg_dict["Unique Contacts"] = ("b_party", "nunique")
-    if "imei" in data.columns:
-        agg_dict["Unique IMEIs"] = ("imei", "nunique")
-    if "call_duration" in data.columns:
-        agg_dict["Total Duration (Sec)"] = ("call_duration", "sum")
-
-    summary = data.groupby("first_cell_id").agg(**agg_dict).reset_index()
-    summary.rename(columns={"first_cell_id": "Cell ID"}, inplace=True)
-
-    # 2. Optimized Mode Calculation for IMEI (Vectorized Groupby Hack)
-    if "imei" in data.columns and not data["imei"].dropna().empty:
-        imei_counts = data[data["imei"].astype(str).str.strip() != ""].groupby(["first_cell_id", "imei"]).size().reset_index(name="cnt")
-        top_imei = imei_counts.sort_values("cnt", ascending=False).drop_duplicates("first_cell_id").rename(columns={"first_cell_id": "Cell ID", "imei": "Most Used IMEI"})
-        summary = pd.merge(summary, top_imei[["Cell ID", "Most Used IMEI"]], on="Cell ID", how="left")
+        data["_contact_category"] = data["b_party"].map(classify_contact)
     else:
-        summary["Most Used IMEI"] = "N/A"
+        data["_contact_category"] = "unknown_contact"
+        data["b_party"] = ""
 
-    # 3. Optimized Mode Calculation for B-Party (Vectorized Groupby Hack)
-    if "b_party" in data.columns and not data["b_party"].dropna().empty:
-        b_counts = data[data["b_party"].astype(str).str.strip() != ""].groupby(["first_cell_id", "b_party"]).size().reset_index(name="cnt")
-        top_b = b_counts.sort_values("cnt", ascending=False).drop_duplicates("first_cell_id").rename(columns={"first_cell_id": "Cell ID", "b_party": "Most Contacted"})
-        summary = pd.merge(summary, top_b[["Cell ID", "Most Contacted"]], on="Cell ID", how="left")
-    else:
-        summary["Most Contacted"] = "N/A"
+    if "imei" not in data.columns:
+        data["imei"] = ""
 
-    # Fill missing column defaults for safety assurance
-    for col in ["Unique Contacts", "Unique IMEIs", "Total Duration (Sec)"]:
-        if col not in summary.columns:
-            summary[col] = 0
+    return data
+
+
+def _top_value_by_group(data, category, output_column):
+    subset = data[
+        data["_contact_category"].eq(category)
+        & data["b_party"].astype(str).str.strip().ne("")
+    ].copy()
+
+    if subset.empty:
+        return pd.DataFrame(columns=["Cell ID", output_column])
+
+    counts = (
+        subset.groupby(["first_cell_id", "b_party"], dropna=False)
+        .size()
+        .reset_index(name="cnt")
+        .sort_values(["first_cell_id", "cnt"], ascending=[True, False])
+        .drop_duplicates("first_cell_id")
+        .rename(columns={"first_cell_id": "Cell ID", "b_party": output_column})
+    )
+
+    return counts[["Cell ID", output_column]]
+
+
+def _count_events_by_group(data, category, output_column):
+    subset = data[data["_contact_category"].eq(category)].copy()
+
+    if subset.empty:
+        return pd.DataFrame(columns=["Cell ID", output_column])
+
+    counts = (
+        subset.groupby("first_cell_id")
+        .size()
+        .reset_index(name=output_column)
+        .rename(columns={"first_cell_id": "Cell ID"})
+    )
+
+    return counts[["Cell ID", output_column]]
+
+
+def tower_intelligence(df):
+    data = _prepare_tower_data(df)
+
+    if data.empty:
+        return pd.DataFrame(
+            columns=[
+                "Cell ID",
+                "First Seen",
+                "Last Seen",
+                "Total Events",
+                "Unique Human Contacts",
+                "Service Sender Events",
+                "Short Code Events",
+                "Unique IMEIs",
+                "Total Duration (Sec)",
+                "Most Used IMEI",
+                "Most Human Contacted",
+                "Top Service Sender ID",
+            ]
+        )
+
+    summary = (
+        data.groupby("first_cell_id", dropna=False)
+        .agg(
+            **{
+                "First Seen": ("_event_datetime", "min"),
+                "Last Seen": ("_event_datetime", "max"),
+                "Total Events": ("first_cell_id", "count"),
+                "Unique IMEIs": ("imei", lambda x: x.replace("", pd.NA).dropna().nunique()),
+                "Total Duration (Sec)": ("_duration", "sum"),
+            }
+        )
+        .reset_index()
+        .rename(columns={"first_cell_id": "Cell ID"})
+    )
+
+    human_counts = (
+        data[data["_contact_category"].eq("human_mobile")]
+        .groupby("first_cell_id")["b_party"]
+        .nunique()
+        .reset_index(name="Unique Human Contacts")
+        .rename(columns={"first_cell_id": "Cell ID"})
+    )
+
+    imei_counts = (
+        data[data["imei"].astype(str).str.strip().ne("")]
+        .groupby(["first_cell_id", "imei"], dropna=False)
+        .size()
+        .reset_index(name="cnt")
+        .sort_values(["first_cell_id", "cnt"], ascending=[True, False])
+        .drop_duplicates("first_cell_id")
+        .rename(columns={"first_cell_id": "Cell ID", "imei": "Most Used IMEI"})
+    )
+
+    most_human = _top_value_by_group(data, "human_mobile", "Most Human Contacted")
+    top_service = _top_value_by_group(data, "service_sender_id", "Top Service Sender ID")
+    service_events = _count_events_by_group(data, "service_sender_id", "Service Sender Events")
+    short_code_events = _count_events_by_group(data, "short_code", "Short Code Events")
+
+    for extra in [human_counts, imei_counts[["Cell ID", "Most Used IMEI"]], most_human, top_service, service_events, short_code_events]:
+        summary = summary.merge(extra, on="Cell ID", how="left")
+
+    summary["Unique Human Contacts"] = summary["Unique Human Contacts"].fillna(0).astype(int)
+    summary["Service Sender Events"] = summary["Service Sender Events"].fillna(0).astype(int)
+    summary["Short Code Events"] = summary["Short Code Events"].fillna(0).astype(int)
     summary["Most Used IMEI"] = summary["Most Used IMEI"].fillna("N/A")
-    summary["Most Contacted"] = summary["Most Contacted"].fillna("N/A")
-    summary["Total Duration (Sec)"] = summary["Total Duration (Sec)"].fillna(0).astype(int)
-    
-    return summary.sort_values(by="Total Events", ascending=False).reset_index(drop=True)
+    summary["Most Human Contacted"] = summary["Most Human Contacted"].fillna("N/A")
+    summary["Top Service Sender ID"] = summary["Top Service Sender ID"].fillna("N/A")
+
+    return summary.sort_values("Total Events", ascending=False)
 
 
 def home_tower(df):
-    """
-    Detect probable Home Tower based on night-time activity (22:00–06:00).
-    Returns an empty DataFrame instead of None to prevent module crashes.
-    """
-    if df is None or df.empty or "first_cell_id" not in df.columns:
-        return pd.DataFrame(columns=["Cell ID", "Night_Events", "Unique_Days", "Unique_Contacts"])
-
-    data = filter_valid_first_cell_rows(df)
-    if "call_time" not in data.columns:
-        return pd.DataFrame(columns=["Cell ID", "Night_Events", "Unique_Days", "Unique_Contacts"])
-
-    data["datetime"] = canonical_datetime(data)
-    data = data.dropna(subset=["datetime"])
+    data = _prepare_tower_data(df)
     if data.empty:
-        return pd.DataFrame(columns=["Cell ID", "Night_Events", "Unique_Days", "Unique_Contacts"])
+        return pd.DataFrame(
+            columns=[
+                "Cell ID",
+                "Night Events",
+                "Unique Days",
+                "Unique Human Contacts",
+                "Window",
+                "Ruleset",
+            ]
+        )
 
-    data["Hour"] = data["datetime"].dt.hour
-    night = data[(data["Hour"] >= 22) | (data["Hour"] < 6)]
+    data = data.dropna(subset=["_event_datetime"]).copy()
+    if data.empty:
+        return pd.DataFrame()
 
+    data["_hour"] = data["_event_datetime"].dt.hour
+    data["_date"] = data["_event_datetime"].dt.normalize()
+
+    night = data[(data["_hour"] >= 22) | (data["_hour"] < 6)].copy()
     if night.empty:
-        return pd.DataFrame(columns=["Cell ID", "Night_Events", "Unique_Days", "Unique_Contacts"])
+        return pd.DataFrame(
+            columns=[
+                "Cell ID",
+                "Night Events",
+                "Unique Days",
+                "Unique Human Contacts",
+                "Window",
+                "Ruleset",
+            ]
+        )
 
-    agg_dict = {
-        "Night_Events": ("first_cell_id", "count"),
-        "Unique_Days": ("call_date", "nunique")
-    }
-    if "b_party" in night.columns:
-        agg_dict["Unique_Contacts"] = ("b_party", "nunique")
+    human = night[night["_contact_category"].eq("human_mobile")].copy()
 
-    summary = night.groupby("first_cell_id").agg(**agg_dict).reset_index()
-    summary.rename(columns={"first_cell_id": "Cell ID"}, inplace=True)
-    
-    if "Unique_Contacts" not in summary.columns:
-        summary["Unique_Contacts"] = 0
+    result = (
+        night.groupby("first_cell_id")
+        .agg(
+            **{
+                "Night Events": ("first_cell_id", "count"),
+                "Unique Days": ("_date", "nunique"),
+            }
+        )
+        .reset_index()
+        .rename(columns={"first_cell_id": "Cell ID"})
+    )
 
-    summary["Window"] = HOME_WINDOW
-    summary["Ruleset"] = RULESET_VERSION
-    return summary.sort_values(by="Night_Events", ascending=False).reset_index(drop=True)
+    human_counts = (
+        human.groupby("first_cell_id")["b_party"]
+        .nunique()
+        .reset_index(name="Unique Human Contacts")
+        .rename(columns={"first_cell_id": "Cell ID"})
+    )
+
+    result = result.merge(human_counts, on="Cell ID", how="left")
+    result["Unique Human Contacts"] = result["Unique Human Contacts"].fillna(0).astype(int)
+    result["Window"] = "22:00-06:00"
+    result["Ruleset"] = "CDR-RULES-1.0"
+
+    return result.sort_values(["Night Events", "Unique Days"], ascending=False)
 
 
 def work_tower(df):
-    """
-    Detect probable Work Tower based on office-hour activity (09:00–18:00).
-    """
-    if df is None or df.empty or "first_cell_id" not in df.columns:
-        return pd.DataFrame(columns=["Cell ID", "Office_Events", "Working_Days", "Unique_Contacts"])
-
-    data = filter_valid_first_cell_rows(df)
-    if "call_time" not in data.columns:
-        return pd.DataFrame(columns=["Cell ID", "Office_Events", "Working_Days", "Unique_Contacts"])
-
-    data["datetime"] = canonical_datetime(data)
-    data = data.dropna(subset=["datetime"])
+    data = _prepare_tower_data(df)
     if data.empty:
-        return pd.DataFrame(columns=["Cell ID", "Office_Events", "Working_Days", "Unique_Contacts"])
+        return pd.DataFrame(
+            columns=[
+                "Cell ID",
+                "Office Events",
+                "Working Days",
+                "Unique Human Contacts",
+            ]
+        )
 
-    data["Hour"] = data["datetime"].dt.hour
-    office = data[(data["Hour"] >= 9) & (data["Hour"] < 18)]
+    data = data.dropna(subset=["_event_datetime"]).copy()
+    if data.empty:
+        return pd.DataFrame()
 
+    data["_hour"] = data["_event_datetime"].dt.hour
+    data["_date"] = data["_event_datetime"].dt.normalize()
+
+    office = data[(data["_hour"] >= 9) & (data["_hour"] <= 18)].copy()
     if office.empty:
-        return pd.DataFrame(columns=["Cell ID", "Office_Events", "Working_Days", "Unique_Contacts"])
+        return pd.DataFrame(
+            columns=[
+                "Cell ID",
+                "Office Events",
+                "Working Days",
+                "Unique Human Contacts",
+            ]
+        )
 
-    agg_dict = {
-        "Office_Events": ("first_cell_id", "count"),
-        "Working_Days": ("call_date", "nunique")
-    }
-    if "b_party" in office.columns:
-        agg_dict["Unique_Contacts"] = ("b_party", "nunique")
+    human = office[office["_contact_category"].eq("human_mobile")].copy()
 
-    summary = office.groupby("first_cell_id").agg(**agg_dict).reset_index()
-    summary.rename(columns={"first_cell_id": "Cell ID"}, inplace=True)
+    result = (
+        office.groupby("first_cell_id")
+        .agg(
+            **{
+                "Office Events": ("first_cell_id", "count"),
+                "Working Days": ("_date", "nunique"),
+            }
+        )
+        .reset_index()
+        .rename(columns={"first_cell_id": "Cell ID"})
+    )
 
-    if "Unique_Contacts" not in summary.columns:
-        summary["Unique_Contacts"] = 0
+    human_counts = (
+        human.groupby("first_cell_id")["b_party"]
+        .nunique()
+        .reset_index(name="Unique Human Contacts")
+        .rename(columns={"first_cell_id": "Cell ID"})
+    )
 
-    return summary.sort_values(by="Office_Events", ascending=False).reset_index(drop=True)
+    result = result.merge(human_counts, on="Cell ID", how="left")
+    result["Unique Human Contacts"] = result["Unique Human Contacts"].fillna(0).astype(int)
+
+    return result.sort_values(["Office Events", "Working Days"], ascending=False)
