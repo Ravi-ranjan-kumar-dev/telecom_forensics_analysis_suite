@@ -1567,6 +1567,56 @@ def load_ipdr_file(path: str | Path) -> dict[str, Any]:
     }
 
 
+
+def _concat_ipdr_frames_safely(
+    frames: list[pd.DataFrame],
+    *,
+    ignore_index: bool = True,
+    sort: bool = False,
+) -> pd.DataFrame:
+    """
+    Safely concatenate IPDR DataFrames.
+
+    Pandas compares DataFrame.attrs during concat. Some loader stages may carry
+    non-scalar attrs, including DataFrame objects, which can raise:
+    ValueError: The truth value of a DataFrame is ambiguous.
+
+    Investigator data remains unchanged; only temporary internal attrs metadata
+    is cleared before concat.
+    """
+
+    clean_frames: list[pd.DataFrame] = []
+
+    if frames is None:
+        return pd.DataFrame()
+
+    for frame in frames:
+        if not isinstance(frame, pd.DataFrame):
+            continue
+
+        try:
+            frame.attrs = {}
+        except Exception:
+            pass
+
+        clean_frames.append(frame)
+
+    if not clean_frames:
+        return pd.DataFrame()
+
+    combined = pd.concat(
+        clean_frames,
+        ignore_index=ignore_index,
+        sort=sort,
+    )
+
+    try:
+        combined.attrs = {}
+    except Exception:
+        pass
+
+    return combined
+
 def load_ipdr_case(
     folder: str | Path,
     *,
@@ -1739,7 +1789,7 @@ def load_ipdr_case(
             )
 
     data = (
-        pd.concat(frames, ignore_index=True, sort=False)
+        _concat_ipdr_frames_safely(frames, ignore_index=True, sort=False)
         if frames
         else _empty_frame()
     )

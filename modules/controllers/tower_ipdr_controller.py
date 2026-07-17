@@ -1415,11 +1415,8 @@ def _run_complete_tower_ipdr_analysis(case: dict[str, Any]) -> None:
             report_folder=report_dir,
             generated_at=latest_pointer_payload.get("generated_at", ""),
             metadata={
-                "total_events": _summary_value("Total Events"),
-                "unique_subscribers": _summary_value("Unique Subscribers"),
-                "priority_leads": _count_rows(priority_leads),
-                "multi_cell_leads": _count_rows(multi_cell_presence),
-                "rare_presence_leads": _count_rows(rare_presence),
+                "report_scope": "complete_tower_ipdr",
+                "user_output": "excel_and_text_summary",
             },
         )
 
