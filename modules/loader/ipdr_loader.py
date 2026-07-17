@@ -2106,10 +2106,10 @@ def _load_jio_dynamic_ipdr_csv_fallback(path: str | Path) -> dict[str, Any]:
     # allocation-only rows. These aliases help the common IPDR analysis
     # engine count them as event records.
     normalized["is_allocation_only"] = False
-    normalized["record_type"] = "EVENT"
+    normalized["record_type"] = "IPDR_EVENT"
     normalized["row_type"] = "EVENT"
     normalized["event_type"] = "IPDR_EVENT"
-    normalized["ipdr_record_type"] = "EVENT"
+    normalized["ipdr_record_type"] = "IPDR_EVENT"
 
     normalized["event_start_time"] = normalized["event_time"]
     normalized["session_start"] = normalized["event_time"]

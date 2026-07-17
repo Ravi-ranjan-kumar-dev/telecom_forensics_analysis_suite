@@ -106,7 +106,25 @@ def _execute(
             recursive=True,
         )
 
-        for warning in load_result.get("warnings", []) or []:
+        warnings = list(load_result.get("warnings", []) or [])
+        empty_result_warnings = [
+            warning
+            for warning in warnings
+            if "zero genuine result rows" in str(warning).lower()
+        ]
+        other_warnings = [
+            warning
+            for warning in warnings
+            if warning not in empty_result_warnings
+        ]
+
+        if empty_result_warnings:
+            print(
+                f"[INFO] {len(empty_result_warnings)} valid IPDR query report(s) "
+                "loaded with zero result rows."
+            )
+
+        for warning in other_warnings:
             print(f"[WARNING] {warning}")
 
         for loader_error in load_result.get("errors", []) or []:
