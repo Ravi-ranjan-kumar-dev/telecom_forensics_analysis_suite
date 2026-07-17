@@ -197,6 +197,18 @@ def _execute(
     *,
     use_partitions: bool,
 ) -> dict[str, Any] | None:
+    from modules.analysis.gprsdump.duckdb_presence import (
+        build_tower_gprs_duckdb_presence,
+    )
+    from modules.pipeline.scalable_analysis_pipeline import (
+        run_scalable_analysis_pipeline,
+    )
+    from modules.staging.tower_gprs_staging import (
+        TOWER_GPRS_DATASET,
+        TOWER_GPRS_TABLE,
+        TOWER_GPRS_WORKFLOW,
+    )
+
     case_id = str(case["case_id"])
 
     log_case_event(
@@ -209,17 +221,102 @@ def _execute(
     )
 
     try:
-        load_result, input_folder = _load(case_id)
-        dataframe = load_result.get("df")
+        input_folder = _input_folder(case_id)
+        print(f"[+] Tower GPRS Dump input folder: {input_folder}")
+
+        pipeline_result = run_scalable_analysis_pipeline(
+            case_id=case_id,
+            workflow=TOWER_GPRS_WORKFLOW,
+            input_folder=input_folder,
+            loader=load_gprs_dump_case,
+            loader_kwargs={
+                "recursive": True,
+            },
+            table_name=TOWER_GPRS_TABLE,
+            dataset_name=TOWER_GPRS_DATASET,
+            dataframe_key="df",
+            sql_analysis=build_tower_gprs_duckdb_presence,
+            sql_analysis_kwargs={"top_limit": 200},
+            supported_suffixes=SUPPORTED_SUFFIXES,
+            status_title="TOWER GPRS FAST ANALYSIS BACKEND READY",
+            print_status=True,
+        )
+
+        load_result = pipeline_result.get("load_result", {})
+        dataframe = pipeline_result.get("dataframe")
+
+        if not isinstance(load_result, dict) or not load_result.get("ok"):
+            print("[-] Supported Tower GPRS Dump load nahi hua (current parser: Airtel GPRS session format).")
+
+            for error in load_result.get("errors", []):
+                print(f"    ERROR: {error}")
+
+            for warning in load_result.get("warnings", []):
+                print(f"    WARNING: {warning}")
+
+            raise ValueError("Tower GPRS Dump loading failed.")
 
         if not isinstance(dataframe, pd.DataFrame) or dataframe.empty:
             raise ValueError("Normalized GPRS DataFrame unavailable.")
+
+        for file_result in load_result.get("file_results", []):
+            if not file_result.get("ok"):
+                continue
+
+            register_evidence(
+                case_id,
+                evidence_type="TOWER_GPRS_DUMP",
+                source_file=file_result.get("file", ""),
+                operator=(file_result.get("metadata", {}) or {}).get("operator", ""),
+                source_category="TOWER_GPRS_SESSION",
+            )
 
         analysis = run_gprs_analysis(
             dataframe,
             file_summary=load_result.get("file_summary"),
         )
+
+        sql_presence = pipeline_result.get("sql_analysis", {}) or {}
+
+        if isinstance(sql_presence, dict):
+            for key in (
+                "gprs_common_numbers",
+                "gprs_uncommon_numbers",
+                "gprs_multi_cell_presence",
+                "gprs_device_consistency",
+                "gprs_suspicious_timing",
+                "gprs_priority_leads",
+            ):
+                value = sql_presence.get(key)
+                if isinstance(value, pd.DataFrame):
+                    analysis[key] = value
+
+            analysis["duckdb_sql_presence_status"] = pd.DataFrame(
+                [
+                    {
+                        "analysis": "tower_gprs_duckdb_sql_presence_engine",
+                        "status": "COMPLETED",
+                        "rows": int(
+                            (pipeline_result.get("sql_result_rows", {}) or {})
+                            .get("subscriber_rollup", 0)
+                            or 0
+                        ),
+                        "duration_ms": (
+                            pipeline_result.get("timings", {}) or {}
+                        ).get("sql_analysis_ms", 0),
+                        "error": "",
+                    }
+                ]
+            )
+
         analysis["rejected_rows"] = load_result.get("rejected_rows", pd.DataFrame())
+        analysis["scalable_pipeline"] = {
+            "stage": pipeline_result.get("stage", {}),
+            "sql_result_rows": pipeline_result.get("sql_result_rows", {}),
+            "timings": pipeline_result.get("timings", {}),
+            "pipeline_state_path": pipeline_result.get("pipeline_state_path", ""),
+        }
+
         print_gprs_analysis(analysis, row_limit=20)
 
         partition = None
@@ -306,6 +403,11 @@ def _execute(
         print(f"Input Records : {len(dataframe):,}")
         print(f"Backend Run   : {saved['run_directory']}")
 
+        timings = pipeline_result.get("timings", {}) or {}
+        print(f"SQL Engine ms : {timings.get('sql_analysis_ms', 0)}")
+        print("Speed Mode    : DuckDB SQL + Parquet internal backend")
+        print("User Output   : Excel report only")
+
         if isinstance(partition, dict):
             print(
                 f"Partitions    : "
@@ -329,6 +431,7 @@ def _execute(
             "partition": partition,
             "saved": saved,
             "excel_report": str(excel_path),
+            "scalable_pipeline": pipeline_result,
         }
 
     except Exception as error:
@@ -347,7 +450,6 @@ def _execute(
             f"{type(error).__name__}: {error}"
         )
         return None
-
 
 def _new_partition(case: dict[str, Any]) -> dict[str, Any] | None:
     pairs = _collect_date_time_pairs()
