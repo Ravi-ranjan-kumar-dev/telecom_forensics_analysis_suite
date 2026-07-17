@@ -2,6 +2,7 @@ import pandas as pd
 
 from .datetime_utils import canonical_datetime
 from .rules import HOME_WINDOW, RULESET_VERSION, WORK_WINDOW
+from .tower_utils import filter_valid_first_cell_rows
 
 def tower_intelligence(df):
     """
@@ -15,8 +16,8 @@ def tower_intelligence(df):
             "Most Used IMEI", "Most Contacted"
         ])
 
-    # Clean and filter blank cell IDs
-    data = df[df["first_cell_id"].astype(str).str.strip() != ""].copy()
+    # Clean and filter invalid/broken cell IDs for derived tower analysis.
+    data = filter_valid_first_cell_rows(df)
     if data.empty:
         return pd.DataFrame(columns=["Cell ID", "First Seen", "Last Seen", "Total Events"])
 
@@ -77,7 +78,7 @@ def home_tower(df):
     if df is None or df.empty or "first_cell_id" not in df.columns:
         return pd.DataFrame(columns=["Cell ID", "Night_Events", "Unique_Days", "Unique_Contacts"])
 
-    data = df[df["first_cell_id"].astype(str).str.strip() != ""].copy()
+    data = filter_valid_first_cell_rows(df)
     if "call_time" not in data.columns:
         return pd.DataFrame(columns=["Cell ID", "Night_Events", "Unique_Days", "Unique_Contacts"])
 
@@ -117,7 +118,7 @@ def work_tower(df):
     if df is None or df.empty or "first_cell_id" not in df.columns:
         return pd.DataFrame(columns=["Cell ID", "Office_Events", "Working_Days", "Unique_Contacts"])
 
-    data = df[df["first_cell_id"].astype(str).str.strip() != ""].copy()
+    data = filter_valid_first_cell_rows(df)
     if "call_time" not in data.columns:
         return pd.DataFrame(columns=["Cell ID", "Office_Events", "Working_Days", "Unique_Contacts"])
 

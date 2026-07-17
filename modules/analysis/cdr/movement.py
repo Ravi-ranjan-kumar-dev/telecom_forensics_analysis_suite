@@ -1,6 +1,7 @@
 import pandas as pd
 
 from .datetime_utils import canonical_datetime
+from .tower_utils import filter_valid_first_cell_rows
 
 
 def tower_movement(df):
@@ -8,9 +9,13 @@ def tower_movement(df):
     if df is None or df.empty or "first_cell_id" not in df.columns:
         return pd.DataFrame()
 
+    data = filter_valid_first_cell_rows(df)
+    if data.empty:
+        return pd.DataFrame()
+
     cols = ["call_date", "call_time", "first_cell_id", "b_party", "call_type"]
-    movement = df[[c for c in cols if c in df.columns]].copy()
-    movement["_event_datetime"] = canonical_datetime(df)
+    movement = data[[c for c in cols if c in data.columns]].copy()
+    movement["_event_datetime"] = canonical_datetime(data)
     movement = movement.dropna(subset=["first_cell_id", "_event_datetime"])
     movement = movement.sort_values("_event_datetime")
 

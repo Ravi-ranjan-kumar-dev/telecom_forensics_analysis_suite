@@ -19,6 +19,7 @@ from modules.loader.evidence_csv import (
 )
 
 from modules.loader.single_loader import (
+    hashlib,
     find_header_row,
     clean_and_standardise_columns,
     clean_data_values,
@@ -29,6 +30,53 @@ from modules.loader.single_loader import (
 # ==============================================================
 # ERROR DISPLAY
 # ==============================================================
+
+
+# MULTI_CDR_EXACT_DUPLICATE_FILE_GUARD_V1
+def _sha256_file_for_duplicate_guard(file_path):
+    """Return SHA256 hash of an input CDR file without changing file content."""
+    digest = hashlib.sha256()
+
+    with open(file_path, "rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+
+    return digest.hexdigest()
+
+
+def _remove_exact_duplicate_input_files(files):
+    """
+    Keep only one copy of an exactly identical input file.
+
+    This prevents double-counting when the same CDR file is present with two
+    names, for example cdr1.csv and original LEA...csv.
+    """
+    seen_hashes = {}
+    unique_files = []
+    duplicate_files = []
+
+    for file_path in files:
+        try:
+            file_hash = _sha256_file_for_duplicate_guard(file_path)
+        except Exception as error:
+            print(f"[!] Could not hash file for duplicate check: {file_path} | {error}")
+            unique_files.append(file_path)
+            continue
+
+        if file_hash in seen_hashes:
+            duplicate_files.append(
+                {
+                    "duplicate": file_path,
+                    "original": seen_hashes[file_hash],
+                    "sha256": file_hash,
+                }
+            )
+            continue
+
+        seen_hashes[file_hash] = file_path
+        unique_files.append(file_path)
+
+    return unique_files, duplicate_files
 
 def print_loader_error(title, error):
     """Error ka readable message aur short traceback print karta hai."""
@@ -485,6 +533,19 @@ def load_multiple_cdr(folder):
     print("MULTIPLE CDR LOADER")
     print("=" * 70)
     print(f"[+] CSV Files Found: {len(files)}")
+
+    files, exact_duplicate_files = _remove_exact_duplicate_input_files(files)
+
+    for duplicate_info in exact_duplicate_files:
+        duplicate_path = duplicate_info["duplicate"]
+        original_path = duplicate_info["original"]
+        print(
+            "[!] Skipping exact duplicate CDR input file: "
+            f"{duplicate_path.name} | Original already loaded: {original_path.name}"
+        )
+
+    if exact_duplicate_files:
+        print(f"[+] Exact duplicate input files skipped: {len(exact_duplicate_files)}")
 
     loaded_cdrs = []
     failed_files = []
