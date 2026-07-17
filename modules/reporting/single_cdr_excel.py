@@ -446,10 +446,14 @@ def _write_dataframe_sheet(wb: Workbook, sheet_name: str, report_name: str, meta
 
 MODULE_RESULT_SHEETS = [
     ("15. CDR Summary", ["cdr_summary"]),
-    ("16. Top Contacts", ["top_contacts"]),
-    ("17. Contact Ranking", ["contact_ranking"]),
-    ("18. In-Out Traffic", ["incoming_outgoing"]),
-    ("19. Social Network", ["social_network"]),
+    ("16. Top Human Contacts", ["top_contacts"]),
+    ("17. Contact Category Summary", ["contact_category_summary"]),
+    ("18. Service Sender IDs", ["top_service_sender_ids"]),
+    ("19. Short Codes", ["top_short_codes"]),
+    ("20. Contact Ranking", ["contact_ranking"]),
+    ("21. Call Type Summary", ["incoming_outgoing"]),
+    ("22. Other Unknown Call Types", ["other_call_type_summary"]),
+    ("23. Social Network", ["social_network"]),
     ("20. Location Overview", ["analyze_location"]),
     ("21. Frequent Towers", ["frequent_locations"]),
     ("22. Tower Movement", ["tower_movement"]),

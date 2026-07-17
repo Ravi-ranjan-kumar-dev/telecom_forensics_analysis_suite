@@ -2,6 +2,8 @@
 
 import os
 import traceback
+import hashlib
+from pathlib import Path
 
 import pandas as pd
 
@@ -19,7 +21,6 @@ from modules.loader.evidence_csv import (
 )
 
 from modules.loader.single_loader import (
-    hashlib,
     find_header_row,
     clean_and_standardise_columns,
     clean_data_values,
@@ -37,7 +38,20 @@ def _sha256_file_for_duplicate_guard(file_path):
     """Return SHA256 hash of an input CDR file without changing file content."""
     digest = hashlib.sha256()
 
-    with open(file_path, "rb") as handle:
+    candidate_path = Path(file_path)
+
+    if not candidate_path.is_absolute() and not candidate_path.exists():
+        possible_paths = [
+            Path.cwd() / candidate_path,
+            Path("data/cdr/multiple") / candidate_path,
+        ]
+
+        for possible_path in possible_paths:
+            if possible_path.exists():
+                candidate_path = possible_path
+                break
+
+    with open(candidate_path, "rb") as handle:
         for chunk in iter(lambda: handle.read(1024 * 1024), b""):
             digest.update(chunk)
 

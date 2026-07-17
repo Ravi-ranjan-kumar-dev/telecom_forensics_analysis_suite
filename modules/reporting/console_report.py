@@ -10,10 +10,14 @@ import pandas as pd
 
 DISPLAY_ORDER: tuple[tuple[str, str], ...] = (
     ("cdr_summary", "CDR SUMMARY"),
-    ("top_contacts", "TOP CONTACTS"),
+    ("top_contacts", "TOP HUMAN CONTACTS"),
+    ("contact_category_summary", "CONTACT CATEGORY SUMMARY"),
+    ("top_service_sender_ids", "TOP SERVICE SENDER IDs"),
+    ("top_short_codes", "TOP SHORT CODES"),
     ("top_contact_details", "TOP CONTACT DETAILS"),
     ("contact_ranking", "CONTACT RANKING"),
-    ("incoming_outgoing", "INCOMING / OUTGOING TRAFFIC"),
+    ("incoming_outgoing", "CALL TYPE SUMMARY"),
+    ("other_call_type_summary", "OTHER / UNKNOWN CALL TYPES"),
     ("social_network", "SOCIAL NETWORK"),
     ("analyze_location", "LOCATION OVERVIEW"),
     ("frequent_locations", "FREQUENT LOCATIONS / TOWERS"),

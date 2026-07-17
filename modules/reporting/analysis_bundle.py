@@ -26,8 +26,12 @@ class AnalysisSpec:
 ANALYSIS_REGISTRY: tuple[AnalysisSpec, ...] = (
     AnalysisSpec("Summary", "cdr_summary", "modules.analysis.cdr.summary", "cdr_summary"),
     AnalysisSpec("Contacts", "top_contacts", "modules.analysis.cdr.contacts", "top_contacts"),
+    AnalysisSpec("Contacts", "contact_category_summary", "modules.analysis.cdr.contacts", "contact_category_summary"),
+    AnalysisSpec("Contacts", "top_service_sender_ids", "modules.analysis.cdr.contacts", "top_service_sender_ids"),
+    AnalysisSpec("Contacts", "top_short_codes", "modules.analysis.cdr.contacts", "top_short_codes"),
     AnalysisSpec("Contacts", "contact_ranking", "modules.analysis.cdr.contacts", "contact_ranking"),
     AnalysisSpec("Contacts", "incoming_outgoing", "modules.analysis.cdr.contacts", "incoming_outgoing"),
+    AnalysisSpec("Contacts", "other_call_type_summary", "modules.analysis.cdr.contacts", "other_call_type_summary"),
     AnalysisSpec("Network", "social_network", "modules.analysis.cdr.social_network", "social_network"),
     AnalysisSpec("Location", "analyze_location", "modules.analysis.cdr.location", "analyze_location"),
     AnalysisSpec("Location", "frequent_locations", "modules.analysis.cdr.location", "frequent_locations"),
