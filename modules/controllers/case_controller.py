@@ -263,7 +263,7 @@ def _print_latest_tower_ipdr_complete_report(case_id: str) -> None:
     print(f"Main Summary : {payload.get('main_summary', '')}")
     print(f"Excel Report : {payload.get('excel_report', '')}")
 
-def show_case_reports(case: dict[str, Any]) -> None:
+def show_case_reports(case: dict[str, Any] | str) -> None:
     """Show clean user-facing case reports.
 
     Normal mode:
@@ -278,7 +278,11 @@ def show_case_reports(case: dict[str, Any]) -> None:
 
     import os
 
-    case_id = str(case.get("case_id", ""))
+    if isinstance(case, dict):
+        case_id = str(case.get("case_id", ""))
+    else:
+        case_id = str(case)
+
     debug_reports = os.environ.get("TELECOM_DEBUG_REPORTS") == "1"
 
     def _report_path(report: dict[str, Any]) -> str:
