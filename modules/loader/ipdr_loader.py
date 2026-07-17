@@ -1866,3 +1866,303 @@ def load_ipdr_case(
             ) if not data.empty else [],
         },
     }
+
+
+# JIO_DYNAMIC_IPDR_FALLBACK_V1
+def _looks_like_jio_dynamic_ipdr_csv(path: str | Path) -> bool:
+    try:
+        sample = Path(path).read_text(encoding="utf-8", errors="ignore")[:4000]
+    except Exception:
+        return False
+
+    required_markers = [
+        "Landline/MSISDN/MDN/Leased Circuit ID for Internet Access",
+        "Source IP Address",
+        "Destination IP Address",
+        "TIME1 (dd/MM/yyyy HH:mm:ss)",
+        "First CELL ID",
+        "Last CELL ID",
+    ]
+
+    return all(marker in sample for marker in required_markers)
+
+
+def _combine_jio_date_time(
+    dataframe: pd.DataFrame,
+    date_column: str,
+    time_column: str,
+) -> pd.Series:
+    date_values = (
+        dataframe.get(date_column, "")
+        .astype(str)
+        .str.strip()
+    )
+    time_values = (
+        dataframe.get(time_column, "")
+        .astype(str)
+        .str.strip()
+    )
+
+    combined = date_values + " " + time_values
+
+    return pd.to_datetime(
+        combined,
+        errors="coerce",
+        yearfirst=True,
+    )
+
+
+def _load_jio_dynamic_ipdr_csv_fallback(path: str | Path) -> dict[str, Any]:
+    source_path = Path(path)
+
+    try:
+        raw = pd.read_csv(
+            source_path,
+            dtype=str,
+            keep_default_na=False,
+        )
+    except Exception as error:
+        return {
+            "ok": False,
+            "file": str(source_path),
+            "data": pd.DataFrame(),
+            "search_requests": pd.DataFrame(),
+            "rejected_rows": pd.DataFrame(),
+            "warnings": [],
+            "errors": [f"Jio dynamic IPDR fallback read failed: {error}"],
+            "metadata": {
+                "operator": "Jio",
+                "source_format": "JIO_DYNAMIC_IPDR",
+                "source_file": str(source_path),
+            },
+        }
+
+    if raw.empty:
+        return {
+            "ok": True,
+            "file": str(source_path),
+            "data": pd.DataFrame(),
+            "search_requests": pd.DataFrame(),
+            "rejected_rows": pd.DataFrame(),
+            "warnings": [
+                f"{source_path.name}: valid Jio IPDR file loaded with zero rows."
+            ],
+            "errors": [],
+            "metadata": {
+                "operator": "Jio",
+                "source_format": "JIO_DYNAMIC_IPDR",
+                "report_scope": "JIO_DYNAMIC_IPDR",
+                "total_records": 0,
+                "source_file": str(source_path),
+            },
+        }
+
+    raw.columns = [str(column).strip() for column in raw.columns]
+
+    normalized = pd.DataFrame()
+
+    normalized["subscriber_number"] = (
+        raw.get("Landline/MSISDN/MDN/Leased Circuit ID for Internet Access", "")
+        .astype(str)
+        .str.strip()
+    )
+    normalized["subscriber_identifier_type"] = "MSISDN"
+
+    normalized["user_id"] = (
+        raw.get("User Id for internet Access based on authentication", "")
+        .astype(str)
+        .str.strip()
+    )
+
+    normalized["source_ip"] = (
+        raw.get("Source IP Address", "")
+        .astype(str)
+        .str.strip()
+    )
+    normalized["source_port"] = (
+        raw.get("Source Port", "")
+        .astype(str)
+        .str.strip()
+    )
+
+    normalized["translated_ip"] = (
+        raw.get("Translated IP Address", "")
+        .astype(str)
+        .str.strip()
+    )
+    normalized["translated_port"] = (
+        raw.get("Translated Port", "")
+        .astype(str)
+        .str.strip()
+    )
+
+    normalized["destination_ip"] = (
+        raw.get("Destination IP Address", "")
+        .astype(str)
+        .str.strip()
+    )
+    normalized["destination_port"] = (
+        raw.get("Destination Port", "")
+        .astype(str)
+        .str.strip()
+    )
+
+    normalized["allocation_type"] = (
+        raw.get("Static/Dynamic IP Address Allocation", "")
+        .astype(str)
+        .str.strip()
+    )
+
+    normalized["allocation_start"] = _combine_jio_date_time(
+        raw,
+        "Start Date of Public IP Address allocation (dd/mm/yyyy)",
+        "IST Start Time of Public IP address allocation (hh:mm:ss)",
+    )
+    normalized["allocation_end"] = _combine_jio_date_time(
+        raw,
+        "End Date of Public IP address allocation (dd/mm/yyyy)",
+        "IST End Time of Public IP address allocation (hh:mm:ss)",
+    )
+
+    normalized["event_time"] = pd.to_datetime(
+        raw.get("TIME1 (dd/MM/yyyy HH:mm:ss)", "")
+        .astype(str)
+        .str.strip(),
+        errors="coerce",
+        yearfirst=True,
+    )
+
+    normalized["imei"] = (
+        raw.get("Source MAC-ID Address/Other device Identification number", "")
+        .astype(str)
+        .str.strip()
+    )
+    normalized["imsi"] = (
+        raw.get("IMSI", "")
+        .astype(str)
+        .str.strip()
+    )
+
+    normalized["pgw_ip"] = (
+        raw.get("PGW IP address", "")
+        .astype(str)
+        .str.strip()
+    )
+    normalized["apn"] = (
+        raw.get("Access Point Name", "")
+        .astype(str)
+        .str.strip()
+    )
+
+    normalized["first_cell_id"] = (
+        raw.get("First CELL ID", "")
+        .astype(str)
+        .str.strip()
+    )
+    normalized["last_cell_id"] = (
+        raw.get("Last CELL ID", "")
+        .astype(str)
+        .str.strip()
+    )
+    normalized["cell_id"] = normalized["first_cell_id"]
+
+    normalized["duration_seconds"] = pd.to_numeric(
+        raw.get("Session Duration (Seconds)", ""),
+        errors="coerce",
+    )
+    normalized["uplink_volume"] = pd.to_numeric(
+        raw.get("Data Volume Up Link", ""),
+        errors="coerce",
+    )
+    normalized["downlink_volume"] = pd.to_numeric(
+        raw.get("Data Volume Down Link", ""),
+        errors="coerce",
+    )
+
+    normalized["roaming_circle_indicator"] = (
+        raw.get("Roaming Circle Indicator", "")
+        .astype(str)
+        .str.strip()
+    )
+    normalized["roaming_circle"] = (
+        raw.get("Roaming Circle", "")
+        .astype(str)
+        .str.strip()
+    )
+    normalized["sim_type"] = (
+        raw.get("SIM Type", "")
+        .astype(str)
+        .str.strip()
+    )
+
+    normalized["operator"] = "Jio"
+    normalized["source_format"] = "JIO_DYNAMIC_IPDR"
+    normalized["report_scope"] = "JIO_DYNAMIC_IPDR"
+    normalized["source_file"] = str(source_path)
+    normalized["source_file_name"] = source_path.name
+    normalized["raw_row_number"] = range(1, len(normalized) + 1)
+    normalized["is_allocation_only"] = False
+
+    event_mask = (
+        normalized["subscriber_number"].astype(str).str.strip().ne("")
+        & normalized["source_ip"].astype(str).str.strip().ne("")
+        & normalized["destination_ip"].astype(str).str.strip().ne("")
+        & normalized["event_time"].notna()
+    )
+
+    rejected_rows = raw.loc[~event_mask].copy()
+    normalized = normalized.loc[event_mask].reset_index(drop=True)
+
+    try:
+        normalized.attrs = {}
+        rejected_rows.attrs = {}
+    except Exception:
+        pass
+
+    warnings = []
+    if not rejected_rows.empty:
+        warnings.append(
+            f"{source_path.name}: {len(rejected_rows)} non-event row(s) excluded."
+        )
+
+    return {
+        "ok": True,
+        "file": str(source_path),
+        "data": normalized,
+        "search_requests": pd.DataFrame(),
+        "rejected_rows": rejected_rows,
+        "warnings": warnings,
+        "errors": [],
+        "metadata": {
+            "operator": "Jio",
+            "source_format": "JIO_DYNAMIC_IPDR",
+            "report_scope": "JIO_DYNAMIC_IPDR",
+            "source_file": str(source_path),
+            "file_name": source_path.name,
+            "total_records": int(len(normalized)),
+            "records_loaded": int(len(normalized)),
+            "empty_result": bool(normalized.empty),
+        },
+    }
+
+
+_original_load_ipdr_file_before_jio_dynamic_fallback = load_ipdr_file
+
+
+def load_ipdr_file(path: str | Path) -> dict[str, Any]:
+    result = _original_load_ipdr_file_before_jio_dynamic_fallback(path)
+
+    data = result.get("data") if isinstance(result, dict) else None
+
+    if isinstance(data, pd.DataFrame) and not data.empty:
+        return result
+
+    if _looks_like_jio_dynamic_ipdr_csv(path):
+        fallback_result = _load_jio_dynamic_ipdr_csv_fallback(path)
+        fallback_data = fallback_result.get("data")
+
+        if isinstance(fallback_data, pd.DataFrame) and not fallback_data.empty:
+            return fallback_result
+
+    return result
+
