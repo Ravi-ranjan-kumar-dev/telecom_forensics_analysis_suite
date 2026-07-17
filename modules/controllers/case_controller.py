@@ -263,38 +263,175 @@ def _print_latest_tower_ipdr_complete_report(case_id: str) -> None:
     print(f"Main Summary : {payload.get('main_summary', '')}")
     print(f"Excel Report : {payload.get('excel_report', '')}")
 
-def show_case_reports(case_id: str) -> None:
-    """Show clean investigator-friendly case report summary."""
+def show_case_reports(case: dict[str, Any]) -> None:
+    """Show clean user-facing case reports.
 
-    def _report_title(report, index: int) -> str:
-        if not isinstance(report, dict):
-            return f"Report {index}"
+    Normal mode:
+    - Show latest important reports.
+    - Show only latest registered report.
+    - Hide long old history.
 
-        return (
-            report.get("title")
-            or report.get("report_name")
-            or report.get("name")
-            or report.get("type")
-            or f"Report {index}"
-        )
+    Debug mode:
+    - Show full registered report history using:
+      TELECOM_DEBUG_REPORTS=1 python3 -u main.py
+    """
 
-    def _report_path(report) -> str:
-        if not isinstance(report, dict):
-            return str(report)
+    import os
 
-        return (
-            report.get("path")
-            or report.get("file_path")
-            or report.get("report_path")
-            or report.get("output_path")
-            or "Path not available"
-        )
+    case_id = str(case.get("case_id", ""))
+    debug_reports = os.environ.get("TELECOM_DEBUG_REPORTS") == "1"
 
-    def _report_created_at(report) -> str:
+    def _report_path(report: dict[str, Any]) -> str:
         if not isinstance(report, dict):
             return ""
 
-        return report.get("created_at") or report.get("timestamp") or ""
+        return (
+            str(report.get("path") or "")
+            or str(report.get("report_path") or "")
+            or str(report.get("file") or "")
+        )
+
+    def _report_created_at(report: dict[str, Any]) -> str:
+        if not isinstance(report, dict):
+            return ""
+
+        return str(
+            report.get("created_at")
+            or report.get("timestamp")
+            or report.get("generated_at")
+            or ""
+        )
+
+    def _report_type(report: dict[str, Any], fallback_index: int) -> str:
+        if not isinstance(report, dict):
+            return f"Report {fallback_index}"
+
+        value = (
+            report.get("report_type")
+            or report.get("type")
+            or report.get("analysis_type")
+            or ""
+        )
+
+        value = str(value).strip().replace("_", " ").title()
+
+        return value if value else f"Report {fallback_index}"
+
+    def _print_latest_partwise_ipdr_report() -> None:
+        try:
+            from modules.staging.tower_ipdr_staging import (
+                load_tower_ipdr_partwise_latest_report,
+            )
+
+            payload = load_tower_ipdr_partwise_latest_report(case_id)
+
+            if not payload:
+                return
+
+            print("\n" + "-" * 72)
+            print("LATEST TOWER IPDR PART-WISE REPORT")
+            print("-" * 72)
+
+            report_folder = payload.get("report_folder", "")
+            saved_files = payload.get("saved_files", {}) or {}
+
+            main_report = (
+                payload.get("main_report")
+                or saved_files.get("main_report")
+                or saved_files.get("txt_report")
+                or ""
+            )
+            summary_csv = (
+                payload.get("summary_csv")
+                or saved_files.get("summary_csv")
+                or ""
+            )
+            excel_report = (
+                payload.get("excel_report")
+                or saved_files.get("excel_workbook")
+                or saved_files.get("excel_report")
+                or ""
+            )
+
+            if report_folder:
+                print(f"Report Folder : {report_folder}")
+            if main_report:
+                print(f"Main Report   : {main_report}")
+            if summary_csv:
+                print(f"Summary CSV   : {summary_csv}")
+            if excel_report:
+                print(f"Excel Report  : {excel_report}")
+
+            updated_at = payload.get("updated_at") or payload.get("generated_at") or ""
+            if updated_at:
+                print(f"Updated At    : {updated_at}")
+
+            print("Meaning       : Latest Tower IPDR Date-Time Part-wise investigation report.")
+
+            if debug_reports:
+                manifest = (
+                    payload.get("manifest")
+                    or saved_files.get("manifest")
+                    or saved_files.get("manifest_json")
+                    or ""
+                )
+                if manifest:
+                    print(f"Manifest      : {manifest}")
+
+        except Exception as error:
+            print("\n[!] Tower IPDR part-wise latest report check available nahi hai.")
+            print(f"    Reason: {error}")
+
+    def _print_latest_complete_ipdr_report() -> None:
+        try:
+            import json
+            from pathlib import Path
+
+            pointer = (
+                Path("cases")
+                / "active"
+                / case_id
+                / "reports"
+                / "tower_dump"
+                / "ipdr"
+                / "complete"
+                / "latest_complete_report.json"
+            )
+
+            if not pointer.exists():
+                return
+
+            payload = json.loads(pointer.read_text(encoding="utf-8"))
+
+            print("\n" + "-" * 72)
+            print("LATEST COMPLETE TOWER IPDR REPORT")
+            print("-" * 72)
+
+            report_folder = payload.get("report_folder", "")
+            main_summary = payload.get("main_summary", "")
+            excel_report = payload.get("excel_report", "")
+
+            if report_folder:
+                print(f"Report Folder : {report_folder}")
+            if main_summary:
+                print(f"Main Summary  : {main_summary}")
+            if excel_report:
+                print(f"Excel Report  : {excel_report}")
+
+            generated_at = payload.get("generated_at", "")
+            if generated_at:
+                print(f"Generated At  : {generated_at}")
+
+            print("Meaning       : Latest Tower IPDR full-database investigation report.")
+
+            if debug_reports:
+                backend_state = payload.get("backend_state", "")
+                if backend_state:
+                    print(f"Backend State : {backend_state}")
+
+        except Exception as error:
+            print("\n[!] Tower IPDR complete latest report check available nahi hai.")
+            print(f"    Reason: {error}")
 
     print("" + "=" * 72)
     print("CASE REPORTS")
@@ -304,8 +441,8 @@ def show_case_reports(case_id: str) -> None:
     print("LATEST IMPORTANT REPORTS")
     print("-" * 72)
 
-    _print_latest_tower_ipdr_report(case_id)
-    _print_latest_tower_ipdr_complete_report(case_id)
+    _print_latest_complete_ipdr_report()
+    _print_latest_partwise_ipdr_report()
 
     reports = list_case_reports(case_id)
 
@@ -324,20 +461,18 @@ def show_case_reports(case_id: str) -> None:
     latest_index = len(reports)
 
     print("\nLatest Registered Report:")
-    print(f"{latest_index}. {_report_title(latest_report, latest_index)}")
+    print(f"{latest_index}. {_report_type(latest_report, latest_index)}")
     print(f"   Path      : {_report_path(latest_report)}")
 
     created_at = _report_created_at(latest_report)
     if created_at:
         print(f"   Created At: {created_at}")
 
-    print("\nNote: Normal screen par full old report list hide rakhi gayi hai.")
-    print("      Full list dekhne ke liye developer/debug mode use karein:")
+    print("\nNote: Normal screen par full old report list hidden hai.")
+    print("      Full list ke liye developer/debug mode use karein:")
     print("      TELECOM_DEBUG_REPORTS=1 python3 -u main.py")
 
-    import os
-
-    if os.environ.get("TELECOM_DEBUG_REPORTS") != "1":
+    if not debug_reports:
         return
 
     print("\n" + "-" * 72)
@@ -345,7 +480,7 @@ def show_case_reports(case_id: str) -> None:
     print("-" * 72)
 
     for index, report in enumerate(reports, start=1):
-        print(f"{index}. {_report_title(report, index)}")
+        print(f"{index}. {_report_type(report, index)}")
         print(f"   Path      : {_report_path(report)}")
 
         created_at = _report_created_at(report)
