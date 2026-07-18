@@ -39,3 +39,9 @@ __pycache__/
 
 # Ignore complete active case workspaces
 cases/active/*/
+
+# Local telecom master datasets and runtime database files
+data/master/
+database/*.duckdb
+database/backups/
+modules/database/*.before_*
