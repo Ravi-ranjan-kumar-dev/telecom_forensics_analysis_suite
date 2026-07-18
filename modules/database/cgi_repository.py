@@ -8,6 +8,45 @@ from .duckdb_core import execute_sql, query_dataframe, table_count
 CGI_TABLE = "cgi_addresses"
 
 
+CGI_OPTIONAL_COLUMNS = {
+    "site_name": "TEXT",
+    "town": "TEXT",
+    "landmark": "TEXT",
+    "azimuth": "TEXT",
+    "technology": "TEXT",
+    "status": "TEXT",
+    "status_change_date": "TEXT",
+    "mcc_mnc": "TEXT",
+    "lac": "TEXT",
+    "cid": "TEXT",
+    "tac_id": "TEXT",
+    "site_id": "TEXT",
+    "gnb_id": "TEXT",
+    "cell_id": "TEXT",
+}
+
+
+def _ensure_optional_cgi_columns() -> None:
+    """
+    Add newer CGI master-data columns without rebuilding the database.
+
+    This keeps old DuckDB data safe and only adds missing columns.
+    """
+    try:
+        info = query_dataframe(f"PRAGMA table_info('{CGI_TABLE}')")
+        existing = set(info["name"].astype(str).tolist()) if not info.empty else set()
+
+        for column_name, column_type in CGI_OPTIONAL_COLUMNS.items():
+            if column_name not in existing:
+                execute_sql(
+                    f"ALTER TABLE {CGI_TABLE} ADD COLUMN {column_name} {column_type}"
+                )
+    except Exception:
+        # Table may not exist yet during first initialization.
+        # create_cgi_table() will be called again after CREATE TABLE.
+        return
+
+
 def create_cgi_table() -> None:
     execute_sql(
         f"""
@@ -26,6 +65,7 @@ def create_cgi_table() -> None:
         )
         """
     )
+    _ensure_optional_cgi_columns()
 
 
 def cgi_count() -> int:
