@@ -3,6 +3,7 @@ import pandas as pd
 from .contact_classifier import classify_contact
 from .datetime_utils import canonical_datetime
 from .tower_utils import filter_valid_first_cell_rows
+from modules.enrichment.cgi_address_enrichment import enrich_dataframe_with_cgi_address
 
 
 def _prepare_tower_data(df):
@@ -260,3 +261,23 @@ def work_tower(df):
     result["Unique Human Contacts"] = result["Unique Human Contacts"].fillna(0).astype(int)
 
     return result.sort_values(["Office Events", "Working Days"], ascending=False)
+
+
+def enrich_tower_result_with_cgi_address(result):
+    """
+    Add tower address details to any tower intelligence result dataframe.
+
+    This helper is intentionally safe:
+    - If result is not a DataFrame, it returns result unchanged.
+    - If no cell/tower column exists, it returns result with address_found = No.
+    """
+    try:
+        import pandas as pd
+
+        if result is None or not isinstance(result, pd.DataFrame):
+            return result
+
+        return enrich_dataframe_with_cgi_address(result)
+
+    except Exception:
+        return result

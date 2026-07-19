@@ -20,6 +20,7 @@ from .excel_styles import (
 from .excel_security import excel_safe_value
 from .report_guidance import append_methodology_sheet
 from .report_paths import get_single_report_path
+from modules.enrichment.cgi_address_enrichment import enrich_dataframe_with_cgi_address
 
 
 CANONICAL_COLUMNS = {
@@ -51,6 +52,27 @@ def _first_existing(df: pd.DataFrame, candidates: list[str], default: Any = pd.N
 
 def _prepare_dataframe(df: pd.DataFrame, target: str) -> pd.DataFrame:
     data = df.copy()
+
+    # CGI_LEGACY_EXPORT_ENRICHMENT
+    try:
+        data = enrich_dataframe_with_cgi_address(
+            data,
+            cell_id_column="first_cell_id",
+            prefix="tower_",
+        )
+
+        if "tower_address" in data.columns:
+            data["Address1"] = data["tower_address"]
+
+        if "tower_latitude" in data.columns:
+            data["Latitude"] = data["tower_latitude"]
+
+        if "tower_longitude" in data.columns:
+            data["Longitude"] = data["tower_longitude"]
+
+    except Exception:
+        pass
+
 
     for column, default_value in CANONICAL_COLUMNS.items():
         if column not in data.columns:
@@ -263,9 +285,9 @@ def _movements(data: pd.DataFrame) -> pd.DataFrame:
         "Duration": data["call_duration"],
         "Roaming Circle": data["roaming_circle"],
         "Cell ID": data["first_cell_id"],
-        "Address1": data["tower_address"],
-        "Latitude": data["latitude"],
-        "Longitude": data["longitude"],
+        "Address1": data.get("tower_address", data.get("Address1", "")),
+        "Latitude": data.get("tower_latitude", data.get("Latitude", "")),
+        "Longitude": data.get("tower_longitude", data.get("Longitude", "")),
     })
     return result
 
@@ -454,25 +476,26 @@ MODULE_RESULT_SHEETS = [
     ("21. Call Type Summary", ["incoming_outgoing"]),
     ("22. Other Unknown Call Types", ["other_call_type_summary"]),
     ("23. Social Network", ["social_network"]),
-    ("20. Location Overview", ["analyze_location"]),
-    ("21. Frequent Towers", ["frequent_locations"]),
-    ("22. Tower Movement", ["tower_movement"]),
-    ("23. Tower Transition", ["tower_transition"]),
-    ("24. Movement Pattern", ["movement_pattern"]),
-    ("25. Tower Intelligence", ["tower_intelligence"]),
-    ("26. Home Tower", ["home_tower"]),
-    ("27. Work Tower", ["work_tower"]),
-    ("28. IMEI Module Summary", ["imei_summary"]),
-    ("29. IMEI Intelligence", ["imei_intelligence"]),
-    ("30. SIM Changes", ["sim_change"]),
-    ("31. Activity Summary", ["activity_summary", "analyze_activity"]),
-    ("32. Hourly Activity", ["hourly_activity"]),
-    ("33. Daily Activity", ["daily_activity"]),
-    ("34. Weekly Activity", ["weekly_activity"]),
-    ("35. Monthly Activity", ["monthly_activity"]),
-    ("36. Behavioral Observations", ["behavioral_intelligence"]),
-    ("37. Review Indicators", ["suspicious_activity"]),
-    ("38. Top Contact Details", ["top_contact_details"]),
+    ("24. Location Overview", ["analyze_location"]),
+    ("25. Frequent Towers", ["frequent_locations"]),
+    ("26. Tower Movement", ["tower_movement"]),
+    ("27. Tower Transition", ["tower_transition"]),
+    ("28. Movement Pattern", ["movement_pattern"]),
+    ("29. Tower Intelligence", ["tower_intelligence"]),
+    ("30. Home Tower", ["home_tower"]),
+    ("31. Work Tower", ["work_tower"]),
+    ("32. Missing CGI Lookup", ["missing_cgi_lookup"]),
+    ("33. IMEI Module Summary", ["imei_summary"]),
+    ("34. IMEI Intelligence", ["imei_intelligence"]),
+    ("35. SIM Changes", ["sim_change"]),
+    ("36. Activity Summary", ["activity_summary", "analyze_activity"]),
+    ("37. Hourly Activity", ["hourly_activity"]),
+    ("38. Daily Activity", ["daily_activity"]),
+    ("39. Weekly Activity", ["weekly_activity"]),
+    ("40. Monthly Activity", ["monthly_activity"]),
+    ("41. Behavioral Observations", ["behavioral_intelligence"]),
+    ("42. Review Indicators", ["suspicious_activity"]),
+    ("43. Top Contact Details", ["top_contact_details"]),
 ]
 
 
@@ -554,7 +577,7 @@ def _append_module_result_sheets(
     )
     _write_dataframe_sheet(
         workbook,
-        "39. Analysis Status",
+        "44. Analysis Status",
         "Analysis Function Status",
         metadata,
         status_frame,
@@ -571,7 +594,7 @@ def _append_module_result_sheets(
     )
     _write_dataframe_sheet(
         workbook,
-        "40. Analysis Errors",
+        "45. Analysis Errors",
         "Analysis Errors",
         metadata,
         error_frame,
@@ -637,7 +660,7 @@ def generate_single_cdr_report(
         rejected_rows = df.attrs.get("rejected_rows", pd.DataFrame())
         _write_dataframe_sheet(
             workbook,
-            "41. Rejected Rows",
+            "46. Rejected Rows",
             "Rejected / Quarantined Source Rows",
             meta,
             rejected_rows if isinstance(rejected_rows, pd.DataFrame) else pd.DataFrame(),

@@ -13,6 +13,7 @@ from dataclasses import dataclass
 from typing import Any, Callable
 
 import pandas as pd
+from modules.enrichment.cgi_address_enrichment import enrich_dataframe_with_cgi_address, build_missing_cgi_lookup_summary
 
 
 @dataclass(frozen=True)
@@ -63,6 +64,52 @@ ANALYSIS_REGISTRY: tuple[AnalysisSpec, ...] = (
     ),
 )
 
+
+
+CGI_ENRICHMENT_RESULT_KEYS = {
+    "tower_movement",
+    "tower_transition",
+    "tower_intelligence",
+    "home_tower",
+    "work_tower",
+}
+
+
+def _apply_cgi_address_enrichment(results):
+    """
+    Add tower address details to selected CDR tower analysis results.
+
+    User-facing output stays simple:
+    - tower_address_found
+    - tower_operator
+    - tower_circle
+    - tower_town
+    - tower_site_name
+    - tower_address
+    - tower_latitude
+    - tower_longitude
+
+    If enrichment fails for any reason, original result is preserved.
+    """
+    if not isinstance(results, dict):
+        return results
+
+    for key in CGI_ENRICHMENT_RESULT_KEYS:
+        value = results.get(key)
+
+        try:
+            results[key] = enrich_dataframe_with_cgi_address(value)
+        except Exception:
+            results[key] = value
+
+    try:
+        tower_movement = results.get("tower_movement")
+        if tower_movement is not None:
+            results["missing_cgi_lookup"] = build_missing_cgi_lookup_summary(tower_movement)
+    except Exception:
+        pass
+
+    return results
 
 def _load_function(spec: AnalysisSpec) -> Callable[[pd.DataFrame], Any]:
     module = importlib.import_module(spec.module_path)
@@ -136,6 +183,142 @@ def _run_top_contact_details(
     )
 
 
+
+CGI_ENRICHMENT_RESULT_KEYS = {
+    "tower_movement",
+    "tower_transition",
+    "tower_intelligence",
+    "home_tower",
+    "work_tower",
+}
+
+
+def _looks_like_analysis_result_container(value):
+    if not isinstance(value, dict):
+        return False
+
+    return any(key in value for key in CGI_ENRICHMENT_RESULT_KEYS)
+
+
+def _find_analysis_result_container(bundle):
+    """
+    Find where analysis result dataframes are stored.
+
+    Some report bundles keep results directly:
+        bundle["tower_movement"]
+
+    Some keep results nested:
+        bundle["results"]["tower_movement"]
+        bundle["analysis"]["tower_movement"]
+        bundle["analysis_results"]["tower_movement"]
+
+    This helper supports both.
+    """
+    if not isinstance(bundle, dict):
+        return None
+
+    if _looks_like_analysis_result_container(bundle):
+        return bundle
+
+    preferred_keys = [
+        "results",
+        "analysis",
+        "analysis_results",
+        "analysis_bundle",
+        "sheets",
+        "data",
+    ]
+
+    for key in preferred_keys:
+        child = bundle.get(key)
+        if _looks_like_analysis_result_container(child):
+            return child
+
+    for child in bundle.values():
+        if _looks_like_analysis_result_container(child):
+            return child
+
+    return None
+
+
+def _apply_cgi_address_enrichment(bundle):
+    """
+    Apply CGI address enrichment to CDR tower analysis outputs.
+
+    Simple professional output:
+    - tower_address_found
+    - tower_operator
+    - tower_circle
+    - tower_town
+    - tower_site_name
+    - tower_address
+    - tower_latitude
+    - tower_longitude
+
+    Also mirrors enriched tower sheets to top-level bundle keys so the Excel
+    writer can find them reliably.
+    """
+    if not isinstance(bundle, dict):
+        return bundle
+
+    results = _find_analysis_result_container(bundle)
+
+    if results is None:
+        return bundle
+
+    direct_keys = [
+        "tower_movement",
+        "tower_intelligence",
+        "home_tower",
+        "work_tower",
+    ]
+
+    for key in direct_keys:
+        value = results.get(key)
+        try:
+            results[key] = enrich_dataframe_with_cgi_address(value)
+        except Exception:
+            results[key] = value
+
+    transition = results.get("tower_transition")
+    try:
+        if transition is not None:
+            transition = enrich_dataframe_with_cgi_address(
+                transition,
+                cell_id_column="From Tower",
+                prefix="from_tower_",
+            )
+            transition = enrich_dataframe_with_cgi_address(
+                transition,
+                cell_id_column="To Tower",
+                prefix="to_tower_",
+            )
+            results["tower_transition"] = transition
+    except Exception:
+        results["tower_transition"] = transition
+
+    try:
+        tower_movement = results.get("tower_movement")
+        if tower_movement is not None:
+            results["missing_cgi_lookup"] = build_missing_cgi_lookup_summary(tower_movement)
+    except Exception:
+        pass
+
+    # Mirror important result sheets to top level.
+    # This makes bundle.get("tower_movement") work even if original data was nested.
+    for key in [
+        "tower_movement",
+        "tower_transition",
+        "tower_intelligence",
+        "home_tower",
+        "work_tower",
+        "missing_cgi_lookup",
+    ]:
+        if key in results:
+            bundle[key] = results[key]
+
+    return bundle
+
 def build_single_analysis_bundle(
     df: pd.DataFrame,
     target: str | None = None,
@@ -203,12 +386,12 @@ def build_single_analysis_bundle(
     )
 
     status_frame = pd.DataFrame(status_rows)
-    return {
+    return _apply_cgi_address_enrichment({
         "target": str(target or ""),
         "results": results,
         "errors": errors,
         "status": status_frame,
-    }
+    })
 
 
 def analysis_completion_summary(bundle: dict[str, Any]) -> dict[str, int]:
