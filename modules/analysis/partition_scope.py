@@ -1,4 +1,4 @@
-"""Shared CCTV sighting-to-CGI resolution for dump partition engines."""
+"""Shared date-time partition and CGI-scope resolution for dump analysis engines."""
 
 from __future__ import annotations
 

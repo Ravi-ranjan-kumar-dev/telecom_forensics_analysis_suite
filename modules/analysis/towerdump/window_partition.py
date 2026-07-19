@@ -1,4 +1,4 @@
-"""CCTV time-window based logical partitioning for normalized Tower Dump data."""
+"""Date-time and CGI-scoped logical partitioning for normalized Tower Dump data."""
 
 from __future__ import annotations
 
@@ -7,6 +7,13 @@ from collections import defaultdict
 from typing import Any
 
 import pandas as pd
+
+from modules.analysis.common.uncommon_numbers import (
+    find_uncommon_numbers,
+)
+from modules.analysis.towerdump.uncommon_presence import (
+    TOWER_CDR_UNCOMMON_CONFIG,
+)
 
 
 CELL_COLUMNS = (
@@ -54,7 +61,14 @@ def _filter_one_sighting(
     if pd.isna(window_start) or pd.isna(window_end):
         return pd.DataFrame(columns=df.columns)
 
-    mask = datetimes.between(window_start, window_end, inclusive="both")
+    # Half-open range prevents one boundary event from appearing
+    # in two adjoining partitions:
+    #     window_start <= event_time < window_end
+    mask = datetimes.between(
+        window_start,
+        window_end,
+        inclusive="left",
+    )
 
     cgi_keys = {
         _cell_key(value)
@@ -201,6 +215,535 @@ def _entity_presence(
     )
 
 
+
+# PARTITION_VISITOR_INTELLIGENCE_HELPERS
+
+PARTITION_VISITOR_COLUMNS = [
+    "partition_id",
+    "partition_location",
+    "partition_window_start",
+    "partition_window_end",
+    "partition_cgi_group_id",
+    "subscriber_number",
+    "visitor_type",
+    "current_seen_count",
+    "baseline_seen_count",
+    "cells_seen",
+    "imei_count",
+    "imsi_count",
+    "first_seen",
+    "last_seen",
+    "rarity_score",
+    "priority",
+    "confidence",
+    "multi_cell_relevant",
+    "why_important",
+    "next_verification",
+]
+
+
+def _filter_cgi_scope(
+    dataframe: pd.DataFrame,
+    cgi_group: dict[str, Any],
+) -> pd.DataFrame:
+    """Return all records belonging to the resolved CGI scope.
+
+    Time is deliberately not filtered here because the returned data
+    is divided into current and baseline periods later.
+    """
+
+    if dataframe is None or dataframe.empty:
+        return pd.DataFrame(columns=getattr(dataframe, "columns", []))
+
+    cgi_keys = {
+        _cell_key(value)
+        for value in cgi_group.get("cgi_values", [])
+        if _cell_key(value)
+    }
+
+    # AUTO_ALL / time-only mode uses all loaded cells.
+    if not cgi_keys:
+        return dataframe.copy()
+
+    scope_mask = pd.Series(
+        False,
+        index=dataframe.index,
+    )
+
+    for column in CELL_COLUMNS:
+        if column not in dataframe.columns:
+            continue
+
+        keys = _clean_text(
+            dataframe[column]
+        ).map(_cell_key)
+
+        scope_mask = scope_mask | keys.isin(cgi_keys)
+
+    return dataframe.loc[scope_mask].copy()
+
+
+def _visitor_type(row: pd.Series) -> str:
+    current_count = int(
+        row.get("current_seen_count", 0) or 0
+    )
+    baseline_count = int(
+        row.get("baseline_seen_count", 0) or 0
+    )
+
+    if baseline_count == 0:
+        return "NEW VISITOR"
+
+    if baseline_count <= 2 and current_count >= 2:
+        return "RARE REPEAT VISITOR"
+
+    if baseline_count <= 2:
+        return "RARE VISITOR"
+
+    if baseline_count <= 5 and current_count >= 2:
+        return "REPEAT RELEVANT VISITOR"
+
+    return "REGULAR / LOCAL PRESENCE"
+
+
+def _visitor_confidence(row: pd.Series) -> str:
+    current_count = int(
+        row.get("current_seen_count", 0) or 0
+    )
+    baseline_count = int(
+        row.get("baseline_seen_count", 0) or 0
+    )
+    cells_seen = int(
+        row.get("cells_seen", 0) or 0
+    )
+
+    if (
+        current_count >= 2
+        and (
+            baseline_count <= 2
+            or cells_seen >= 2
+        )
+    ):
+        return "HIGH"
+
+    if (
+        current_count >= 2
+        or baseline_count <= 2
+        or cells_seen >= 2
+    ):
+        return "MEDIUM"
+
+    return "LOW"
+
+
+def _visitor_priority(row: pd.Series) -> str:
+    """Assign investigation priority for one partition visitor."""
+
+    visitor_type = str(
+        row.get("visitor_type", "")
+    ).strip()
+
+    current_count = int(
+        row.get("current_seen_count", 0) or 0
+    )
+
+    cells_seen = int(
+        row.get("cells_seen", 0) or 0
+    )
+
+    imei_count = int(
+        row.get("imei_count", 0) or 0
+    )
+
+    imsi_count = int(
+        row.get("imsi_count", 0) or 0
+    )
+
+    device_change = (
+        imei_count >= 2
+        or imsi_count >= 2
+    )
+
+    if visitor_type == "NEW VISITOR":
+        if (
+            current_count >= 2
+            or cells_seen >= 2
+            or device_change
+        ):
+            return "HIGH"
+
+        return "MEDIUM"
+
+    if visitor_type == "RARE REPEAT VISITOR":
+        if (
+            current_count >= 2
+            or cells_seen >= 2
+            or device_change
+        ):
+            return "HIGH"
+
+        return "MEDIUM"
+
+    if visitor_type == "REPEAT RELEVANT VISITOR":
+        if (
+            cells_seen >= 2
+            or device_change
+        ):
+            return "HIGH"
+
+        return "MEDIUM"
+
+    if visitor_type == "RARE VISITOR":
+        if (
+            cells_seen >= 2
+            or device_change
+        ):
+            return "HIGH"
+
+        return "MEDIUM"
+
+    if (
+        cells_seen >= 2
+        or device_change
+    ):
+        return "MEDIUM"
+
+    return "LOW"
+
+
+def _visitor_reason(row: pd.Series) -> str:
+    visitor_type = str(
+        row.get("visitor_type", "")
+    ).strip()
+
+    cells_seen = int(
+        row.get("cells_seen", 0) or 0
+    )
+    imei_count = int(
+        row.get("imei_count", 0) or 0
+    )
+    imsi_count = int(
+        row.get("imsi_count", 0) or 0
+    )
+
+    reasons: list[str] = []
+
+    if visitor_type == "NEW VISITOR":
+        reasons.append(
+            "Same CGI scope ke earlier/later baseline "
+            "records mein nahi mila"
+        )
+
+    elif visitor_type in {
+        "RARE VISITOR",
+        "RARE REPEAT VISITOR",
+    }:
+        reasons.append(
+            "Same CGI scope ke baseline mein bahut kam presence"
+        )
+
+    elif visitor_type == "REPEAT RELEVANT VISITOR":
+        reasons.append(
+            "Baseline presence kam thi, lekin selected "
+            "partition mein repeat activity mili"
+        )
+
+    else:
+        reasons.append(
+            "Baseline mein regular presence mili; "
+            "new visitor nahi hai"
+        )
+
+    if cells_seen >= 2:
+        reasons.append(
+            "selected period mein multiple cells par presence"
+        )
+
+    if imei_count >= 2:
+        reasons.append(
+            "multiple IMEI observed"
+        )
+
+    if imsi_count >= 2:
+        reasons.append(
+            "multiple IMSI observed"
+        )
+
+    return "; ".join(reasons)
+
+
+def _normalise_partition_visitor_table(
+    dataframe: pd.DataFrame,
+    *,
+    sighting: dict[str, Any],
+) -> pd.DataFrame:
+    if dataframe is None or dataframe.empty:
+        return pd.DataFrame(
+            columns=PARTITION_VISITOR_COLUMNS
+        )
+
+    output = dataframe.copy()
+
+    if (
+        "subscriber_number" not in output.columns
+        and "entity" in output.columns
+    ):
+        output = output.rename(
+            columns={
+                "entity": "subscriber_number",
+            }
+        )
+
+    for column in [
+        "current_seen_count",
+        "baseline_seen_count",
+        "cells_seen",
+        "imei_count",
+        "imsi_count",
+        "rarity_score",
+    ]:
+        if column not in output.columns:
+            output[column] = 0
+
+        output[column] = (
+            pd.to_numeric(
+                output[column],
+                errors="coerce",
+            )
+            .fillna(0)
+            .astype(int)
+        )
+
+    output["visitor_type"] = output.apply(
+        _visitor_type,
+        axis=1,
+    )
+
+    output["confidence"] = output.apply(
+        _visitor_confidence,
+        axis=1,
+    )
+
+    output["multi_cell_relevant"] = (
+        output["cells_seen"]
+        .ge(2)
+        .map({
+            True: "YES",
+            False: "NO",
+        })
+    )
+
+    output["priority"] = output.apply(
+        _visitor_priority,
+        axis=1,
+    )
+
+    output["why_important"] = output.apply(
+        _visitor_reason,
+        axis=1,
+    )
+
+    output["next_verification"] = (
+        "Verify SDR/CAF identity, IMEI/IMSI continuity, "
+        "call context, tower coverage and local/field information."
+    )
+
+    output.insert(
+        0,
+        "partition_cgi_group_id",
+        str(
+            sighting.get(
+                "cgi_group_id",
+                "",
+            )
+        ),
+    )
+
+    output.insert(
+        0,
+        "partition_window_end",
+        sighting.get(
+            "window_end",
+            "",
+        ),
+    )
+
+    output.insert(
+        0,
+        "partition_window_start",
+        sighting.get(
+            "window_start",
+            "",
+        ),
+    )
+
+    output.insert(
+        0,
+        "partition_location",
+        str(
+            sighting.get(
+                "location_name",
+                "",
+            )
+        ),
+    )
+
+    output.insert(
+        0,
+        "partition_id",
+        str(
+            sighting.get(
+                "sighting_id",
+                "",
+            )
+        ),
+    )
+
+    for column in PARTITION_VISITOR_COLUMNS:
+        if column not in output.columns:
+            output[column] = ""
+
+    extra_columns = [
+        column
+        for column in output.columns
+        if column not in PARTITION_VISITOR_COLUMNS
+    ]
+
+    output = output[
+        PARTITION_VISITOR_COLUMNS
+        + extra_columns
+    ]
+
+    sort_columns = [
+        column
+        for column in [
+            "rarity_score",
+            "current_seen_count",
+            "cells_seen",
+            "subscriber_number",
+        ]
+        if column in output.columns
+    ]
+
+    ascending = [
+        False
+        if column != "subscriber_number"
+        else True
+        for column in sort_columns
+    ]
+
+    if sort_columns:
+        output = output.sort_values(
+            sort_columns,
+            ascending=ascending,
+            ignore_index=True,
+        )
+
+    return output
+
+
+def _build_partition_visitor_intelligence(
+    dataframe: pd.DataFrame,
+    *,
+    sighting: dict[str, Any],
+    cgi_group: dict[str, Any],
+) -> pd.DataFrame:
+    """Compare one partition with the same CGI scope outside its time range."""
+
+    if (
+        dataframe is None
+        or dataframe.empty
+        or "call_datetime" not in dataframe.columns
+    ):
+        return pd.DataFrame(
+            columns=PARTITION_VISITOR_COLUMNS
+        )
+
+    window_start = pd.to_datetime(
+        sighting.get("window_start"),
+        errors="coerce",
+    )
+
+    window_end = pd.to_datetime(
+        sighting.get("window_end"),
+        errors="coerce",
+    )
+
+    if (
+        pd.isna(window_start)
+        or pd.isna(window_end)
+        or window_start >= window_end
+    ):
+        return pd.DataFrame(
+            columns=PARTITION_VISITOR_COLUMNS
+        )
+
+    scoped = _filter_cgi_scope(
+        dataframe,
+        cgi_group,
+    )
+
+    if scoped.empty:
+        return pd.DataFrame(
+            columns=PARTITION_VISITOR_COLUMNS
+        )
+
+    datetimes = pd.to_datetime(
+        scoped["call_datetime"],
+        errors="coerce",
+    )
+
+    current_mask = (
+        datetimes.ge(window_start)
+        & datetimes.lt(window_end)
+    )
+
+    valid_time_mask = datetimes.notna()
+
+    current = scoped.loc[
+        current_mask
+    ].copy()
+
+    baseline = scoped.loc[
+        valid_time_mask
+        & ~current_mask
+    ].copy()
+
+    comparison = find_uncommon_numbers(
+        current,
+        baseline,
+        config=TOWER_CDR_UNCOMMON_CONFIG,
+        min_score=0,
+    )
+
+    return _normalise_partition_visitor_table(
+        comparison,
+        sighting=sighting,
+    )
+
+
+def _combine_partition_visitor_tables(
+    tables: dict[str, pd.DataFrame],
+) -> pd.DataFrame:
+    usable = [
+        dataframe
+        for dataframe in tables.values()
+        if isinstance(dataframe, pd.DataFrame)
+        and not dataframe.empty
+    ]
+
+    if not usable:
+        return pd.DataFrame(
+            columns=PARTITION_VISITOR_COLUMNS
+        )
+
+    return pd.concat(
+        usable,
+        ignore_index=True,
+        sort=False,
+    )
+
+
 def create_sighting_partitions(
     df: pd.DataFrame,
     *,
@@ -214,14 +757,29 @@ def create_sighting_partitions(
 
     groups = _group_map(cgi_groups)
     ordered_sightings = sorted(
-        [item for item in sightings if isinstance(item, dict)],
+        [
+            item
+            for item in sightings
+            if isinstance(item, dict)
+        ],
         key=lambda item: (
-            str(item.get("cctv_timestamp", "")),
+            (
+                int(item.get("partition_order"))
+                if str(
+                    item.get(
+                        "partition_order",
+                        "",
+                    )
+                ).isdigit()
+                else 10**9
+            ),
+            str(item.get("window_start", "")),
             str(item.get("sighting_id", "")),
         ),
     )
 
     partitions: dict[str, pd.DataFrame] = {}
+    partition_visitor_tables: dict[str, pd.DataFrame] = {}
     summary_rows: list[dict[str, Any]] = []
     status_rows: list[dict[str, Any]] = []
     valid_sightings: list[dict[str, Any]] = []
@@ -261,7 +819,7 @@ def create_sighting_partitions(
 
         start_time = pd.to_datetime(sighting.get("window_start"), errors="coerce")
         end_time = pd.to_datetime(sighting.get("window_end"), errors="coerce")
-        if pd.isna(start_time) or pd.isna(end_time) or start_time > end_time:
+        if pd.isna(start_time) or pd.isna(end_time) or start_time >= end_time:
             status_rows.append({**base_status, "status": "INVALID_TIME_WINDOW", "included": False, "message": "Window start/end invalid hai."})
             continue
 
@@ -299,8 +857,19 @@ def create_sighting_partitions(
 
         part = _filter_one_sighting(df, sighting, group)
         partitions[sighting_id] = part
-        valid_record = dict(sighting)
-        valid_record["cgi_group_id"] = group_id
+
+        effective_sighting = dict(sighting)
+        effective_sighting["cgi_group_id"] = group_id
+
+        partition_visitor_tables[sighting_id] = (
+            _build_partition_visitor_intelligence(
+                df,
+                sighting=effective_sighting,
+                cgi_group=group,
+            )
+        )
+
+        valid_record = dict(effective_sighting)
         valid_sightings.append(valid_record)
         status_rows.append(
             {
@@ -351,6 +920,66 @@ def create_sighting_partitions(
             }
         )
 
+    partition_visitor_intelligence = (
+        _combine_partition_visitor_tables(
+            partition_visitor_tables
+        )
+    )
+
+    new_visitors = partition_visitor_intelligence.loc[
+        partition_visitor_intelligence["visitor_type"]
+        .eq("NEW VISITOR")
+    ].reset_index(drop=True)
+
+    rare_visitors = partition_visitor_intelligence.loc[
+        partition_visitor_intelligence["visitor_type"].isin(
+            [
+                "RARE VISITOR",
+                "RARE REPEAT VISITOR",
+            ]
+        )
+    ].reset_index(drop=True)
+
+    repeat_relevant_visitors = partition_visitor_intelligence.loc[
+        partition_visitor_intelligence["visitor_type"]
+        .eq("REPEAT RELEVANT VISITOR")
+    ].reset_index(drop=True)
+
+    regular_local_presence = partition_visitor_intelligence.loc[
+        partition_visitor_intelligence["visitor_type"]
+        .eq("REGULAR / LOCAL PRESENCE")
+    ].reset_index(drop=True)
+
+    multi_cell_relevant = partition_visitor_intelligence.loc[
+        partition_visitor_intelligence["multi_cell_relevant"]
+        .eq("YES")
+    ].reset_index(drop=True)
+
+    # MEANINGFUL_PARTITION_PRIORITY_LEADS
+    priority_leads = (
+        partition_visitor_intelligence.loc[
+            partition_visitor_intelligence["priority"].isin(
+                [
+                    "HIGH",
+                    "MEDIUM",
+                ]
+            )
+        ]
+        .sort_values(
+            [
+                "rarity_score",
+                "current_seen_count",
+                "cells_seen",
+            ],
+            ascending=[
+                False,
+                False,
+                False,
+            ],
+            ignore_index=True,
+        )
+    )
+
     subscriber_presence = _entity_presence(partitions, valid_sightings, "subscriber_number")
     imei_presence = _entity_presence(partitions, valid_sightings, "imei")
     imsi_presence = _entity_presence(partitions, valid_sightings, "imsi")
@@ -368,6 +997,14 @@ def create_sighting_partitions(
 
     return {
         "partitions": partitions,
+        "partition_visitor_tables": partition_visitor_tables,
+        "partition_visitor_intelligence": partition_visitor_intelligence,
+        "new_visitors": new_visitors,
+        "rare_visitors": rare_visitors,
+        "repeat_relevant_visitors": repeat_relevant_visitors,
+        "regular_local_presence": regular_local_presence,
+        "multi_cell_relevant": multi_cell_relevant,
+        "partition_priority_leads": priority_leads,
         "partition_summary": pd.DataFrame(summary_rows),
         "partition_status": pd.DataFrame(status_rows),
         "subscriber_presence": subscriber_presence,

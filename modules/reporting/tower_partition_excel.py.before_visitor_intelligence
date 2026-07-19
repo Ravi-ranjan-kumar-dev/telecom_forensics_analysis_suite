@@ -1,4 +1,4 @@
-"""Consolidated Excel report for Tower Dump date-time partition analysis.
+"""Consolidated Excel report for CCTV-based Tower Dump partition analysis.
 
 This module renders an already-computed partition result. It does not execute
 the analytical functions again.
@@ -231,86 +231,6 @@ def _normalize_dataframe(
     return dataframe
 
 
-
-# VISITOR_REPORT_DATAFRAME_HELPER
-
-def _visitor_report_dataframe(
-    value: Any,
-) -> pd.DataFrame:
-    """Prepare simple investigator-facing visitor columns."""
-
-    dataframe = _normalize_dataframe(value)
-
-    rename_map = {
-        "partition_id": "Partition",
-        "partition_location": "Location",
-        "partition_window_start": "Start Date-Time",
-        "partition_window_end": "End Date-Time",
-        "partition_cgi_group_id": "CGI Group",
-        "subscriber_number": "Mobile Number",
-        "visitor_type": "Visitor Type",
-        "current_seen_count": "Current Events",
-        "baseline_seen_count": "Baseline Events",
-        "cells_seen": "Cells Seen",
-        "imei_count": "IMEI Count",
-        "imsi_count": "IMSI Count",
-        "first_seen": "First Seen",
-        "last_seen": "Last Seen",
-        "rarity_score": "Rarity Score",
-        "priority": "Priority",
-        "confidence": "Confidence",
-        "multi_cell_relevant": "Multi-Cell",
-        "why_important": "Why It Matters",
-        "next_verification": "Suggested Verification",
-        "rank_reason": "Ranking Reason",
-        "investigation_hint": "Investigation Hint",
-    }
-
-    dataframe = dataframe.rename(
-        columns={
-            source: target
-            for source, target in rename_map.items()
-            if source in dataframe.columns
-        }
-    )
-
-    preferred_columns = [
-        "Partition",
-        "Location",
-        "Start Date-Time",
-        "End Date-Time",
-        "CGI Group",
-        "Mobile Number",
-        "Visitor Type",
-        "Current Events",
-        "Baseline Events",
-        "Cells Seen",
-        "IMEI Count",
-        "IMSI Count",
-        "First Seen",
-        "Last Seen",
-        "Rarity Score",
-        "Priority",
-        "Confidence",
-        "Multi-Cell",
-        "Why It Matters",
-        "Suggested Verification",
-    ]
-
-    existing = [
-        column
-        for column in preferred_columns
-        if column in dataframe.columns
-    ]
-
-    # INVESTIGATOR_ONLY_VISITOR_COLUMNS
-    # Internal engine fields are intentionally hidden from the
-    # user-facing report to keep the output simple and consistent.
-    return dataframe[
-        existing
-    ].copy()
-
-
 def _write_dataframe_rows(
     worksheet,
     dataframe: pd.DataFrame,
@@ -514,14 +434,6 @@ def _status_dataframe(
             ),
         },
         {
-            "Stage": "Visitor Intelligence",
-            "Status": "Completed",
-            "Details": (
-                f"{len(_normalize_dataframe(result.get('partition_visitor_intelligence'))):,} "
-                "partition visitor classification row(s)"
-            ),
-        },
-        {
             "Stage": "Internal Backend Tables",
             "Status": "Completed",
             "Details": (
@@ -628,75 +540,30 @@ def generate_tower_partition_excel_report(
         result.get("imsi_presence")
     )
     matrix = _candidate_matrix(subscriber_presence)
-
-    visitor_intelligence = _visitor_report_dataframe(
-        result.get("partition_visitor_intelligence")
-    )
-    new_visitors = _visitor_report_dataframe(
-        result.get("new_visitors")
-    )
-    rare_visitors = _visitor_report_dataframe(
-        result.get("rare_visitors")
-    )
-    repeat_relevant = _visitor_report_dataframe(
-        result.get("repeat_relevant_visitors")
-    )
-    regular_local = _visitor_report_dataframe(
-        result.get("regular_local_presence")
-    )
-    multi_cell_relevant = _visitor_report_dataframe(
-        result.get("multi_cell_relevant")
-    )
-    visitor_priority_leads = _visitor_report_dataframe(
-        result.get("partition_priority_leads")
-    )
-
     sighting_frame = _normalize_dataframe(sightings)
 
-    # GENERIC_PARTITION_WINDOW_DISPLAY
     if not sighting_frame.empty:
-        sighting_frame = sighting_frame.rename(
-            columns={
-                "sighting_id": "Partition",
-                "location_name": "Location",
-                "window_start": "Start Date-Time",
-                "window_end": "End Date-Time",
-                "cgi_group_id": "CGI Group",
-                "source_types": "Source Types",
-            }
-        )
-
         preferred = [
-            "Partition",
-            "Location",
-            "Start Date-Time",
-            "End Date-Time",
-            "CGI Group",
-            "Source Types",
-        ]
-
-        legacy_hidden = {
+            "sighting_id",
             "cctv_timestamp",
+            "window_start",
+            "window_end",
             "minutes_before",
             "minutes_after",
-        }
-
+            "cgi_group_id",
+            "source_types",
+        ]
         existing = [
             column
             for column in preferred
             if column in sighting_frame.columns
         ]
-
         remaining = [
             column
             for column in sighting_frame.columns
             if column not in existing
-            and column not in legacy_hidden
         ]
-
-        sighting_frame = sighting_frame[
-            existing + remaining
-        ]
+        sighting_frame = sighting_frame[existing + remaining]
 
     # 1. Executive Summary
     overview = workbook.create_sheet(
@@ -704,7 +571,7 @@ def generate_tower_partition_excel_report(
     )
     start_row = _apply_title(
         overview,
-        "Tower Dump Date-Time Partition Analysis",
+        "Tower Dump CCTV Partition Analysis",
         (
             f"Case: {case_id}"
             + (f" | {case_name}" if case_name else "")
@@ -722,14 +589,14 @@ def generate_tower_partition_excel_report(
         [
             ("Case ID", case_id),
             ("Case Name", case_name),
-            ("Analysis Type", "Pair-Based Date-Time Tower Dump Partitioning"),
+            ("Analysis Type", "CCTV Date-Time Tower Dump Partitioning"),
             ("Generated At", utc_now_iso()),
             ("Input Folder", str(input_folder)),
             ("Total Input Records", int(result.get("total_input_records", 0))),
             ("Configured Sightings", int(result.get("total_configured_sightings", len(sightings)))),
             ("Valid Partitions", int(result.get("total_sightings", 0))),
             ("Rejected Source Rows", len(rejected_rows)),
-            ("Range Rule", "Start Date-Time <= Event Time < End Date-Time"),
+            ("Default Window", "10 minutes before + 10 minutes after"),
             ("Operators", ", ".join(map(str, operators)) if operators else ""),
             ("Loaded Searched CGI/Cells", len(cell_ids) if isinstance(cell_ids, list) else 0),
             ("Files Found", load_metadata.get("files_found", "")),
@@ -740,13 +607,6 @@ def generate_tower_partition_excel_report(
             ("Candidates in All Partitions", len(strict_common)),
             ("Unique IMEI Entries", len(imei_presence)),
             ("Unique IMSI Entries", len(imsi_presence)),
-            ("Visitor Classification Rows", len(visitor_intelligence)),
-            ("New Visitors", len(new_visitors)),
-            ("Rare Visitors", len(rare_visitors)),
-            ("Repeat Relevant Visitors", len(repeat_relevant)),
-            ("Regular / Local Presence", len(regular_local)),
-            ("Multi-Cell Relevant Visitors", len(multi_cell_relevant)),
-            ("Priority Visitor Leads", len(visitor_priority_leads)),
             (
                 "Backend Run Directory",
                 saved.get("run_directory", "")
@@ -764,7 +624,7 @@ def generate_tower_partition_excel_report(
         workbook,
         "2. Partition Windows",
         sighting_frame,
-        subtitle="User-entered exact Start and End Date-Time pairs using half-open ranges.",
+        subtitle="User-entered CCTV date/time with automatic ±10-minute windows.",
     )
     _write_dataframe_sheets(
         workbook,
@@ -809,68 +669,6 @@ def generate_tower_partition_excel_report(
         subtitle="Dynamic P1/P2/... or S1/S2/... presence matrix.",
     )
 
-    # PARTITION_VISITOR_INTELLIGENCE_SHEETS
-    _write_dataframe_sheets(
-        workbook,
-        "10. Visitor Intelligence",
-        visitor_intelligence,
-        subtitle=(
-            "All selected-period visitors classified against the same CGI "
-            "scope outside each partition time range."
-        ),
-    )
-    _write_dataframe_sheets(
-        workbook,
-        "11. New Visitors",
-        new_visitors,
-        subtitle=(
-            "Numbers present in the selected partition but absent from "
-            "the same CGI-scope baseline."
-        ),
-    )
-    _write_dataframe_sheets(
-        workbook,
-        "12. Rare Visitors",
-        rare_visitors,
-        subtitle=(
-            "Numbers with only one or two baseline events in the same CGI scope."
-        ),
-    )
-    _write_dataframe_sheets(
-        workbook,
-        "13. Repeat Relevant",
-        repeat_relevant,
-        subtitle=(
-            "Numbers with low baseline presence and repeated activity "
-            "inside the selected partition."
-        ),
-    )
-    _write_dataframe_sheets(
-        workbook,
-        "14. Regular Local",
-        regular_local,
-        subtitle=(
-            "Numbers with established baseline presence; generally not new visitors."
-        ),
-    )
-    _write_dataframe_sheets(
-        workbook,
-        "15. Multi-Cell Relevant",
-        multi_cell_relevant,
-        subtitle=(
-            "Selected-period visitors observed across multiple relevant cells."
-        ),
-    )
-    _write_dataframe_sheets(
-        workbook,
-        "16. Visitor Priority Leads",
-        visitor_priority_leads,
-        subtitle=(
-            "Visitor leads ranked by rarity, current activity, cell presence "
-            "and device/SIM consistency."
-        ),
-    )
-
     status_placeholder = output_path / filename
     status_frame = _status_dataframe(
         result=result,
@@ -879,7 +677,7 @@ def generate_tower_partition_excel_report(
     )
     status_names = _write_dataframe_sheets(
         workbook,
-        "17. Analysis Status",
+        "10. Analysis Status",
         status_frame,
         subtitle="Execution status for the consolidated partition workflow.",
     )
@@ -887,19 +685,19 @@ def generate_tower_partition_excel_report(
     warning_frame = _warnings_dataframe(result)
     warning_names = _write_dataframe_sheets(
         workbook,
-        "18. Warnings",
+        "11. Warnings",
         warning_frame,
         subtitle="Load, normalization and partition warnings.",
     )
     _write_dataframe_sheets(
         workbook,
-        "19. Partition Status",
+        "12. Partition Status",
         partition_status,
-        subtitle="Validation, source-type and CGI scope status for every configured partition.",
+        subtitle="Validation, source-type and CGI scope status for every configured sighting.",
     )
     _write_dataframe_sheets(
         workbook,
-        "20. Rejected Rows",
+        "13. Rejected Rows",
         rejected_rows,
         subtitle="Malformed or non-data source rows quarantined with physical line provenance.",
     )
@@ -928,14 +726,14 @@ def generate_tower_partition_excel_report(
         f"Tower Dump Partition Analysis - {case_id}"
     )
     workbook.properties.subject = (
-        "Date-time pair driven Tower Dump partition and visitor intelligence analysis"
+        "CCTV timestamp driven Tower Dump partition and common-candidate analysis"
     )
     workbook.properties.creator = "Telecom Forensics Analysis Suite"
     workbook.properties.description = (
         "Consolidated user-facing report. Internal CSV files remain backend data."
     )
 
-    append_methodology_sheet(workbook, "Date-Time Tower Dump Partition Analysis")
+    append_methodology_sheet(workbook, "CCTV-based Tower Dump Partition Analysis")
 
     workbook.save(report_path)
     return report_path

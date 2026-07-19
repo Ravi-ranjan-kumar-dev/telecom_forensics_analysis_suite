@@ -19,15 +19,18 @@ from modules.cases import (
     attach_partition_report,
     case_evidence_dir,
     case_report_dir,
-    clear_sightings,
     list_cgi_groups,
-    list_sightings,
     load_latest_partition_manifest,
     log_case_event,
     register_analysis_run,
     register_report,
-    replace_simple_sightings,
     save_partition_run,
+)
+from modules.cases.date_time_partitions import (
+    clear_date_time_parts,
+    list_date_time_parts,
+    print_date_time_parts,
+    save_date_time_parts,
 )
 from modules.core.paths import (
     TOWER_CDR_DUMP_DATA_DIR,
@@ -36,6 +39,8 @@ from modules.core.paths import (
 
 
 SUPPORTED_SUFFIXES = {".csv", ".txt", ".tsv", ".xlsx", ".xls"}
+
+TOWER_CDR_WORKFLOW = "tower_cdr"
 
 
 def _tower_cdr_menu(case: dict[str, Any]) -> str:
@@ -87,66 +92,146 @@ def _input_folder(case_id: str) -> Path:
     return TOWER_CDR_DUMP_DATA_DIR / "input"
 
 
-def _print_sightings(case_id: str) -> None:
-    sightings = list_sightings(case_id)
+def _partition_records_from_parts(
+    parts: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Convert canonical Date-Time Parts into analysis-engine records.
 
-    print("\n" + "=" * 94)
-    print("CCTV DATE-TIME WINDOWS")
-    print("=" * 94)
+    The analysis engine still accepts the legacy `sightings` structure.
+    This adapter preserves compatibility without changing the user's
+    pair-based Start/End workflow.
+    """
 
-    if not sightings:
-        print("No date-time part configured.")
-        return
+    records: list[dict[str, Any]] = []
 
-    print(
-        f"{'#':<4}{'ID':<8}{'Partition Time':<24}"
-        f"{'Window Start':<24}{'Window End':<24}"
-    )
-    print("-" * 94)
+    for fallback_number, part in enumerate(
+        parts,
+        start=1,
+    ):
+        try:
+            part_number = int(
+                part.get(
+                    "part_no",
+                    fallback_number,
+                )
+            )
+        except (TypeError, ValueError):
+            part_number = fallback_number
 
-    for index, item in enumerate(sightings, start=1):
-        print(
-            f"{index:<4}"
-            f"{str(item.get('sighting_id', '')):<8}"
-            f"{str(item.get('cctv_timestamp', '')):<24}"
-            f"{str(item.get('window_start', '')):<24}"
-            f"{str(item.get('window_end', '')):<24}"
+        start_time = str(
+            part.get(
+                "start_time",
+                "",
+            )
+        ).strip()
+
+        end_time = str(
+            part.get(
+                "end_time",
+                "",
+            )
+        ).strip()
+
+        records.append(
+            {
+                "sighting_id": f"P{part_number}",
+                "partition_order": part_number,
+                "location_name": str(
+                    part.get(
+                        "part_name",
+                        f"Part {part_number}",
+                    )
+                ),
+                # Compatibility field only. The report hides this.
+                "cctv_timestamp": start_time,
+                "window_start": start_time,
+                "window_end": end_time,
+                "cgi_group_id": "AUTO_ALL",
+                "source_types": ["NORMAL_CDR"],
+                "scope_mode": "TIME_ONLY_ALL_CELLS",
+                "range_rule": str(
+                    part.get(
+                        "range_rule",
+                        "start_time <= event_time < end_time",
+                    )
+                ),
+                "notes": (
+                    "Pair-based Date-Time Part. "
+                    "Start included and End excluded."
+                ),
+            }
         )
 
+    return records
 
-def _collect_date_time_pairs() -> list[tuple[str, str]]:
-    """Ask only date and time. Blank date completes the input."""
 
-    print("\n" + "=" * 72)
-    print("ENTER DATE-TIME PARTS")
-    print("=" * 72)
-    print("Date example : 10-07-2026")
+def _collect_date_time_ranges() -> list[tuple[str, str]]:
+    """Collect exact Start/End Date-Time pairs from the user."""
+
+    print("\n" + "=" * 78)
+    print("CREATE DATE-TIME PARTS")
+    print("=" * 78)
+    print(
+        "Har Part ke liye Start Date-Time aur "
+        "End Date-Time enter karein."
+    )
+    print("Date example : 11-06-2026")
     print("Time example : 13:00 or 13:00:00")
-    print("Sabhi parts enter karne ke baad Date blank chhodkar Enter dabayein.")
+    print()
+    print("Rule:")
+    print("Part 1 Start + Part 1 End = Part 1")
+    print("Part 2 Start + Part 2 End = Part 2")
+    print("Blank Start Date = finish")
+    print("=" * 78)
 
-    pairs: list[tuple[str, str]] = []
-    number = 1
+    ranges: list[tuple[str, str]] = []
+    part_number = 1
 
     while True:
-        date_value = input(
-            f"\nPart {number} - Date (blank = finish): "
+        print(f"\nPart {part_number}")
+
+        start_date = input(
+            "  Start Date (blank = finish): "
         ).strip()
 
-        if not date_value:
+        if not start_date:
             break
 
-        time_value = input(
-            f"Part {number} - Time: "
+        start_time = input(
+            "  Start Time: "
         ).strip()
 
-        if not time_value:
-            print("[-] Time required hai. Is sighting ko dobara enter karein.")
+        end_date = input(
+            "  End Date  : "
+        ).strip()
+
+        end_time = input(
+            "  End Time  : "
+        ).strip()
+
+        if not all(
+            [
+                start_time,
+                end_date,
+                end_time,
+            ]
+        ):
+            print(
+                "[-] Start aur End ke Date-Time "
+                "dono required hain. Part dobara enter karein."
+            )
             continue
 
-        pairs.append((date_value, time_value))
-        number += 1
+        ranges.append(
+            (
+                f"{start_date} {start_time}",
+                f"{end_date} {end_time}",
+            )
+        )
 
-    return pairs
+        part_number += 1
+
+    return ranges
 
 
 def _run_complete_analysis(
@@ -327,7 +412,11 @@ def _run_partition_analysis(
     from modules.loader.tower_dump_loader import load_tower_dump_case
 
     case_id = str(case["case_id"])
-    sightings = list_sightings(case_id)
+    parts = list_date_time_parts(
+        case_id,
+        TOWER_CDR_WORKFLOW,
+    )
+    sightings = _partition_records_from_parts(parts)
 
     if not sightings:
         print("[-] Pehle date-time part enter karein.")
@@ -355,7 +444,7 @@ def _run_partition_analysis(
 
     print(
         f"[+] Loaded {len(dataframe):,} records. "
-        f"Creating {len(sightings)} automatic time partitions..."
+        f"Creating {len(sightings)} pair-based date-time partitions..."
     )
 
     try:
@@ -527,23 +616,35 @@ def _new_partition_workflow(
     case: dict[str, Any],
 ) -> dict[str, Any] | None:
     case_id = str(case["case_id"])
-    pairs = _collect_date_time_pairs()
 
-    if not pairs:
-        print("[-] Koi date-time part enter nahi hua.")
+    ranges = _collect_date_time_ranges()
+
+    if not ranges:
+        print("[-] Koi Date-Time Part enter nahi hua.")
         return None
 
-    records = replace_simple_sightings(
+    payload = save_date_time_parts(
         case_id,
-        pairs,
-        minutes_before=0,
-        minutes_after=0,
+        TOWER_CDR_WORKFLOW,
+        ranges,
+    )
+
+    total_parts = int(
+        payload.get(
+            "parts_count",
+            0,
+        )
     )
 
     print(
-        f"\n[+] {len(records)} date-time partitions automatically created."
+        f"\n[+] {total_parts} pair-based "
+        "Date-Time Part(s) saved."
     )
-    _print_sightings(case_id)
+
+    print_date_time_parts(
+        case_id,
+        TOWER_CDR_WORKFLOW,
+    )
 
     return _run_partition_analysis(case)
 
@@ -597,14 +698,14 @@ def handle_tower_cdr_workspace(
                 _new_partition_workflow(case)
 
             elif choice == "3":
-                _print_sightings(case_id)
+                print_date_time_parts(case_id, TOWER_CDR_WORKFLOW)
 
             elif choice == "4":
                 _run_partition_analysis(case)
 
             elif choice == "5":
-                clear_sightings(case_id)
-                print("[+] Saved date-time parts cleared.")
+                clear_date_time_parts(case_id, TOWER_CDR_WORKFLOW)
+                print("[+] Saved pair-based Date-Time Parts cleared.")
 
             elif choice == "6":
                 _show_latest(case_id)
