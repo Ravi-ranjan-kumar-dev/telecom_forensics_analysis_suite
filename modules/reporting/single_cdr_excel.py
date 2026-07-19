@@ -147,6 +147,131 @@ def _metadata(target: str, data: pd.DataFrame, metadata: dict[str, Any] | None) 
     result.setdefault("address", "")
     result.setdefault("from_date", valid_dates.min().strftime("%b %d, %Y") if not valid_dates.empty else "All Period")
     result.setdefault("to_date", valid_dates.max().strftime("%b %d, %Y") if not valid_dates.empty else "All Period")
+
+    # TARGET_SDR_METADATA_CALL_HOOK
+    result = _enrich_target_metadata_with_sdr(
+        result,
+        target,
+    )
+
+    return result
+
+
+
+# TARGET_SDR_METADATA_ENRICHMENT_HELPER
+def _metadata_value_is_blank(value) -> bool:
+    """
+    Metadata value empty, null ya unusable hai ya nahi.
+    """
+    if value is None:
+        return True
+
+    text_value = str(value).strip()
+
+    return (
+        text_value == ""
+        or text_value.lower() in {
+            "nan",
+            "none",
+            "<na>",
+            "null",
+        }
+    )
+
+
+def _enrich_target_metadata_with_sdr(
+    metadata: dict[str, Any],
+    target,
+) -> dict[str, Any]:
+    """
+    Report target number ki SDR subscriber identity metadata mein add kare.
+    """
+    result = dict(metadata)
+
+    from modules.enrichment.sdr_subscriber_enrichment import (
+        lookup_sdr_subscribers,
+        normalize_mobile_number,
+    )
+
+    normalized_target = normalize_mobile_number(target)
+
+    result["target_sdr_found"] = "No"
+    result["target_lookup_mobile"] = normalized_target
+
+    if not normalized_target:
+        return result
+
+    try:
+        lookup = lookup_sdr_subscribers(
+            [normalized_target]
+        )
+    except Exception as error:
+        print(
+            "[!] Target SDR metadata lookup failed:",
+            normalized_target,
+            "|",
+            type(error).__name__,
+            "|",
+            str(error),
+        )
+        return result
+
+    if lookup is None or not isinstance(
+        lookup,
+        pd.DataFrame,
+    ):
+        return result
+
+    if lookup.empty:
+        return result
+
+    subscriber = lookup.iloc[0]
+
+    field_mapping = {
+        "subscriber_name": "subscriber_name",
+        "father_name": "father_name",
+        "address": "subscriber_address",
+        "operator": "operator",
+        "circle": "circle",
+        "activation_date": "activation_date",
+        "caf_number": "caf_number",
+    }
+
+    for metadata_field, lookup_field in field_mapping.items():
+        lookup_value = subscriber.get(
+            lookup_field,
+            "",
+        )
+
+        if _metadata_value_is_blank(lookup_value):
+            continue
+
+        if _metadata_value_is_blank(
+            result.get(metadata_field)
+        ):
+            result[metadata_field] = lookup_value
+
+    result["target_sdr_found"] = str(
+        subscriber.get(
+            "sdr_found",
+            "Yes",
+        )
+    ).strip() or "Yes"
+
+    result["target_sdr_source"] = str(
+        subscriber.get(
+            "source_file",
+            "",
+        )
+    ).strip()
+
+    print(
+        "[+] Target SDR profile enriched:",
+        normalized_target,
+        "|",
+        result.get("subscriber_name", ""),
+    )
+
     return result
 
 
@@ -155,8 +280,14 @@ def _metadata_rows(meta: dict[str, Any], report_name: str) -> list[tuple[str, An
         ("Case", meta.get("case_name", "")),
         ("Report", report_name),
         ("Report For", meta.get("target", "")),
-        ("Name", meta.get("subscriber_name", "")),
-        ("Address", meta.get("address", "")),
+        ("Subscriber Name", meta.get("subscriber_name", "")),
+        ("Father Name", meta.get("father_name", "")),
+        ("Subscriber Address", meta.get("address", "")),
+        ("Operator", meta.get("operator", "")),
+        ("Circle", meta.get("circle", "")),
+        ("Activation Date", meta.get("activation_date", "")),
+        ("CAF Number", meta.get("caf_number", "")),
+        ("SDR Found", meta.get("target_sdr_found", "No")),
         ("From Date", meta.get("from_date", "All Period")),
         ("To Date", meta.get("to_date", "All Period")),
     ]
