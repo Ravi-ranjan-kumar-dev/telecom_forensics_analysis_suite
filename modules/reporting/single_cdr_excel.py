@@ -22,7 +22,6 @@ from .report_guidance import append_methodology_sheet
 from .report_paths import get_single_report_path
 from modules.enrichment.cgi_address_enrichment import enrich_dataframe_with_cgi_address
 from modules.enrichment.sdr_subscriber_enrichment import enrich_dataframe_with_sdr
-from modules.enrichment.sdr_subscriber_enrichment import lookup_sdr_subscribers, normalize_mobile_number
 
 
 CANONICAL_COLUMNS = {
@@ -451,7 +450,6 @@ def _extract_table(data: pd.DataFrame, bundle: dict[str, Any]) -> pd.DataFrame:
     return pd.DataFrame(rows, columns=["Header", "Details"])
 
 
-
 # FINAL_SDR_CONTACT_REPORT_HELPER
 def _enrich_contact_report_dataframe(
     sheet_name: str,
@@ -649,7 +647,6 @@ def _write_dataframe_sheet(wb: Workbook, sheet_name: str, report_name: str, meta
                     cell.number_format = "mmm dd, yyyy hh:mm:ss"
 
 
-
 MODULE_RESULT_SHEETS = [
     ("15. CDR Summary", ["cdr_summary"]),
     ("16. Top Human Contacts", ["top_contacts"]),
@@ -738,10 +735,6 @@ def _append_module_result_sheets(
     metadata: dict[str, Any],
     bundle: dict[str, Any],
 ) -> None:
-    # DIRECT_SDR_CONTACT_SHEET_ENRICHMENT
-    bundle = _enrich_contact_analysis_bundle_with_sdr(
-        bundle
-    )
 
     """Console analysis ke cached outputs ko additional Excel sheets mein likhta hai."""
     results = _bundle_results(bundle)
@@ -788,227 +781,6 @@ def _append_module_result_sheets(
         metadata,
         error_frame,
     )
-
-
-# SDR_CONTACT_ANALYSIS_ENRICHMENT_HELPERS
-
-_SDR_CONTACT_REPORT_COLUMNS = [
-    "Name",
-    "Father Name",
-    "Address",
-    "Operator",
-    "Circle",
-    "Activation Date",
-    "SDR Found",
-]
-
-
-def _contact_number_column(frame: pd.DataFrame) -> str | None:
-    """
-    Contact-number column ko common candidate names se detect kare.
-    """
-    if frame is None or not isinstance(frame, pd.DataFrame):
-        return None
-
-    for column in (
-        "Contact",
-        "Other Party",
-        "Mobile Number",
-        "Number",
-    ):
-        if column in frame.columns:
-            return column
-
-    return None
-
-
-def _build_sdr_contact_lookup(numbers) -> pd.DataFrame:
-    """
-    Dono contact report tables ke numbers ka ek combined SDR lookup banaye.
-    """
-    normalized_numbers: set[str] = set()
-
-    for value in numbers:
-        normalized = normalize_mobile_number(value)
-
-        if normalized:
-            normalized_numbers.add(normalized)
-
-    empty_columns = [
-        "_sdr_lookup_mobile",
-        *_SDR_CONTACT_REPORT_COLUMNS,
-    ]
-
-    if not normalized_numbers:
-        return pd.DataFrame(columns=empty_columns)
-
-    lookup = lookup_sdr_subscribers(
-        sorted(normalized_numbers)
-    )
-
-    if lookup is None or not isinstance(lookup, pd.DataFrame):
-        return pd.DataFrame(columns=empty_columns)
-
-    if lookup.empty:
-        return pd.DataFrame(columns=empty_columns)
-
-    lookup = lookup.rename(
-        columns={
-            "lookup_mobile": "_sdr_lookup_mobile",
-            "subscriber_name": "Name",
-            "father_name": "Father Name",
-            "subscriber_address": "Address",
-            "operator": "Operator",
-            "circle": "Circle",
-            "activation_date": "Activation Date",
-            "sdr_found": "SDR Found",
-        }
-    )
-
-    for column in empty_columns:
-        if column not in lookup.columns:
-            if column == "SDR Found":
-                lookup[column] = "No"
-            else:
-                lookup[column] = ""
-
-    lookup = lookup[empty_columns].copy()
-
-    return lookup.drop_duplicates(
-        subset=["_sdr_lookup_mobile"],
-        keep="first",
-    )
-
-
-def _attach_sdr_to_contact_table(
-    frame: pd.DataFrame,
-    lookup: pd.DataFrame,
-) -> pd.DataFrame:
-    """
-    Existing contact metrics ko badle bina SDR columns attach kare.
-    """
-    if frame is None or not isinstance(frame, pd.DataFrame):
-        return frame
-
-    if frame.empty:
-        return frame
-
-    contact_column = _contact_number_column(frame)
-
-    if contact_column is None:
-        return frame
-
-    output = frame.copy()
-
-    output = output.drop(
-        columns=_SDR_CONTACT_REPORT_COLUMNS,
-        errors="ignore",
-    )
-
-    output["_sdr_lookup_mobile"] = output[
-        contact_column
-    ].map(normalize_mobile_number)
-
-    if lookup is not None and not lookup.empty:
-        output = output.merge(
-            lookup,
-            on="_sdr_lookup_mobile",
-            how="left",
-            validate="many_to_one",
-        )
-    else:
-        for column in _SDR_CONTACT_REPORT_COLUMNS:
-            output[column] = ""
-
-    output["SDR Found"] = output[
-        "SDR Found"
-    ].fillna("No")
-
-    for column in _SDR_CONTACT_REPORT_COLUMNS:
-        if column != "SDR Found":
-            output[column] = output[column].fillna("")
-
-    output = output.drop(
-        columns=["_sdr_lookup_mobile"],
-        errors="ignore",
-    )
-
-    existing_columns = [
-        column
-        for column in output.columns
-        if column not in _SDR_CONTACT_REPORT_COLUMNS
-    ]
-
-    insert_at = existing_columns.index(contact_column) + 1
-
-    final_columns = existing_columns.copy()
-
-    final_columns[
-        insert_at:insert_at
-    ] = _SDR_CONTACT_REPORT_COLUMNS
-
-    return output[final_columns]
-
-
-def _enrich_contact_analysis_bundle_with_sdr(bundle):
-    """
-    Top Human Contacts aur Contact Ranking ko ek SDR query se enrich kare.
-    """
-    if not isinstance(bundle, dict):
-        return bundle
-
-    contact_result_keys = (
-        "top_contacts",
-        "contact_ranking",
-    )
-
-    all_numbers = []
-
-    for result_key in contact_result_keys:
-        frame = bundle.get(result_key)
-
-        if not isinstance(frame, pd.DataFrame):
-            continue
-
-        if frame.empty:
-            continue
-
-        contact_column = _contact_number_column(frame)
-
-        if contact_column is None:
-            continue
-
-        all_numbers.extend(
-            frame[contact_column].dropna().tolist()
-        )
-
-    if not all_numbers:
-        return bundle
-
-    try:
-        lookup = _build_sdr_contact_lookup(all_numbers)
-    except Exception as error:
-        print(
-            "[!] SDR contact-table enrichment skipped:",
-            type(error).__name__,
-            str(error),
-        )
-        return bundle
-
-    enriched_bundle = dict(bundle)
-
-    for result_key in contact_result_keys:
-        frame = enriched_bundle.get(result_key)
-
-        if isinstance(frame, pd.DataFrame):
-            enriched_bundle[result_key] = (
-                _attach_sdr_to_contact_table(
-                    frame,
-                    lookup,
-                )
-            )
-
-    return enriched_bundle
 
 
 def generate_single_cdr_report(
