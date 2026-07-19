@@ -21,6 +21,7 @@ from .excel_security import excel_safe_value
 from .report_guidance import append_methodology_sheet
 from .report_paths import get_single_report_path
 from modules.enrichment.cgi_address_enrichment import enrich_dataframe_with_cgi_address
+from modules.enrichment.sdr_subscriber_enrichment import enrich_dataframe_with_sdr
 
 
 CANONICAL_COLUMNS = {
@@ -73,6 +74,23 @@ def _prepare_dataframe(df: pd.DataFrame, target: str) -> pd.DataFrame:
     except Exception:
         pass
 
+    # SDR_LEGACY_EXPORT_ENRICHMENT
+    try:
+        data = enrich_dataframe_with_sdr(
+            data,
+            number_column="b_party",
+            prefix="other_party_",
+        )
+
+        if "other_party_subscriber_name" in data.columns:
+            data["sdr_name"] = data["other_party_subscriber_name"]
+
+        if "other_party_subscriber_address" in data.columns:
+            data["sdr_address"] = data["other_party_subscriber_address"]
+
+    except Exception:
+        pass
+
 
     for column, default_value in CANONICAL_COLUMNS.items():
         if column not in data.columns:
@@ -96,8 +114,8 @@ def _prepare_dataframe(df: pd.DataFrame, target: str) -> pd.DataFrame:
     data["other_party"] = _first_existing(data, ["opposite_party", "b_party"])
 
     # Optional enrichment columns. These stay blank until CGI/SDR/TAC databases are connected.
-    data["contact_name"] = _first_existing(data, ["contact_name", "name", "subscriber_name"], "")
-    data["contact_address"] = _first_existing(data, ["contact_address", "sdr_address", "address"], "")
+    data["contact_name"] = _first_existing(data, ["sdr_name", "contact_name", "name", "subscriber_name"], "")
+    data["contact_address"] = _first_existing(data, ["sdr_address", "contact_address", "address"], "")
     data["level_code"] = _first_existing(data, ["level_code", "operator_circle", "network"], "Missing")
     data["tower_address"] = _first_existing(data, ["tower_address", "first_location", "location"], "")
     data["last_tower_address"] = _first_existing(data, ["last_tower_address", "last_location"], "")
