@@ -207,15 +207,6 @@ def get_cgi_details(cgi_value):
     return lookup_cgi(cgi_value)
 
 
-def clear_lookup_cache() -> None:
-    """
-    Compatibility hook for older CGI importer code.
-
-    Current DuckDB lookup functions do not keep an in-memory cache yet,
-    so this is intentionally a safe no-op.
-    """
-    return None
-
 def database_status():
     """
     Public CGI database status expected by modules/database/cgi.py.
