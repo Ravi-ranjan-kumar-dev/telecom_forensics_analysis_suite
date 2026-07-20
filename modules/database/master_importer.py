@@ -643,7 +643,7 @@ def _prepare_sdr_dataframe(raw: pd.DataFrame, source_file: str) -> pd.DataFrame:
 
     output["source_file"] = source_file
 
-    output = output[output["mobile_number"].astype(str).str.len().ge(10)].copy()
+    output = output[output["mobile_number"].astype(str).str.len().eq(10)].copy()
     output = output.drop_duplicates(subset=["mobile_number"], keep="last")
 
     return output[

@@ -1,29 +1,17 @@
 from __future__ import annotations
 
-import re
 from typing import Iterable
 
 import pandas as pd
+from modules.loader.identity import normalize_msisdn
 
 from modules.database.duckdb_core import query_dataframe
 
 
 def normalize_mobile_number(value) -> str:
-    if value is None:
-        return ""
+    """Normalize SDR lookup values using the canonical MSISDN rule."""
 
-    digits = re.sub(r"\D+", "", str(value))
-
-    if len(digits) == 12 and digits.startswith("91"):
-        return digits[-10:]
-
-    if len(digits) == 11 and digits.startswith("0"):
-        return digits[-10:]
-
-    if len(digits) == 10:
-        return digits
-
-    return ""
+    return normalize_msisdn(value) or ""
 
 
 def _chunks(values: list[str], size: int = 1000):

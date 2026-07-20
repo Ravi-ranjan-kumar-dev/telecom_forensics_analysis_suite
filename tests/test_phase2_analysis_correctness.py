@@ -492,3 +492,94 @@ def test_tower_cdr_half_open_ranges_auto_scope_and_visitor_subsets():
     assert len(
         result["multi_cell_relevant"]
     ) == expected_multi_cell_count
+
+
+# SDR_CANONICAL_MSISDN_REGRESSION
+
+def test_sdr_normalizers_use_canonical_strict_msisdn_contract():
+    from modules.database.sdr_repository import (
+        normalize_mobile,
+    )
+    from modules.enrichment.sdr_subscriber_enrichment import (
+        normalize_mobile_number,
+    )
+    from modules.loader.identity import normalize_msisdn
+
+    samples = {
+        None: "",
+        "": "",
+        "9876543210": "9876543210",
+        "09876543210": "9876543210",
+        "919876543210": "9876543210",
+        "+91 98765 43210": "9876543210",
+        "98765-43210": "9876543210",
+        "9876543210.0": "9876543210",
+        "123456789": "",
+        "12345678901": "",
+        "1234567890123": "",
+        "5876543210": "",
+    }
+
+    for value, expected in samples.items():
+        assert normalize_mobile(value) == expected
+        assert normalize_mobile_number(value) == expected
+        assert (normalize_msisdn(value) or "") == expected
+
+
+def test_sdr_master_preparation_rejects_malformed_mobile_numbers():
+    from modules.database.master_importer import (
+        _prepare_sdr_dataframe,
+    )
+
+    raw = pd.DataFrame(
+        {
+            "mobile_number": [
+                "9876543210",
+                "09876543211",
+                "919876543212",
+                "9876543213.0",
+                "123456789",
+                "12345678901",
+                "1234567890123",
+                "5876543210",
+                None,
+            ],
+            "subscriber_name": [
+                "Valid 1",
+                "Valid 2",
+                "Valid 3",
+                "Valid 4",
+                "Invalid 9 digit",
+                "Invalid 11 digit",
+                "Invalid 13 digit",
+                "Invalid starting digit",
+                "Missing",
+            ],
+        }
+    )
+
+    prepared = _prepare_sdr_dataframe(
+        raw,
+        "fixture.csv",
+    )
+
+    assert set(
+        prepared["mobile_number"]
+    ) == {
+        "9876543210",
+        "9876543211",
+        "9876543212",
+        "9876543213",
+    }
+
+    assert prepared["mobile_number"].map(
+        len
+    ).eq(10).all()
+
+    assert prepared["mobile_number"].str[0].isin(
+        list("6789")
+    ).all()
+
+    assert prepared["source_file"].eq(
+        "fixture.csv"
+    ).all()

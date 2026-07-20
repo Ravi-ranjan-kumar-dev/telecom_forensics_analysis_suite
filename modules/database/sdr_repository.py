@@ -1,6 +1,7 @@
 from typing import Optional
 
 import pandas as pd
+from modules.loader.identity import normalize_msisdn
 
 from .duckdb_core import execute_sql, query_dataframe, table_count
 
@@ -35,19 +36,9 @@ def sdr_count() -> int:
 
 
 def normalize_mobile(value) -> str:
-    if value is None or pd.isna(value):
-        return ""
+    """Backward-compatible strict Indian MSISDN normalizer."""
 
-    text = str(value).strip().strip("'").strip('"')
-    digits = "".join(character for character in text if character.isdigit())
-
-    if len(digits) == 12 and digits.startswith("91"):
-        return digits[-10:]
-
-    if len(digits) == 11 and digits.startswith("0"):
-        return digits[-10:]
-
-    return digits
+    return normalize_msisdn(value) or ""
 
 
 def lookup_mobile(number: str) -> Optional[dict]:
