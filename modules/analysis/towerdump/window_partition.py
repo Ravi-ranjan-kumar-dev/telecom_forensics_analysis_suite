@@ -8,6 +8,11 @@ from typing import Any
 
 import pandas as pd
 
+from modules.analysis.partition_scope import (
+    infer_active_cell_scope,
+    loaded_cell_map,
+)
+
 from modules.analysis.common.uncommon_numbers import (
     find_uncommon_numbers,
 )
@@ -79,7 +84,12 @@ def _filter_one_sighting(
     if cgi_keys:
         cell_mask = pd.Series(False, index=df.index)
 
-        for column in CELL_COLUMNS:
+        match_columns = tuple(
+            cgi_group.get("match_columns")
+            or CELL_COLUMNS
+        )
+
+        for column in match_columns:
             if column not in df.columns:
                 continue
 
@@ -224,6 +234,13 @@ PARTITION_VISITOR_COLUMNS = [
     "partition_window_start",
     "partition_window_end",
     "partition_cgi_group_id",
+    "scope_mode",
+    "scope_confidence",
+    "location_confirmed",
+    "scope_basis",
+    "resolved_cell_count",
+    "resolved_cells",
+    "loaded_cell_count",
     "subscriber_number",
     "visitor_type",
     "current_seen_count",
@@ -270,7 +287,12 @@ def _filter_cgi_scope(
         index=dataframe.index,
     )
 
-    for column in CELL_COLUMNS:
+    match_columns = tuple(
+        cgi_group.get("match_columns")
+        or CELL_COLUMNS
+    )
+
+    for column in match_columns:
         if column not in dataframe.columns:
             continue
 
@@ -513,6 +535,33 @@ def _normalise_partition_visitor_table(
             .fillna(0)
             .astype(int)
         )
+
+    scope_values = {
+        "scope_mode": str(
+            sighting.get("scope_mode", "")
+        ),
+        "scope_confidence": str(
+            sighting.get("scope_confidence", "")
+        ),
+        "location_confirmed": str(
+            sighting.get("location_confirmed", "NO")
+        ),
+        "scope_basis": str(
+            sighting.get("scope_basis", "")
+        ),
+        "resolved_cell_count": int(
+            sighting.get("resolved_cell_count", 0) or 0
+        ),
+        "resolved_cells": str(
+            sighting.get("resolved_cells", "")
+        ),
+        "loaded_cell_count": int(
+            sighting.get("loaded_cell_count", 0) or 0
+        ),
+    }
+
+    for column, value in scope_values.items():
+        output[column] = value
 
     output["visitor_type"] = output.apply(
         _visitor_type,
@@ -784,13 +833,11 @@ def create_sighting_partitions(
     status_rows: list[dict[str, Any]] = []
     valid_sightings: list[dict[str, Any]] = []
     warnings: list[str] = []
-    loaded_cell_keys = {
-        _cell_key(value)
-        for column in CELL_COLUMNS
-        if column in df.columns
-        for value in _clean_text(df[column])
-        if _cell_key(value)
-    }
+    loaded_cells = loaded_cell_map(
+        df,
+        "searched_cell_id",
+    )
+    loaded_cell_keys = set(loaded_cells)
 
     for sighting in ordered_sightings:
         sighting_id = str(sighting.get("sighting_id", "")).strip()
@@ -823,43 +870,224 @@ def create_sighting_partitions(
             status_rows.append({**base_status, "status": "INVALID_TIME_WINDOW", "included": False, "message": "Window start/end invalid hai."})
             continue
 
-        if group_id in {"", "AUTO", "AUTO_ALL"}:
-            group = {
-                "group_id": "AUTO_ALL",
-                "group_name": "All Loaded Dump CGI",
-                "cgi_values": [],
-            }
-            group_id = "AUTO_ALL"
-            warnings.append(
-                f"{sighting_id}: TIME_ONLY_ALL_CELLS exploratory mode; "
-                "location-confirmed result nahi hai."
+        if group_id in {
+            "",
+            "AUTO",
+            "AUTO_ALL",
+            "AUTO_ACTIVE",
+        }:
+            scope = infer_active_cell_scope(
+                df,
+                window_start=start_time,
+                window_end=end_time,
+                loaded_cells=loaded_cells,
+                time_column="call_datetime",
+                cell_column="searched_cell_id",
             )
-            status_name = "VALID_TIME_ONLY_ALL_CELLS"
+
+            if not scope.get("valid"):
+                status_rows.append(
+                    {
+                        **base_status,
+                        "cgi_group_id": "AUTO_ACTIVE",
+                        "status": scope.get(
+                            "status",
+                            "INVALID_AUTO_SCOPE",
+                        ),
+                        "included": False,
+                        "scope_mode": scope.get(
+                            "scope_mode",
+                            "INVALID",
+                        ),
+                        "scope_confidence": scope.get(
+                            "scope_confidence",
+                            "LOW",
+                        ),
+                        "location_confirmed": "NO",
+                        "scope_basis": scope.get(
+                            "scope_basis",
+                            "",
+                        ),
+                        "message": scope.get(
+                            "message",
+                            "Automatic CGI scope resolve nahi hua.",
+                        ),
+                    }
+                )
+                continue
+
+            group_id = str(
+                scope.get(
+                    "group_id",
+                    "AUTO_ACTIVE",
+                )
+            )
+
+            scope_mode = str(
+                scope.get(
+                    "scope_mode",
+                    "AUTO_ACTIVE_CELLS",
+                )
+            )
+
+            scope_confidence = str(
+                scope.get(
+                    "scope_confidence",
+                    "LOW",
+                )
+            )
+
+            location_confirmed = False
+
+            scope_basis = str(
+                scope.get(
+                    "scope_basis",
+                    "",
+                )
+            )
+
+            resolved_cells = list(
+                scope.get(
+                    "cell_values",
+                    [],
+                )
+            )
+
+            loaded_cell_count = int(
+                scope.get(
+                    "loaded_cell_count",
+                    len(loaded_cells),
+                )
+                or 0
+            )
+
+            group = {
+                "group_id": group_id,
+                "group_name": (
+                    "Automatically Active Searched Cells"
+                ),
+                "cgi_values": resolved_cells,
+                # Inferred values came from searched_cell_id,
+                # therefore matching must remain on that column.
+                "match_columns": ["searched_cell_id"],
+            }
+
+            status_name = str(
+                scope.get(
+                    "status",
+                    "VALID_AUTO_ACTIVE_CELLS",
+                )
+            )
+
+            warnings.append(
+                f"{sighting_id}: {scope_confidence} scope confidence. "
+                f"{scope_basis} "
+                "Location independently confirmed nahi hai."
+            )
+
         else:
             group = groups.get(group_id)
+
             if group is None:
-                status_rows.append({**base_status, "status": "INVALID_CGI_GROUP", "included": False, "message": f"CGI group not found: {group_id}"})
+                status_rows.append(
+                    {
+                        **base_status,
+                        "status": "INVALID_CGI_GROUP",
+                        "included": False,
+                        "message": (
+                            f"CGI group not found: {group_id}"
+                        ),
+                    }
+                )
                 continue
+
             configured_keys = {
                 _cell_key(value)
                 for value in group.get("cgi_values", [])
                 if _cell_key(value)
             }
-            matched_keys = configured_keys.intersection(loaded_cell_keys)
-            if not configured_keys:
-                status_rows.append({**base_status, "status": "EMPTY_CGI_GROUP", "included": False, "message": f"CGI group {group_id} mein usable Cell ID nahi hai."})
-                continue
-            if not matched_keys:
-                status_rows.append({**base_status, "status": "NO_MATCHING_LOADED_CGI", "included": False, "message": f"CGI group {group_id} ka koi Cell ID loaded data mein nahi mila."})
-                continue
-            group = {**group, "cgi_values": sorted(matched_keys)}
-            status_name = "VALID_LOCATION_SCOPED"
 
-        part = _filter_one_sighting(df, sighting, group)
-        partitions[sighting_id] = part
+            matched_keys = configured_keys.intersection(
+                loaded_cell_keys
+            )
+
+            if not configured_keys:
+                status_rows.append(
+                    {
+                        **base_status,
+                        "status": "EMPTY_CGI_GROUP",
+                        "included": False,
+                        "message": (
+                            f"CGI group {group_id} mein "
+                            "usable Cell ID nahi hai."
+                        ),
+                    }
+                )
+                continue
+
+            if not matched_keys:
+                status_rows.append(
+                    {
+                        **base_status,
+                        "status": "NO_MATCHING_LOADED_CGI",
+                        "included": False,
+                        "message": (
+                            f"CGI group {group_id} ka koi "
+                            "Cell ID loaded data mein nahi mila."
+                        ),
+                    }
+                )
+                continue
+
+            resolved_cells = sorted(
+                loaded_cells[key]
+                for key in matched_keys
+            )
+
+            group = {
+                **group,
+                "cgi_values": resolved_cells,
+                "match_columns": list(CELL_COLUMNS),
+            }
+
+            scope_mode = "LOCATION_SCOPED"
+            scope_confidence = "HIGH"
+            location_confirmed = True
+            scope_basis = (
+                "Configured CGI group matched "
+                "loaded searched cells."
+            )
+            loaded_cell_count = len(loaded_cells)
+            status_name = "VALID_LOCATION_SCOPED"
 
         effective_sighting = dict(sighting)
         effective_sighting["cgi_group_id"] = group_id
+        effective_sighting["scope_mode"] = scope_mode
+        effective_sighting["scope_confidence"] = (
+            scope_confidence
+        )
+        effective_sighting["location_confirmed"] = (
+            "YES"
+            if location_confirmed
+            else "NO"
+        )
+        effective_sighting["scope_basis"] = scope_basis
+        effective_sighting["resolved_cell_count"] = len(
+            resolved_cells
+        )
+        effective_sighting["resolved_cells"] = ", ".join(
+            map(str, resolved_cells)
+        )
+        effective_sighting["loaded_cell_count"] = (
+            loaded_cell_count
+        )
+
+        part = _filter_one_sighting(
+            df,
+            effective_sighting,
+            group,
+        )
+        partitions[sighting_id] = part
 
         partition_visitor_tables[sighting_id] = (
             _build_partition_visitor_intelligence(
@@ -877,15 +1105,33 @@ def create_sighting_partitions(
                 "cgi_group_id": group_id,
                 "status": status_name,
                 "included": True,
-                "resolved_cgi_count": len(group.get("cgi_values", [])),
-                "resolved_cgi_values": ", ".join(map(str, group.get("cgi_values", []))),
+                "scope_mode": scope_mode,
+                "scope_confidence": scope_confidence,
+                "location_confirmed": (
+                    "YES"
+                    if location_confirmed
+                    else "NO"
+                ),
+                "scope_basis": scope_basis,
+                "loaded_cell_count": loaded_cell_count,
+                "resolved_cgi_count": len(
+                    resolved_cells
+                ),
+                "resolved_cgi_values": ", ".join(
+                    map(str, resolved_cells)
+                ),
                 "message": (
-                    "Time-only all loaded cells applied."
-                    if group_id == "AUTO_ALL"
-                    else "Time window and resolved CGI group both applied."
+                    "Configured CGI scope applied."
+                    if location_confirmed
+                    else (
+                        "Active searched cells automatically "
+                        "selected; location independently "
+                        "confirmed nahi hai."
+                    )
                 ),
             }
         )
+
 
         subscriber_count = (
             _clean_text(part["subscriber_number"]).replace("", pd.NA).nunique(dropna=True)
@@ -907,8 +1153,19 @@ def create_sighting_partitions(
                 "window_start": sighting.get("window_start", ""),
                 "window_end": sighting.get("window_end", ""),
                 "cgi_group_id": group_id,
-                "scope_mode": "TIME_ONLY_ALL_CELLS" if group_id == "AUTO_ALL" else "LOCATION_SCOPED",
-                "cgi_count": len(group.get("cgi_values", [])),
+                "scope_mode": scope_mode,
+                "scope_confidence": scope_confidence,
+                "location_confirmed": (
+                    "YES"
+                    if location_confirmed
+                    else "NO"
+                ),
+                "scope_basis": scope_basis,
+                "loaded_cell_count": loaded_cell_count,
+                "cgi_count": len(resolved_cells),
+                "resolved_cgi_values": ", ".join(
+                    map(str, resolved_cells)
+                ),
                 "filtered_records": len(part),
                 "unique_subscribers": int(subscriber_count),
                 "unique_imei": int(imei_count),

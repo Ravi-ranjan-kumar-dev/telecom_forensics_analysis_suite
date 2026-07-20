@@ -479,7 +479,10 @@ def _run_partition_analysis(
     )
 
     # Reporting diagnostics are carried forward without re-running analysis.
-    result["warnings"] = list(load_result.get("warnings", []) or [])
+    result["warnings"] = [
+        *list(result.get("warnings", []) or []),
+        *list(load_result.get("warnings", []) or []),
+    ]
     result["errors"] = list(load_result.get("errors", []) or [])
     result["load_metadata"] = dict(load_result.get("metadata", {}) or {})
     result["operators"] = list(load_result.get("operators", []) or [])

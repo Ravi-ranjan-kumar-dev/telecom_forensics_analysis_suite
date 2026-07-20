@@ -247,6 +247,13 @@ def _visitor_report_dataframe(
         "partition_window_start": "Start Date-Time",
         "partition_window_end": "End Date-Time",
         "partition_cgi_group_id": "CGI Group",
+        "scope_mode": "Scope Mode",
+        "scope_confidence": "Scope Confidence",
+        "location_confirmed": "Location Confirmed",
+        "scope_basis": "Scope Basis",
+        "resolved_cell_count": "Resolved Cell Count",
+        "resolved_cells": "Resolved Cells",
+        "loaded_cell_count": "Loaded Cell Count",
         "subscriber_number": "Mobile Number",
         "visitor_type": "Visitor Type",
         "current_seen_count": "Current Events",
@@ -280,6 +287,13 @@ def _visitor_report_dataframe(
         "Start Date-Time",
         "End Date-Time",
         "CGI Group",
+        "Scope Mode",
+        "Scope Confidence",
+        "Location Confirmed",
+        "Scope Basis",
+        "Resolved Cell Count",
+        "Resolved Cells",
+        "Loaded Cell Count",
         "Mobile Number",
         "Visitor Type",
         "Current Events",
@@ -653,6 +667,68 @@ def generate_tower_partition_excel_report(
 
     sighting_frame = _normalize_dataframe(sightings)
 
+    # PARTITION_SCOPE_SUMMARY_COUNTS
+    scope_modes = (
+        partition_summary.get(
+            "scope_mode",
+            pd.Series(dtype="object"),
+        )
+        .fillna("")
+        .astype(str)
+        .str.strip()
+        .str.upper()
+    )
+
+    scope_confidence = (
+        partition_summary.get(
+            "scope_confidence",
+            pd.Series(dtype="object"),
+        )
+        .fillna("")
+        .astype(str)
+        .str.strip()
+        .str.upper()
+    )
+
+    location_confirmed_values = (
+        partition_summary.get(
+            "location_confirmed",
+            pd.Series(dtype="object"),
+        )
+        .fillna("")
+        .astype(str)
+        .str.strip()
+        .str.upper()
+    )
+
+    auto_active_partitions = int(
+        scope_modes.eq(
+            "AUTO_ACTIVE_CELLS"
+        ).sum()
+    )
+
+    location_scoped_partitions = int(
+        scope_modes.eq(
+            "LOCATION_SCOPED"
+        ).sum()
+    )
+
+    high_scope_confidence = int(
+        scope_confidence.eq("HIGH").sum()
+    )
+
+    medium_scope_confidence = int(
+        scope_confidence.eq("MEDIUM").sum()
+    )
+
+    low_scope_confidence = int(
+        scope_confidence.eq("LOW").sum()
+    )
+
+    confirmed_location_partitions = int(
+        location_confirmed_values.eq("YES").sum()
+    )
+
     # GENERIC_PARTITION_WINDOW_DISPLAY
     if not sighting_frame.empty:
         sighting_frame = sighting_frame.rename(
@@ -728,6 +804,20 @@ def generate_tower_partition_excel_report(
             ("Total Input Records", int(result.get("total_input_records", 0))),
             ("Configured Sightings", int(result.get("total_configured_sightings", len(sightings)))),
             ("Valid Partitions", int(result.get("total_sightings", 0))),
+            ("Auto Active-Cell Partitions", auto_active_partitions),
+            ("Configured Location-Scoped Partitions", location_scoped_partitions),
+            ("Location-Confirmed Partitions", confirmed_location_partitions),
+            ("High Scope Confidence", high_scope_confidence),
+            ("Medium Scope Confidence", medium_scope_confidence),
+            ("Low Scope Confidence", low_scope_confidence),
+            (
+                "Scope Interpretation",
+                (
+                    "Location Confirmed = YES means a configured CGI group "
+                    "was matched. AUTO_ACTIVE_CELLS means cells were inferred "
+                    "from activity inside the selected Date-Time Part."
+                ),
+            ),
             ("Rejected Source Rows", len(rejected_rows)),
             ("Range Rule", "Start Date-Time <= Event Time < End Date-Time"),
             ("Operators", ", ".join(map(str, operators)) if operators else ""),

@@ -43,6 +43,190 @@ def loaded_cell_map(df: pd.DataFrame, column: str = "searched_cell_id") -> dict[
     return output
 
 
+def infer_active_cell_scope(
+    df: pd.DataFrame,
+    *,
+    window_start: Any,
+    window_end: Any,
+    loaded_cells: dict[str, str] | None = None,
+    time_column: str = "call_datetime",
+    cell_column: str = "searched_cell_id",
+) -> dict[str, Any]:
+    """Infer searched cells active inside one Date-Time Part.
+
+    Important:
+    - Highest-count cell ko automatically single location nahi maana jata.
+    - Part ke sabhi active searched cells preserve kiye jate hain.
+    """
+
+    if not isinstance(df, pd.DataFrame):
+        return {
+            "valid": False,
+            "status": "INVALID_DATAFRAME",
+            "scope_mode": "INVALID",
+            "group_id": "AUTO_ACTIVE",
+            "cell_keys": set(),
+            "cell_values": [],
+            "scope_confidence": "LOW",
+            "location_confirmed": False,
+            "scope_basis": "Valid Tower Dump DataFrame available nahi hai.",
+            "loaded_cell_count": 0,
+            "resolved_cell_count": 0,
+            "message": "Automatic CGI scope resolve nahi hua.",
+        }
+
+    resolved_loaded_cells = (
+        dict(loaded_cells)
+        if loaded_cells is not None
+        else loaded_cell_map(df, cell_column)
+    )
+
+    loaded_count = len(resolved_loaded_cells)
+
+    if time_column not in df.columns:
+        return {
+            "valid": False,
+            "status": "MISSING_TIME_COLUMN",
+            "scope_mode": "INVALID",
+            "group_id": "AUTO_ACTIVE",
+            "cell_keys": set(),
+            "cell_values": [],
+            "scope_confidence": "LOW",
+            "location_confirmed": False,
+            "scope_basis": f"Missing column: {time_column}",
+            "loaded_cell_count": loaded_count,
+            "resolved_cell_count": 0,
+            "message": "Event Date-Time column missing hai.",
+        }
+
+    if cell_column not in df.columns:
+        return {
+            "valid": False,
+            "status": "MISSING_SEARCHED_CELL_COLUMN",
+            "scope_mode": "INVALID",
+            "group_id": "AUTO_ACTIVE",
+            "cell_keys": set(),
+            "cell_values": [],
+            "scope_confidence": "LOW",
+            "location_confirmed": False,
+            "scope_basis": f"Missing column: {cell_column}",
+            "loaded_cell_count": loaded_count,
+            "resolved_cell_count": 0,
+            "message": "Searched Cell ID column missing hai.",
+        }
+
+    start_time = pd.to_datetime(
+        window_start,
+        errors="coerce",
+    )
+    end_time = pd.to_datetime(
+        window_end,
+        errors="coerce",
+    )
+
+    if (
+        pd.isna(start_time)
+        or pd.isna(end_time)
+        or start_time >= end_time
+    ):
+        return {
+            "valid": False,
+            "status": "INVALID_TIME_WINDOW",
+            "scope_mode": "INVALID",
+            "group_id": "AUTO_ACTIVE",
+            "cell_keys": set(),
+            "cell_values": [],
+            "scope_confidence": "LOW",
+            "location_confirmed": False,
+            "scope_basis": "Invalid Start/End Date-Time range",
+            "loaded_cell_count": loaded_count,
+            "resolved_cell_count": 0,
+            "message": "Valid Start aur End Date-Time required hai.",
+        }
+
+    datetimes = pd.to_datetime(
+        df[time_column],
+        errors="coerce",
+    )
+
+    time_mask = (
+        datetimes.ge(start_time)
+        & datetimes.lt(end_time)
+    )
+
+    active_frame = df.loc[time_mask]
+    active_cells = loaded_cell_map(
+        active_frame,
+        cell_column,
+    )
+
+    active_keys = set(active_cells)
+    active_values = sorted(active_cells.values())
+    active_count = len(active_keys)
+
+    if active_count == 0:
+        return {
+            "valid": False,
+            "status": "NO_ACTIVE_SEARCHED_CELLS",
+            "scope_mode": "AUTO_ACTIVE_CELLS",
+            "group_id": "AUTO_ACTIVE",
+            "cell_keys": set(),
+            "cell_values": [],
+            "scope_confidence": "LOW",
+            "location_confirmed": False,
+            "scope_basis": (
+                "Selected Date-Time Part mein searched-cell "
+                "activity nahi mili."
+            ),
+            "loaded_cell_count": loaded_count,
+            "resolved_cell_count": 0,
+            "message": (
+                "Selected Date-Time Part mein active "
+                "searched Cell ID nahi mila."
+            ),
+        }
+
+    if active_count == 1:
+        confidence = "HIGH"
+        basis = (
+            "Selected Date-Time Part mein sirf ek "
+            "searched cell active tha."
+        )
+
+    elif loaded_count > 0 and active_count < loaded_count:
+        confidence = "MEDIUM"
+        basis = (
+            f"Selected Date-Time Part mein {active_count} of "
+            f"{loaded_count} loaded searched cells active the."
+        )
+
+    else:
+        confidence = "LOW"
+        basis = (
+            f"Selected Date-Time Part mein sabhi {active_count} "
+            "loaded searched cells active the; koi unique "
+            "location safely infer nahi hui."
+        )
+
+    return {
+        "valid": True,
+        "status": "VALID_AUTO_ACTIVE_CELLS",
+        "scope_mode": "AUTO_ACTIVE_CELLS",
+        "group_id": "AUTO_ACTIVE",
+        "cell_keys": active_keys,
+        "cell_values": active_values,
+        "scope_confidence": confidence,
+        "location_confirmed": False,
+        "scope_basis": basis,
+        "loaded_cell_count": loaded_count,
+        "resolved_cell_count": active_count,
+        "message": (
+            "Date-Time Part ke active searched cells "
+            "automatically selected hue. Location independently "
+            "confirmed nahi hai."
+        ),
+    }
+
 def resolve_sighting_scope(
     sighting: dict[str, Any],
     *,
