@@ -255,3 +255,240 @@ def test_tower_cdr_partition_rejects_nonmatching_cgi_group():
     assert valid["partition_status"].iloc[0]["status"] == "VALID_LOCATION_SCOPED"
     assert invalid["total_sightings"] == 0
     assert invalid["partition_status"].iloc[0]["status"] == "NO_MATCHING_LOADED_CGI"
+
+
+# TOWER_CDR_PRODUCTION_FREEZE_REGRESSION
+
+def test_tower_cdr_half_open_ranges_auto_scope_and_visitor_subsets():
+    """Freeze Tower CDR partition boundaries, scope and visitor subsets."""
+
+    from modules.analysis.towerdump.window_partition import (
+        create_sighting_partitions,
+    )
+
+    dataframe = pd.DataFrame(
+        {
+            "subscriber_number": [
+                "9000000001",  # Baseline before P1
+                "9000000001",  # P1 start boundary
+                "9000000001",  # P1 immediately before end
+                "9000000002",  # P2 start / P1 end boundary
+                "9000000003",  # P2 second active cell
+                "9000000004",  # P2 immediately before end
+                "9000000005",  # P2 end boundary: excluded
+            ],
+            "searched_cell_id": [
+                "CELL-A",
+                "CELL-A",
+                "CELL-A",
+                "CELL-A",
+                "CELL-B",
+                "CELL-B",
+                "CELL-B",
+            ],
+            "first_cell_id": [
+                "CELL-A",
+                "CELL-A",
+                "CELL-A",
+                "CELL-A",
+                "CELL-B",
+                "CELL-B",
+                "CELL-B",
+            ],
+            "last_cell_id": [
+                "CELL-A",
+                "CELL-A",
+                "CELL-A",
+                "CELL-A",
+                "CELL-B",
+                "CELL-B",
+                "CELL-B",
+            ],
+            "call_datetime": pd.to_datetime(
+                [
+                    "2026-06-11 09:55:00",
+                    "2026-06-11 10:00:00",
+                    "2026-06-11 10:29:59",
+                    "2026-06-11 10:30:00",
+                    "2026-06-11 10:45:00",
+                    "2026-06-11 10:59:59",
+                    "2026-06-11 11:00:00",
+                ]
+            ),
+            "imei": [
+                "111111111111111",
+                "111111111111111",
+                "111111111111111",
+                "222222222222222",
+                "333333333333333",
+                "444444444444444",
+                "555555555555555",
+            ],
+            "imsi": [
+                "405010000000001",
+                "405010000000001",
+                "405010000000001",
+                "405010000000002",
+                "405010000000003",
+                "405010000000004",
+                "405010000000005",
+            ],
+            "operator": ["airtel"] * 7,
+            "call_duration": [10, 20, 30, 40, 50, 60, 70],
+        }
+    )
+
+    sightings = [
+        {
+            "sighting_id": "P1",
+            "partition_order": 1,
+            "location_name": "Part 1",
+            "cctv_timestamp": "2026-06-11 10:00:00",
+            "window_start": "2026-06-11 10:00:00",
+            "window_end": "2026-06-11 10:30:00",
+            "cgi_group_id": "AUTO_ACTIVE",
+            "source_types": ["NORMAL_CDR"],
+        },
+        {
+            "sighting_id": "P2",
+            "partition_order": 2,
+            "location_name": "Part 2",
+            "cctv_timestamp": "2026-06-11 10:30:00",
+            "window_start": "2026-06-11 10:30:00",
+            "window_end": "2026-06-11 11:00:00",
+            "cgi_group_id": "AUTO_ACTIVE",
+            "source_types": ["NORMAL_CDR"],
+        },
+    ]
+
+    result = create_sighting_partitions(
+        dataframe,
+        sightings=sightings,
+        cgi_groups=[],
+    )
+
+    assert result["total_sightings"] == 2
+    assert list(result["partitions"]) == ["P1", "P2"]
+
+    part_one = result["partitions"]["P1"]
+    part_two = result["partitions"]["P2"]
+
+    # Half-open rule:
+    # start_time <= call_datetime < end_time
+    assert part_one["call_datetime"].tolist() == [
+        pd.Timestamp("2026-06-11 10:00:00"),
+        pd.Timestamp("2026-06-11 10:29:59"),
+    ]
+
+    assert part_two["call_datetime"].tolist() == [
+        pd.Timestamp("2026-06-11 10:30:00"),
+        pd.Timestamp("2026-06-11 10:45:00"),
+        pd.Timestamp("2026-06-11 10:59:59"),
+    ]
+
+    assert pd.Timestamp(
+        "2026-06-11 10:30:00"
+    ) not in set(part_one["call_datetime"])
+
+    assert pd.Timestamp(
+        "2026-06-11 10:30:00"
+    ) in set(part_two["call_datetime"])
+
+    assert pd.Timestamp(
+        "2026-06-11 11:00:00"
+    ) not in set(part_two["call_datetime"])
+
+    # Output DataFrames reset their display index. The canonical
+    # source_row_index preserves the original physical input row.
+    # No physical event may appear in both adjacent Parts.
+    assert set(
+        part_one["source_row_index"].astype(int)
+    ).isdisjoint(
+        set(
+            part_two["source_row_index"].astype(int)
+        )
+    )
+
+    summary = (
+        result["partition_summary"]
+        .set_index("sighting_id")
+    )
+
+    # P1 has only CELL-A active, although two cells exist in the dump.
+    assert summary.loc["P1", "scope_mode"] == (
+        "AUTO_ACTIVE_CELLS"
+    )
+    assert summary.loc["P1", "scope_confidence"] == "HIGH"
+    assert summary.loc["P1", "location_confirmed"] == "NO"
+    assert int(summary.loc["P1", "loaded_cell_count"]) == 2
+    assert int(summary.loc["P1", "cgi_count"]) == 1
+
+    # P2 uses all loaded cells, therefore no unique location is inferred.
+    assert summary.loc["P2", "scope_mode"] == (
+        "AUTO_ACTIVE_CELLS"
+    )
+    assert summary.loc["P2", "scope_confidence"] == "LOW"
+    assert summary.loc["P2", "location_confirmed"] == "NO"
+    assert int(summary.loc["P2", "loaded_cell_count"]) == 2
+    assert int(summary.loc["P2", "cgi_count"]) == 2
+
+    warning_text = " ".join(
+        str(value)
+        for value in result.get("warnings", [])
+    )
+
+    assert "P2: LOW scope confidence" in warning_text
+    assert "unique location safely infer nahi hui" in (
+        warning_text
+    )
+
+    visitors = result[
+        "partition_visitor_intelligence"
+    ]
+
+    assert not visitors.empty
+
+    # One consolidated row per subscriber per Part.
+    assert not visitors.duplicated(
+        subset=[
+            "partition_id",
+            "subscriber_number",
+        ]
+    ).any()
+
+    classified_total = sum(
+        len(result[key])
+        for key in (
+            "new_visitors",
+            "rare_visitors",
+            "repeat_relevant_visitors",
+            "regular_local_presence",
+        )
+    )
+
+    assert classified_total == len(visitors)
+
+    expected_priority_count = int(
+        visitors["priority"]
+        .isin(["HIGH", "MEDIUM"])
+        .sum()
+    )
+
+    priority_leads = result[
+        "partition_priority_leads"
+    ]
+
+    assert len(priority_leads) == expected_priority_count
+    assert set(
+        priority_leads["priority"]
+    ).issubset({"HIGH", "MEDIUM"})
+
+    expected_multi_cell_count = int(
+        visitors["multi_cell_relevant"]
+        .eq("YES")
+        .sum()
+    )
+
+    assert len(
+        result["multi_cell_relevant"]
+    ) == expected_multi_cell_count
