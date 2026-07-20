@@ -255,6 +255,14 @@ def _visitor_report_dataframe(
         "resolved_cells": "Resolved Cells",
         "loaded_cell_count": "Loaded Cell Count",
         "subscriber_number": "Mobile Number",
+        "sdr_found": "SDR Found",
+        "sdr_subscriber_name": "Subscriber Name",
+        "sdr_father_name": "Father / Husband Name",
+        "sdr_address": "Full Address",
+        "sdr_operator": "SDR Operator",
+        "sdr_circle": "Circle",
+        "sdr_activation_date": "Activation Date",
+        "sdr_caf_number": "CAF Number",
         "visitor_type": "Visitor Type",
         "current_seen_count": "Current Events",
         "baseline_seen_count": "Baseline Events",
@@ -295,6 +303,14 @@ def _visitor_report_dataframe(
         "Resolved Cells",
         "Loaded Cell Count",
         "Mobile Number",
+        "SDR Found",
+        "Subscriber Name",
+        "Father / Husband Name",
+        "Full Address",
+        "SDR Operator",
+        "Circle",
+        "Activation Date",
+        "CAF Number",
         "Visitor Type",
         "Current Events",
         "Baseline Events",
@@ -323,6 +339,308 @@ def _visitor_report_dataframe(
     return dataframe[
         existing
     ].copy()
+
+
+
+# VISITOR_SDR_BATCH_ENRICHMENT
+
+VISITOR_SDR_COLUMNS = [
+    "sdr_found",
+    "sdr_subscriber_name",
+    "sdr_father_name",
+    "sdr_address",
+    "sdr_operator",
+    "sdr_circle",
+    "sdr_activation_date",
+    "sdr_caf_number",
+]
+
+
+def _build_visitor_sdr_lookup(
+    visitor_dataframe: Any,
+) -> pd.DataFrame:
+    """Run one canonical batch SDR lookup for all unique visitors."""
+
+    from modules.enrichment.sdr_subscriber_enrichment import (
+        lookup_sdr_subscribers,
+        normalize_mobile_number,
+    )
+
+    dataframe = _normalize_dataframe(
+        visitor_dataframe
+    )
+
+    output_columns = [
+        "_sdr_lookup_mobile",
+        *VISITOR_SDR_COLUMNS,
+    ]
+
+    if (
+        dataframe.empty
+        or "subscriber_number" not in dataframe.columns
+    ):
+        return pd.DataFrame(
+            columns=output_columns
+        )
+
+    normalized_numbers = (
+        dataframe["subscriber_number"]
+        .map(normalize_mobile_number)
+    )
+
+    numbers = sorted(
+        {
+            str(number).strip()
+            for number in normalized_numbers
+            if str(number).strip()
+        }
+    )
+
+    if not numbers:
+        return pd.DataFrame(
+            columns=output_columns
+        )
+
+    lookup = lookup_sdr_subscribers(
+        numbers
+    )
+
+    if lookup is None or lookup.empty:
+        return pd.DataFrame(
+            columns=output_columns
+        )
+
+    lookup = lookup.rename(
+        columns={
+            "lookup_mobile": "_sdr_lookup_mobile",
+            "sdr_found": "sdr_found",
+            "subscriber_name": "sdr_subscriber_name",
+            "father_name": "sdr_father_name",
+            "subscriber_address": "sdr_address",
+            "operator": "sdr_operator",
+            "circle": "sdr_circle",
+            "activation_date": "sdr_activation_date",
+            "caf_number": "sdr_caf_number",
+        }
+    )
+
+    for column in output_columns:
+        if column not in lookup.columns:
+            lookup[column] = (
+                "No"
+                if column == "sdr_found"
+                else ""
+            )
+
+    lookup["_sdr_lookup_mobile"] = (
+        lookup["_sdr_lookup_mobile"]
+        .map(normalize_mobile_number)
+    )
+
+    lookup = (
+        lookup[
+            output_columns
+        ]
+        .drop_duplicates(
+            subset=["_sdr_lookup_mobile"],
+            keep="first",
+        )
+        .reset_index(drop=True)
+    )
+
+    lookup["sdr_found"] = (
+        lookup["sdr_found"]
+        .fillna("No")
+        .astype(str)
+        .str.strip()
+        .replace(
+            {
+                "": "No",
+                "nan": "No",
+                "None": "No",
+            }
+        )
+    )
+
+    for column in VISITOR_SDR_COLUMNS:
+        if column == "sdr_found":
+            continue
+
+        lookup[column] = (
+            lookup[column]
+            .fillna("")
+        )
+
+    return lookup
+
+
+def _enrich_visitor_dataframe_with_sdr(
+    visitor_dataframe: Any,
+    sdr_lookup: pd.DataFrame,
+) -> pd.DataFrame:
+    """Merge a previously computed SDR lookup into one visitor table."""
+
+    from modules.enrichment.sdr_subscriber_enrichment import (
+        normalize_mobile_number,
+    )
+
+    dataframe = _normalize_dataframe(
+        visitor_dataframe
+    )
+
+    if (
+        dataframe.empty
+        or "subscriber_number" not in dataframe.columns
+    ):
+        for column in VISITOR_SDR_COLUMNS:
+            if column not in dataframe.columns:
+                dataframe[column] = (
+                    "No"
+                    if column == "sdr_found"
+                    else ""
+                )
+
+        return dataframe
+
+    output = dataframe.drop(
+        columns=VISITOR_SDR_COLUMNS,
+        errors="ignore",
+    ).copy()
+
+    output["_sdr_lookup_mobile"] = (
+        output["subscriber_number"]
+        .map(normalize_mobile_number)
+    )
+
+    if (
+        isinstance(sdr_lookup, pd.DataFrame)
+        and not sdr_lookup.empty
+    ):
+        output = output.merge(
+            sdr_lookup,
+            on="_sdr_lookup_mobile",
+            how="left",
+            validate="many_to_one",
+        )
+    else:
+        for column in VISITOR_SDR_COLUMNS:
+            output[column] = (
+                "No"
+                if column == "sdr_found"
+                else ""
+            )
+
+    output["sdr_found"] = (
+        output["sdr_found"]
+        .fillna("No")
+        .astype(str)
+        .str.strip()
+        .replace(
+            {
+                "": "No",
+                "nan": "No",
+                "None": "No",
+            }
+        )
+    )
+
+    for column in VISITOR_SDR_COLUMNS:
+        if column == "sdr_found":
+            continue
+
+        if column not in output.columns:
+            output[column] = ""
+
+        output[column] = (
+            output[column]
+            .fillna("")
+        )
+
+    return output.drop(
+        columns=["_sdr_lookup_mobile"],
+        errors="ignore",
+    )
+
+
+def _visitor_sdr_summary_counts(
+    visitor_dataframe: Any,
+    sdr_lookup: pd.DataFrame,
+) -> dict[str, int]:
+    """Return unique visitor SDR coverage counts."""
+
+    from modules.enrichment.sdr_subscriber_enrichment import (
+        normalize_mobile_number,
+    )
+
+    dataframe = _normalize_dataframe(
+        visitor_dataframe
+    )
+
+    if (
+        dataframe.empty
+        or "subscriber_number" not in dataframe.columns
+    ):
+        return {
+            "unique_visitors": 0,
+            "sdr_found": 0,
+            "sdr_not_found": 0,
+        }
+
+    unique_numbers = {
+        normalized
+        for normalized in (
+            dataframe["subscriber_number"]
+            .map(normalize_mobile_number)
+        )
+        if normalized
+    }
+
+    found_numbers: set[str] = set()
+
+    if (
+        isinstance(sdr_lookup, pd.DataFrame)
+        and not sdr_lookup.empty
+        and "_sdr_lookup_mobile" in sdr_lookup.columns
+    ):
+        found_mask = (
+            sdr_lookup.get(
+                "sdr_found",
+                pd.Series(
+                    "No",
+                    index=sdr_lookup.index,
+                ),
+            )
+            .fillna("No")
+            .astype(str)
+            .str.strip()
+            .str.upper()
+            .eq("YES")
+        )
+
+        found_numbers = {
+            str(value).strip()
+            for value in sdr_lookup.loc[
+                found_mask,
+                "_sdr_lookup_mobile",
+            ]
+            if str(value).strip()
+        }
+
+    found_count = len(
+        unique_numbers.intersection(
+            found_numbers
+        )
+    )
+
+    return {
+        "unique_visitors": len(unique_numbers),
+        "sdr_found": found_count,
+        "sdr_not_found": max(
+            len(unique_numbers) - found_count,
+            0,
+        ),
+    }
+
 
 
 def _write_dataframe_rows(
@@ -643,26 +961,67 @@ def generate_tower_partition_excel_report(
     )
     matrix = _candidate_matrix(subscriber_presence)
 
-    visitor_intelligence = _visitor_report_dataframe(
+    # ONE_BATCH_VISITOR_SDR_LOOKUP
+    raw_visitor_intelligence = _normalize_dataframe(
         result.get("partition_visitor_intelligence")
     )
+
+    visitor_sdr_lookup = _build_visitor_sdr_lookup(
+        raw_visitor_intelligence
+    )
+
+    visitor_sdr_counts = _visitor_sdr_summary_counts(
+        raw_visitor_intelligence,
+        visitor_sdr_lookup,
+    )
+
+    visitor_intelligence = _visitor_report_dataframe(
+        _enrich_visitor_dataframe_with_sdr(
+            raw_visitor_intelligence,
+            visitor_sdr_lookup,
+        )
+    )
+
     new_visitors = _visitor_report_dataframe(
-        result.get("new_visitors")
+        _enrich_visitor_dataframe_with_sdr(
+            result.get("new_visitors"),
+            visitor_sdr_lookup,
+        )
     )
+
     rare_visitors = _visitor_report_dataframe(
-        result.get("rare_visitors")
+        _enrich_visitor_dataframe_with_sdr(
+            result.get("rare_visitors"),
+            visitor_sdr_lookup,
+        )
     )
+
     repeat_relevant = _visitor_report_dataframe(
-        result.get("repeat_relevant_visitors")
+        _enrich_visitor_dataframe_with_sdr(
+            result.get("repeat_relevant_visitors"),
+            visitor_sdr_lookup,
+        )
     )
+
     regular_local = _visitor_report_dataframe(
-        result.get("regular_local_presence")
+        _enrich_visitor_dataframe_with_sdr(
+            result.get("regular_local_presence"),
+            visitor_sdr_lookup,
+        )
     )
+
     multi_cell_relevant = _visitor_report_dataframe(
-        result.get("multi_cell_relevant")
+        _enrich_visitor_dataframe_with_sdr(
+            result.get("multi_cell_relevant"),
+            visitor_sdr_lookup,
+        )
     )
+
     visitor_priority_leads = _visitor_report_dataframe(
-        result.get("partition_priority_leads")
+        _enrich_visitor_dataframe_with_sdr(
+            result.get("partition_priority_leads"),
+            visitor_sdr_lookup,
+        )
     )
 
     sighting_frame = _normalize_dataframe(sightings)
@@ -831,6 +1190,25 @@ def generate_tower_partition_excel_report(
             ("Unique IMEI Entries", len(imei_presence)),
             ("Unique IMSI Entries", len(imsi_presence)),
             ("Visitor Classification Rows", len(visitor_intelligence)),
+            (
+                "Unique Visitor Mobile Numbers",
+                visitor_sdr_counts["unique_visitors"],
+            ),
+            (
+                "Visitor SDR Profiles Found",
+                visitor_sdr_counts["sdr_found"],
+            ),
+            (
+                "Visitor SDR Profiles Not Found",
+                visitor_sdr_counts["sdr_not_found"],
+            ),
+            (
+                "Visitor SDR Lookup Method",
+                (
+                    "Single batch lookup across unique visitor numbers; "
+                    "large DuckDB SDR table first, primary SDR table fallback."
+                ),
+            ),
             ("New Visitors", len(new_visitors)),
             ("Rare Visitors", len(rare_visitors)),
             ("Repeat Relevant Visitors", len(repeat_relevant)),
