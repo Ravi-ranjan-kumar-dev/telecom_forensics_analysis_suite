@@ -126,8 +126,15 @@ def test_consolidated_partition_workbook(tmp_path: Path):
     assert "5. N-of-M Candidates" in names
     assert "6. Strict Common" in names
     assert "9. Candidate Matrix" in names
-    assert "10. Analysis Status" in names
-    assert "11. Warnings" in names
-    assert "12. Partition Status" in names
-    assert "13. Rejected Rows" in names
+    assert "10. Visitor Intelligence" in names
+    assert "11. New Visitors" in names
+    assert "12. Rare Visitors" in names
+    assert "13. Repeat Relevant" in names
+    assert "14. Regular Local" in names
+    assert "15. Multi-Cell Relevant" in names
+    assert "16. Visitor Priority Leads" in names
+    assert "17. Analysis Status" in names
+    assert "18. Warnings" in names
+    assert "19. Partition Status" in names
+    assert "20. Rejected Rows" in names
     assert "Methodology & Limits" in names

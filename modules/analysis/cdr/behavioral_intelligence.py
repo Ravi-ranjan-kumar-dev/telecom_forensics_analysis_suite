@@ -70,14 +70,73 @@ def behavioral_intelligence(df: pd.DataFrame) -> pd.DataFrame:
         )
 
     def location_observation() -> None:
-        towers = frequent_locations(df, top_n=1)
-        if towers.empty:
+        towers = frequent_locations(
+            df,
+            top_n=1,
+        )
+
+        if not towers.empty:
+            row = towers.iloc[0]
+
+            add_observation(
+                "Most frequently recorded cell site",
+                (
+                    f"Cell ID {row['Cell ID']} appears in "
+                    f"{int(row['Total Events'])} event(s)."
+                ),
+                (
+                    "A cell-site record is a network association, "
+                    "not proof of exact handset or person location."
+                ),
+            )
             return
-        row = towers.iloc[0]
+
+        # Strict tower validation can reject placeholders, malformed
+        # identifiers or operator-specific values. Preserve the
+        # limitation instead of silently omitting location guidance.
+        if "first_cell_id" not in df.columns:
+            return
+
+        raw_cells = (
+            df["first_cell_id"]
+            .fillna("")
+            .astype(str)
+            .str.strip()
+        )
+
+        raw_cells = raw_cells.loc[
+            ~raw_cells.isin(
+                {
+                    "",
+                    "nan",
+                    "None",
+                    "<NA>",
+                }
+            )
+        ]
+
+        if raw_cells.empty:
+            return
+
+        counts = raw_cells.value_counts()
+        most_common_cell = str(
+            counts.index[0]
+        )
+        event_count = int(
+            counts.iloc[0]
+        )
+
         add_observation(
-            "Most frequently recorded cell site",
-            f"Cell ID {row['Cell ID']} appears in {int(row['Total Events'])} event(s).",
-            "A cell-site record is a network association, not proof of exact handset or person location.",
+            "Recorded cell-site identifier",
+            (
+                f"Unvalidated Cell ID {most_common_cell} appears "
+                f"in {event_count} event(s)."
+            ),
+            (
+                "This identifier did not pass strict tower validation. "
+                "A cell-site record is a network association and is "
+                "not proof of exact handset or person location."
+            ),
         )
 
     def device_observation() -> None:

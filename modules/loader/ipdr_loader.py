@@ -994,11 +994,37 @@ def _finalise(
             dtype="object",
         )
     else:
-        frame["allocation_key"] = (
-            frame[key_columns]
-            .fillna("")
-            .astype(str)
-            .agg("|".join, axis=1)
+        key_frame = frame[
+            key_columns
+        ].copy()
+
+        for column in key_columns:
+            key_frame[column] = key_frame[column].map(
+                lambda value: (
+                    ""
+                    if value is None
+                    or value is pd.NA
+                    or (
+                        not isinstance(
+                            value,
+                            (
+                                list,
+                                tuple,
+                                dict,
+                                set,
+                            ),
+                        )
+                        and pd.isna(value)
+                    )
+                    else str(value)
+                )
+            )
+
+        frame["allocation_key"] = key_frame.apply(
+            lambda row: "|".join(
+                row.tolist()
+            ),
+            axis=1,
         )
 
     return frame
