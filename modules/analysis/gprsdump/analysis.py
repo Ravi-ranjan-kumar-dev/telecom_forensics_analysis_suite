@@ -6,6 +6,10 @@ from typing import Any
 
 import pandas as pd
 
+from modules.analysis.spot_partition_scope import (
+    resolve_partition_spot_scope,
+)
+
 from modules.analysis.partition_scope import (
     cell_mask,
     loaded_cell_map,
@@ -509,7 +513,6 @@ def create_gprs_partitions(
 
     session_start = pd.to_datetime(df["session_start"], errors="coerce")
     session_end = pd.to_datetime(df["session_end"], errors="coerce")
-    loaded_cells = loaded_cell_map(df)
 
     for index, sighting in enumerate(ordered, start=1):
         partition_id = f"P{index}"
@@ -525,6 +528,24 @@ def create_gprs_partitions(
             "window_start": window_start,
             "window_end": window_end,
             "cgi_group_id": str(sighting.get("cgi_group_id", "")),
+            "spot_id": str(
+                sighting.get(
+                    "spot_id",
+                    "",
+                )
+            ),
+            "spot_name": str(
+                sighting.get(
+                    "spot_name",
+                    "",
+                )
+            ),
+            "spot_scope_mode": str(
+                sighting.get(
+                    "spot_scope_mode",
+                    "",
+                )
+            ),
         }
 
         if not sighting_id:
@@ -537,7 +558,7 @@ def create_gprs_partitions(
             status_rows.append(status)
             continue
 
-        if pd.isna(window_start) or pd.isna(window_end) or window_start > window_end:
+        if pd.isna(window_start) or pd.isna(window_end) or window_start >= window_end:
             status.update(
                 status="INVALID_TIME_WINDOW",
                 scope_mode="INVALID",
@@ -546,6 +567,62 @@ def create_gprs_partitions(
             )
             status_rows.append(status)
             continue
+
+        spot_scope = resolve_partition_spot_scope(
+            df,
+            sighting,
+        )
+
+        status.update(
+            spot_id=spot_scope.get(
+                "spot_id",
+                "",
+            ),
+            spot_name=spot_scope.get(
+                "spot_name",
+                "",
+            ),
+            spot_folder=spot_scope.get(
+                "spot_folder",
+                "",
+            ),
+            spot_scope_mode=spot_scope.get(
+                "spot_scope_mode",
+                "",
+            ),
+            spot_scope_status=spot_scope.get(
+                "status",
+                "",
+            ),
+        )
+
+        if not spot_scope.get("valid"):
+            status.update(
+                status=spot_scope.get(
+                    "status",
+                    "INVALID_SPOT_SCOPE",
+                ),
+                scope_mode="INVALID",
+                message=spot_scope.get(
+                    "message",
+                    "Selected Spot resolve नहीं हुआ।",
+                ),
+                included=False,
+            )
+            status_rows.append(status)
+            continue
+
+        spot_dataframe = spot_scope[
+            "dataframe"
+        ]
+
+        spot_mask = spot_scope[
+            "mask"
+        ]
+
+        loaded_cells = loaded_cell_map(
+            spot_dataframe
+        )
 
         scope = resolve_sighting_scope(
             sighting,
@@ -568,21 +645,38 @@ def create_gprs_partitions(
             continue
 
         if scope["scope_mode"] == "TIME_ONLY_ALL_CELLS":
-            location_mask = pd.Series(True, index=df.index)
-            warnings.append(f"{partition_id}: {scope['message']}")
+            location_mask = spot_mask.copy()
+            warnings.append(
+                f"{partition_id}: "
+                f"{scope['message']}"
+            )
         else:
-            location_mask = cell_mask(df, scope["cell_keys"])
+            location_mask = (
+                spot_mask
+                & cell_mask(
+                    df,
+                    scope["cell_keys"],
+                )
+            )
 
         time_mask = (
-            session_start.le(window_end)
+            session_start.lt(window_end)
             & session_end.ge(window_start)
             & session_start.notna()
             & session_end.notna()
         )
-        include_mask = time_mask & location_mask
+
+        include_mask = (
+            time_mask
+            & location_mask
+        )
         part = df.loc[include_mask].copy()
 
-        excluded = df.loc[time_mask & ~location_mask].copy()
+        excluded = df.loc[
+            time_mask
+            & spot_mask
+            & ~location_mask
+        ].copy()
         if not excluded.empty:
             excluded.insert(0, "partition_id", partition_id)
             excluded.insert(1, "sighting_id", sighting_id)
@@ -605,15 +699,70 @@ def create_gprs_partitions(
                 axis=1,
             ).min(axis=1)
 
-            part.insert(0, "partition_id", partition_id)
-            part.insert(1, "partition_sighting_id", sighting_id)
-            part.insert(2, "partition_location", sighting.get("location_name", ""))
-            part.insert(3, "partition_cgi_group_id", scope["group_id"])
-            part.insert(4, "partition_scope_mode", scope["scope_mode"])
-            part.insert(5, "partition_window_start", window_start)
-            part.insert(6, "partition_window_end", window_end)
+            part.insert(
+                0,
+                "partition_id",
+                partition_id,
+            )
+            part.insert(
+                1,
+                "partition_sighting_id",
+                sighting_id,
+            )
+            part.insert(
+                2,
+                "partition_spot_id",
+                spot_scope.get(
+                    "spot_id",
+                    "",
+                ),
+            )
+            part.insert(
+                3,
+                "partition_spot_name",
+                spot_scope.get(
+                    "spot_name",
+                    "",
+                ),
+            )
+            part.insert(
+                4,
+                "partition_spot_scope_mode",
+                spot_scope.get(
+                    "spot_scope_mode",
+                    "",
+                ),
+            )
+            part.insert(
+                5,
+                "partition_location",
+                sighting.get(
+                    "location_name",
+                    "",
+                ),
+            )
+            part.insert(
+                6,
+                "partition_cgi_group_id",
+                scope["group_id"],
+            )
             part.insert(
                 7,
+                "partition_scope_mode",
+                scope["scope_mode"],
+            )
+            part.insert(
+                8,
+                "partition_window_start",
+                window_start,
+            )
+            part.insert(
+                9,
+                "partition_window_end",
+                window_end,
+            )
+            part.insert(
+                10,
                 "partition_overlap_seconds",
                 (overlap_end - overlap_start).dt.total_seconds().clip(lower=0),
             )
@@ -624,6 +773,26 @@ def create_gprs_partitions(
             {
                 "partition_id": partition_id,
                 "source_sighting_id": sighting_id,
+                "spot_id": spot_scope.get(
+                    "spot_id",
+                    "",
+                ),
+                "spot_name": spot_scope.get(
+                    "spot_name",
+                    "",
+                ),
+                "spot_folder": spot_scope.get(
+                    "spot_folder",
+                    "",
+                ),
+                "spot_scope_mode": spot_scope.get(
+                    "spot_scope_mode",
+                    "",
+                ),
+                "spot_scope_status": spot_scope.get(
+                    "status",
+                    "",
+                ),
                 "location_name": sighting.get("location_name", ""),
                 "cctv_timestamp": sighting.get("cctv_timestamp", ""),
                 "window_start": window_start,
@@ -639,6 +808,26 @@ def create_gprs_partitions(
             {
                 "partition_id": partition_id,
                 "sighting_id": sighting_id,
+                "spot_id": spot_scope.get(
+                    "spot_id",
+                    "",
+                ),
+                "spot_name": spot_scope.get(
+                    "spot_name",
+                    "",
+                ),
+                "spot_folder": spot_scope.get(
+                    "spot_folder",
+                    "",
+                ),
+                "spot_scope_mode": spot_scope.get(
+                    "spot_scope_mode",
+                    "",
+                ),
+                "spot_scope_status": spot_scope.get(
+                    "status",
+                    "",
+                ),
                 "location_name": sighting.get("location_name", ""),
                 "cctv_timestamp": sighting.get("cctv_timestamp", ""),
                 "window_start": window_start,
@@ -693,6 +882,16 @@ def create_gprs_partitions(
         "total_configured_sightings": len(ordered),
         "total_input_records": len(df),
         "warnings": list(dict.fromkeys(warnings)),
-        "overlap_rule": "session_start <= window_end AND session_end >= window_start",
-        "location_rule": "searched_cell_id matches resolved sighting CGI group",
+        "overlap_rule": (
+            "session_start < window_end "
+            "AND session_end >= window_start"
+        ),
+        "spot_rule": (
+            "selected Spot is applied before "
+            "CGI and session-overlap filtering"
+        ),
+        "location_rule": (
+            "searched_cell_id matches resolved "
+            "CGI group inside selected Spot"
+        ),
     }
