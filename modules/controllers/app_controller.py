@@ -193,8 +193,9 @@ def _workspace_menu(case: dict[str, Any], *, direct_mode: bool = False) -> str:
     print("1. CDR Analysis")
     print("2. Tower Dump Analysis")
     print("3. IPDR Analysis")
-    print("4. View Case Details")
-    print("5. View Case Reports")
+    print("4. Lookup Services")
+    print("5. View Case Details")
+    print("6. View Case Reports")
     print("0. Close Case")
     return input("\nChoose Action: ").strip()
 
@@ -665,9 +666,18 @@ def case_workspace(
                 handle_ipdr_analysis(case)
 
             elif choice == "4":
-                print_case_details(case)
+                from modules.controllers.lookup_controller import (
+                    run_lookup_services,
+                )
+
+                run_lookup_services(
+                    case
+                )
 
             elif choice == "5":
+                print_case_details(case)
+
+            elif choice == "6":
                 show_case_reports(case_id)
 
             elif choice == "0":
@@ -678,7 +688,7 @@ def case_workspace(
                 return
 
             else:
-                print("[-] Invalid choice. Select 0 to 5.")
+                print("[-] Invalid choice. Select 0 to 6.")
 
         except KeyboardInterrupt:
             print("\n[-] Returning to Analysis Workspace.")
