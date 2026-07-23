@@ -19,10 +19,102 @@ from modules.loader.evidence_csv import (
     quarantine_dataframe_rows,
     read_csv_with_quarantine,
 )
+from modules.loader.tower_spot_layout import build_tower_spot_layout
 
 
 FORMAT_AIRTEL_GPRS_SESSION = "AIRTEL_GPRS_SESSION"
 SUPPORTED_SUFFIXES = {".csv", ".txt"}
+
+# GPRS_EMPTY_NO_DATA_V1
+STATUS_LOADED = "LOADED"
+STATUS_EMPTY_NO_DATA = "EMPTY_NO_DATA"
+STATUS_FAILED = "FAILED"
+
+
+def _is_valid_empty_gprs_report(
+    path: str | Path,
+    detection: dict[str, Any],
+) -> bool:
+    """Return True only for a recognised Airtel zero-record report."""
+
+    if (
+        detection.get("source_format")
+        != FORMAT_AIRTEL_GPRS_SESSION
+    ):
+        return False
+
+    file_path = Path(
+        path
+    ).expanduser().resolve()
+
+    preferred_encoding = str(
+        detection.get(
+            "encoding",
+            "",
+        )
+        or ""
+    ).strip()
+
+    encodings = [
+        preferred_encoding,
+        "utf-8-sig",
+        "utf-8",
+        "cp1252",
+        "latin1",
+    ]
+
+    text = ""
+
+    for encoding in encodings:
+        if not encoding:
+            continue
+
+        try:
+            text = file_path.read_text(
+                encoding=encoding,
+                errors="strict",
+            )
+            break
+
+        except (
+            UnicodeError,
+            LookupError,
+        ):
+            continue
+
+    if not text:
+        try:
+            text = file_path.read_bytes().decode(
+                "latin1",
+                errors="replace",
+            )
+
+        except OSError:
+            return False
+
+    normalized = re.sub(
+        r"\s+",
+        " ",
+        text,
+    ).strip().casefold()
+
+    has_report_identity = (
+        "gprs of cell id" in normalized
+        and re.search(
+            r"\bmobile\s+no\.?\b",
+            normalized,
+        )
+        is not None
+    )
+
+    has_explicit_no_data_marker = (
+        "no records found" in normalized
+    )
+
+    return bool(
+        has_report_identity
+        and has_explicit_no_data_marker
+    )
 
 NORMALIZED_COLUMNS = [
     "record_type",
@@ -62,6 +154,10 @@ NORMALIZED_COLUMNS = [
     "volume_mismatch",
     "is_zero_volume",
     "source_file",
+    "source_relative_path",
+    "spot_id",
+    "spot_name",
+    "spot_folder",
     "source_row_number",
 ]
 
@@ -378,6 +474,8 @@ def load_gprs_dump_file(path: str | Path) -> dict[str, Any]:
     if detection["source_format"] != FORMAT_AIRTEL_GPRS_SESSION:
         return {
             "ok": False,
+            "has_records": False,
+            "data_status": STATUS_FAILED,
             "df": pd.DataFrame(columns=NORMALIZED_COLUMNS),
             "file": str(file_path),
             "source_format": detection["source_format"] or "UNKNOWN",
@@ -387,6 +485,51 @@ def load_gprs_dump_file(path: str | Path) -> dict[str, Any]:
                 "Unsupported GPRS format. Phase-5 currently supports "
                 "only Airtel GPRS session dumps."
             ],
+        }
+
+    if _is_valid_empty_gprs_report(
+        file_path,
+        detection,
+    ):
+        metadata = {
+            **detection["metadata"],
+            "header_row": (
+                int(detection["header_row"])
+                + 1
+            ),
+            "encoding": detection["encoding"],
+            "records": 0,
+            "has_records": False,
+            "valid_empty_report": True,
+            "data_status": STATUS_EMPTY_NO_DATA,
+            "invalid_session_time_rows": 0,
+            "missing_volume_rows": 0,
+            "volume_mismatch_rows": 0,
+            "non_standard_identifier_rows": 0,
+            "discarded_non_data_rows": 0,
+            "zero_volume_rows": 0,
+            "exact_duplicate_rows": 0,
+            "rejected_rows": 0,
+            "adjusted_rows": 0,
+        }
+
+        return {
+            "ok": True,
+            "has_records": False,
+            "data_status": STATUS_EMPTY_NO_DATA,
+            "df": pd.DataFrame(
+                columns=NORMALIZED_COLUMNS
+            ),
+            "file": str(file_path),
+            "source_format": (
+                FORMAT_AIRTEL_GPRS_SESSION
+            ),
+            "metadata": metadata,
+            "rejected_rows": (
+                empty_reject_ledger()
+            ),
+            "warnings": [],
+            "errors": [],
         }
 
     try:
@@ -423,6 +566,8 @@ def load_gprs_dump_file(path: str | Path) -> dict[str, Any]:
     except Exception as error:
         return {
             "ok": False,
+            "has_records": False,
+            "data_status": STATUS_FAILED,
             "df": pd.DataFrame(columns=NORMALIZED_COLUMNS),
             "file": str(file_path),
             "source_format": FORMAT_AIRTEL_GPRS_SESSION,
@@ -441,7 +586,14 @@ def load_gprs_dump_file(path: str | Path) -> dict[str, Any]:
     duplicate_columns = [
         column
         for column in NORMALIZED_COLUMNS
-        if column not in {"source_file", "source_row_number"}
+        if column not in {
+            "source_file",
+            "source_relative_path",
+            "spot_id",
+            "spot_name",
+            "spot_folder",
+            "source_row_number",
+        }
     ]
     exact_duplicates = int(
         dataframe.duplicated(subset=duplicate_columns).sum()
@@ -485,13 +637,36 @@ def load_gprs_dump_file(path: str | Path) -> dict[str, Any]:
         "adjusted_rows": int(ingestion_metadata.get("adjusted_rows", 0)),
     }
 
+    has_records = not dataframe.empty
+
+    if not has_records and not errors:
+        errors.append(
+            "Recognised Airtel GPRS report did not "
+            "contain valid session records and did not "
+            "carry the explicit 'No Records Found' marker."
+        )
+
+    data_status = (
+        STATUS_LOADED
+        if has_records
+        else STATUS_FAILED
+    )
+
+    metadata["has_records"] = has_records
+    metadata["valid_empty_report"] = False
+    metadata["data_status"] = data_status
+
     return {
-        "ok": not dataframe.empty,
+        "ok": has_records,
+        "has_records": has_records,
+        "data_status": data_status,
         "df": dataframe,
         "file": str(file_path),
         "source_format": FORMAT_AIRTEL_GPRS_SESSION,
         "metadata": metadata,
-        "rejected_rows": rejected_rows.reset_index(drop=True),
+        "rejected_rows": rejected_rows.reset_index(
+            drop=True
+        ),
         "warnings": warnings,
         "errors": errors,
     }
@@ -511,11 +686,14 @@ def load_gprs_dump_case(
             "files": [],
             "file_results": [],
             "file_summary": pd.DataFrame(),
+            "spot_summary": pd.DataFrame(),
             "operators": [],
             "cell_ids": [],
             "metadata": {
                 "files_found": 0,
                 "files_loaded": 0,
+                "files_empty_no_data": 0,
+                "files_processed_count": 0,
                 "files_failed": 0,
                 "records": 0,
             },
@@ -537,8 +715,85 @@ def load_gprs_dump_case(
     summary_rows: list[dict[str, Any]] = []
     reject_frames: list[pd.DataFrame] = []
 
+    spot_layout = build_tower_spot_layout(
+        root,
+        files,
+    )
+    spot_assignments = spot_layout.get(
+        "assignments",
+        {},
+    )
+    warnings.extend(
+        spot_layout.get(
+            "warnings",
+            [],
+        )
+    )
+
     for path in files:
+        relative_path = str(
+            path.relative_to(root)
+        )
+
+        assignment = dict(
+            spot_assignments.get(
+                str(path.resolve()),
+                {
+                    "spot_id": "UNASSIGNED-ROOT",
+                    "spot_name": "ROOT_LEVEL_FILES",
+                    "spot_folder": ".",
+                    "source_relative_path": (
+                        relative_path
+                    ),
+                    "is_root_file": True,
+                },
+            )
+        )
+
         result = load_gprs_dump_file(path)
+
+        result["spot_id"] = assignment[
+            "spot_id"
+        ]
+        result["spot_name"] = assignment[
+            "spot_name"
+        ]
+        result["spot_folder"] = assignment[
+            "spot_folder"
+        ]
+        result["source_relative_path"] = (
+            assignment[
+                "source_relative_path"
+            ]
+        )
+
+        result_metadata = dict(
+            result.get(
+                "metadata",
+                {},
+            )
+            or {}
+        )
+        result_metadata.update(
+            {
+                "spot_id": assignment[
+                    "spot_id"
+                ],
+                "spot_name": assignment[
+                    "spot_name"
+                ],
+                "spot_folder": assignment[
+                    "spot_folder"
+                ],
+                "source_relative_path": (
+                    assignment[
+                        "source_relative_path"
+                    ]
+                ),
+            }
+        )
+        result["metadata"] = result_metadata
+
         results.append(result)
 
         rejected = result.get("rejected_rows")
@@ -547,7 +802,29 @@ def load_gprs_dump_case(
 
         if result.get("ok"):
             frame = result.get("df")
-            if isinstance(frame, pd.DataFrame) and not frame.empty:
+
+            if (
+                isinstance(frame, pd.DataFrame)
+                and not frame.empty
+            ):
+                frame = frame.copy()
+
+                frame["source_relative_path"] = (
+                    assignment[
+                        "source_relative_path"
+                    ]
+                )
+                frame["spot_id"] = assignment[
+                    "spot_id"
+                ]
+                frame["spot_name"] = assignment[
+                    "spot_name"
+                ]
+                frame["spot_folder"] = assignment[
+                    "spot_folder"
+                ]
+
+                result["df"] = frame
                 frames.append(frame)
         else:
             for item in result.get("errors", []):
@@ -560,8 +837,23 @@ def load_gprs_dump_case(
         summary_rows.append(
             {
                 "source_file": str(path),
+                "source_relative_path": assignment[
+                    "source_relative_path"
+                ],
+                "spot_id": assignment["spot_id"],
+                "spot_name": assignment["spot_name"],
+                "spot_folder": assignment[
+                    "spot_folder"
+                ],
                 "file_name": path.name,
-                "status": "LOADED" if result.get("ok") else "FAILED",
+                "status": result.get(
+                    "data_status",
+                    (
+                        STATUS_LOADED
+                        if result.get("ok")
+                        else STATUS_FAILED
+                    ),
+                ),
                 "source_format": result.get("source_format", ""),
                 "operator": metadata.get("operator", ""),
                 "searched_cell_id": metadata.get("searched_cell_id", ""),
@@ -583,7 +875,14 @@ def load_gprs_dump_case(
     duplicate_columns = [
         column
         for column in NORMALIZED_COLUMNS
-        if column not in {"source_file", "source_row_number"}
+        if column not in {
+            "source_file",
+            "source_relative_path",
+            "spot_id",
+            "spot_name",
+            "spot_folder",
+            "source_row_number",
+        }
     ]
     exact_duplicates = (
         int(combined.duplicated(subset=duplicate_columns).sum())
@@ -612,23 +911,96 @@ def load_gprs_dump_case(
         if value
     )
 
+    spot_summary = pd.DataFrame(
+        spot_layout.get(
+            "spot_summary",
+            [],
+        )
+    )
+
+    files_loaded_count = sum(
+        str(
+            result.get(
+                "data_status",
+                "",
+            )
+        ).upper()
+        == STATUS_LOADED
+        for result in results
+    )
+
+    files_empty_no_data = sum(
+        str(
+            result.get(
+                "data_status",
+                "",
+            )
+        ).upper()
+        == STATUS_EMPTY_NO_DATA
+        for result in results
+    )
+
+    files_failed_count = sum(
+        str(
+            result.get(
+                "data_status",
+                "",
+            )
+        ).upper()
+        == STATUS_FAILED
+        for result in results
+    )
+
+    files_processed_count = (
+        files_loaded_count
+        + files_empty_no_data
+    )
+
     metadata = {
         "input_folder": str(root),
         "files_found": len(files),
-        "files_loaded": len(frames),
-        "files_failed": len(files) - len(frames),
+        "files_loaded": files_loaded_count,
+        "files_empty_no_data": files_empty_no_data,
+        "files_processed_count": files_processed_count,
+        "files_failed": files_failed_count,
         "records": len(combined),
         "exact_duplicate_rows": exact_duplicates,
         "supported_format": FORMAT_AIRTEL_GPRS_SESSION,
+        "input_mode": spot_layout.get(
+            "input_mode",
+            "LEGACY_ROOT_FILES",
+        ),
+        "spot_count": int(
+            spot_layout.get(
+                "spot_count",
+                0,
+            )
+        ),
+        "spot_names": list(
+            spot_layout.get(
+                "spot_names",
+                [],
+            )
+        ),
+        "root_level_file_count": int(
+            spot_layout.get(
+                "root_level_file_count",
+                0,
+            )
+        ),
         "rejected_rows": int(sum(len(item) for item in reject_frames)),
     }
 
     return {
-        "ok": not combined.empty,
+        "ok": (
+            files_processed_count > 0
+            and files_failed_count == 0
+        ),
         "df": combined,
         "files": [str(path) for path in files],
         "file_results": results,
         "file_summary": pd.DataFrame(summary_rows),
+        "spot_summary": spot_summary,
         "operators": operators,
         "cell_ids": cell_ids,
         "metadata": metadata,
