@@ -23,12 +23,22 @@ from modules.loader.tower_ipdr_loader import (
     SUPPORTED_SUFFIXES,
     load_tower_ipdr_file,
 )
+from modules.loader.tower_spot_layout import (
+    build_tower_spot_layout,
+)
 from modules.staging.duckdb_store import DuckDBStore
 from modules.staging.manifest import calculate_sha256
 
 
 TABLE_EVENTS = "tower_ipdr_events"
 TABLE_FILE_SUMMARY = "tower_ipdr_file_summary"
+
+SPOT_PROVENANCE_COLUMNS = (
+    "source_relative_path",
+    "spot_id",
+    "spot_name",
+    "spot_folder",
+)
 
 
 def _now_iso() -> str:
@@ -222,6 +232,34 @@ def _file_summary_frame(records: list[dict[str, Any]]) -> pd.DataFrame:
             {
                 "file_name": record.get("file_name", ""),
                 "source_path": record.get("source_path", ""),
+                "source_relative_path": record.get(
+                    "source_relative_path",
+                    metadata.get(
+                        "source_relative_path",
+                        "",
+                    ),
+                ),
+                "spot_id": record.get(
+                    "spot_id",
+                    metadata.get(
+                        "spot_id",
+                        "",
+                    ),
+                ),
+                "spot_name": record.get(
+                    "spot_name",
+                    metadata.get(
+                        "spot_name",
+                        "",
+                    ),
+                ),
+                "spot_folder": record.get(
+                    "spot_folder",
+                    metadata.get(
+                        "spot_folder",
+                        "",
+                    ),
+                ),
                 "sha256": record.get("sha256", ""),
                 "status": record.get("status", ""),
                 "rows_loaded": record.get("rows_loaded", 0),
@@ -272,10 +310,26 @@ def import_tower_ipdr_folder_to_duckdb(
         }
         manifest_map = {}
 
-    files = _candidate_files(input_folder, recursive=recursive)
+    input_root = Path(
+        input_folder
+    ).expanduser().resolve()
+
+    files = _candidate_files(
+        input_root,
+        recursive=recursive,
+    )
 
     if max_files is not None:
         files = files[: int(max_files)]
+
+    spot_layout = build_tower_spot_layout(
+        input_root,
+        files,
+    )
+    spot_assignments = spot_layout.get(
+        "assignments",
+        {},
+    )
 
     loaded_files = 0
     skipped_files = 0
@@ -286,6 +340,36 @@ def import_tower_ipdr_folder_to_duckdb(
     print(f"[+] Candidate files: {len(files)}")
 
     for index, path in enumerate(files, start=1):
+        relative_path = str(
+            path.relative_to(
+                input_root
+            )
+        )
+
+        assignment = dict(
+            spot_assignments.get(
+                str(path.resolve()),
+                {
+                    "spot_id": "UNASSIGNED-ROOT",
+                    "spot_name": "ROOT_LEVEL_FILES",
+                    "spot_folder": ".",
+                    "source_relative_path": relative_path,
+                    "is_root_file": True,
+                },
+            )
+        )
+
+        assignment_values = {
+            column: str(
+                assignment.get(
+                    column,
+                    "",
+                )
+                or ""
+            )
+            for column in SPOT_PROVENANCE_COLUMNS
+        }
+
         sha256 = calculate_sha256(path)
         existing = manifest_map.get(sha256)
 
@@ -304,6 +388,18 @@ def import_tower_ipdr_folder_to_duckdb(
         record: dict[str, Any] = {
             "file_name": path.name,
             "source_path": str(path),
+            "source_relative_path": assignment_values[
+                "source_relative_path"
+            ],
+            "spot_id": assignment_values[
+                "spot_id"
+            ],
+            "spot_name": assignment_values[
+                "spot_name"
+            ],
+            "spot_folder": assignment_values[
+                "spot_folder"
+            ],
             "sha256": sha256,
             "status": "LOADING",
             "rows_loaded": 0,
@@ -320,9 +416,35 @@ def import_tower_ipdr_folder_to_duckdb(
         try:
             result = load_tower_ipdr_file(path)
 
-            record["warnings"] = list(result.get("warnings", []) or [])
-            record["errors"] = list(result.get("errors", []) or [])
-            record["metadata"] = _json_safe(result.get("metadata", {}) or {})
+            record["warnings"] = list(
+                result.get(
+                    "warnings",
+                    [],
+                )
+                or []
+            )
+            record["errors"] = list(
+                result.get(
+                    "errors",
+                    [],
+                )
+                or []
+            )
+
+            result_metadata = dict(
+                result.get(
+                    "metadata",
+                    {},
+                )
+                or {}
+            )
+            result_metadata.update(
+                assignment_values
+            )
+
+            record["metadata"] = _json_safe(
+                result_metadata
+            )
 
             if not result.get("ok"):
                 failed_files += 1
@@ -349,7 +471,16 @@ def import_tower_ipdr_folder_to_duckdb(
                 if column not in dataframe.columns:
                     dataframe[column] = pd.NA
 
-            dataframe = dataframe[NORMALIZED_COLUMNS].copy()
+            dataframe = dataframe[
+                NORMALIZED_COLUMNS
+            ].copy()
+
+            for column in SPOT_PROVENANCE_COLUMNS:
+                dataframe[column] = pd.Series(
+                    assignment_values[column],
+                    index=dataframe.index,
+                    dtype="string",
+                )
 
             rows_written = store.write_dataframe(
                 dataframe,
@@ -3070,4 +3201,3 @@ def _read_csv_for_excel_safe(path: Path) -> pd.DataFrame:
         )
 
     return dataframe
-
