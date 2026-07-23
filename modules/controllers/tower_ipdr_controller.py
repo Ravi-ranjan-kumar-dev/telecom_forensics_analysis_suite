@@ -943,11 +943,20 @@ def _run_complete_tower_ipdr_analysis(case: dict[str, Any]) -> None:
 
     from datetime import datetime
     from pathlib import Path
+    from time import perf_counter
 
     import duckdb
     import pandas as pd
 
-    from modules.staging.tower_ipdr_staging import tower_ipdr_database_path
+    from modules.reporting.tower_ipdr_excel import (
+        generate_tower_ipdr_complete_excel_report,
+    )
+    from modules.staging.tower_ipdr_staging import (
+        tower_ipdr_database_path,
+    )
+
+    # TOWER_IPDR_COMPLETE_CONTROLLER_V1
+    analysis_started = perf_counter()
 
     db_path = tower_ipdr_database_path(case_id)
 
@@ -999,6 +1008,12 @@ def _run_complete_tower_ipdr_analysis(case: dict[str, Any]) -> None:
         imei = text_column("imei")
         imsi = text_column("imsi")
         source_file = text_column("source_file")
+        source_relative_path = text_column(
+            "source_relative_path"
+        )
+        spot_id = text_column("spot_id")
+        spot_name = text_column("spot_name")
+        spot_folder = text_column("spot_folder")
 
         if has("event_time"):
             event_ts = 'TRY_CAST("event_time" AS TIMESTAMP)'
@@ -1048,9 +1063,27 @@ def _run_complete_tower_ipdr_analysis(case: dict[str, Any]) -> None:
             SELECT
                 {subscriber} AS subscriber_number,
                 COUNT(*) AS event_count,
-                COUNT(DISTINCT {searched_cell}) AS cells_seen,
-                COUNT(DISTINCT {imei}) AS imei_count,
-                COUNT(DISTINCT {imsi}) AS imsi_count,
+                COUNT(
+                    DISTINCT {spot_id}
+                ) AS spots_seen,
+                STRING_AGG(
+                    DISTINCT CAST(
+                        {spot_id} AS VARCHAR
+                    ),
+                    ', '
+                    ORDER BY CAST(
+                        {spot_id} AS VARCHAR
+                    )
+                ) AS spots,
+                COUNT(
+                    DISTINCT {searched_cell}
+                ) AS cells_seen,
+                COUNT(
+                    DISTINCT {imei}
+                ) AS imei_count,
+                COUNT(
+                    DISTINCT {imsi}
+                ) AS imsi_count,
                 MIN({event_ts}) AS first_seen,
                 MAX({event_ts}) AS last_seen
             FROM tower_ipdr_events
@@ -1147,14 +1180,27 @@ def _run_complete_tower_ipdr_analysis(case: dict[str, Any]) -> None:
             hourly_activity = read_sql(
                 f"""
                 SELECT
-                    STRFTIME({event_ts}, '%H') AS hour,
+                    CAST(
+                        {event_ts} AS DATE
+                    ) AS event_date,
+                    STRFTIME(
+                        {event_ts},
+                        '%H'
+                    ) AS hour,
                     COUNT(*) AS event_count,
-                    COUNT(DISTINCT {subscriber}) AS subscriber_count,
-                    COUNT(DISTINCT {searched_cell}) AS cell_count
+                    COUNT(
+                        DISTINCT {subscriber}
+                    ) AS subscriber_count,
+                    COUNT(
+                        DISTINCT {searched_cell}
+                    ) AS cell_count,
+                    COUNT(
+                        DISTINCT {spot_id}
+                    ) AS spot_count
                 FROM tower_ipdr_events
                 WHERE {event_ts} IS NOT NULL
-                GROUP BY 1
-                ORDER BY 1
+                GROUP BY 1, 2
+                ORDER BY 1, 2
                 """
             )
         else:
@@ -1162,20 +1208,208 @@ def _run_complete_tower_ipdr_analysis(case: dict[str, Any]) -> None:
                 columns=["hour", "event_count", "subscriber_count", "cell_count"]
             )
 
-        source_file_summary = read_sql(
+        staging_tables = {
+            str(row[0])
+            for row in con.execute(
+                "SHOW TABLES"
+            ).fetchall()
+        }
+
+        if (
+            "tower_ipdr_file_summary"
+            in staging_tables
+        ):
+            source_file_summary = read_sql(
+                """
+                SELECT
+                    spot_id,
+                    spot_name,
+                    spot_folder,
+                    source_relative_path,
+                    file_name,
+                    sha256,
+                    status,
+                    rows_loaded,
+                    searched_cell_id,
+                    event_time_min,
+                    event_time_max,
+                    unique_subscribers,
+                    warnings,
+                    errors,
+                    loaded_at
+                FROM tower_ipdr_file_summary
+                ORDER BY
+                    spot_id,
+                    source_relative_path
+                """
+            )
+        else:
+            source_file_summary = read_sql(
+                f"""
+                SELECT
+                    {spot_id} AS spot_id,
+                    {spot_name} AS spot_name,
+                    {spot_folder} AS spot_folder,
+                    {source_relative_path}
+                        AS source_relative_path,
+                    COUNT(*) AS rows_loaded,
+                    COUNT(
+                        DISTINCT {subscriber}
+                    ) AS unique_subscribers,
+                    COUNT(
+                        DISTINCT {searched_cell}
+                    ) AS cell_count,
+                    MIN({event_ts}) AS event_time_min,
+                    MAX({event_ts}) AS event_time_max
+                FROM tower_ipdr_events
+                WHERE
+                    {source_relative_path}
+                    IS NOT NULL
+                GROUP BY 1, 2, 3, 4
+                ORDER BY 1, 4
+                """
+            )
+
+        spot_summary = read_sql(
             f"""
             SELECT
-                {source_file} AS source_file,
+                {spot_id} AS spot_id,
+                {spot_name} AS spot_name,
+                {spot_folder} AS spot_folder,
                 COUNT(*) AS event_count,
-                COUNT(DISTINCT {subscriber}) AS subscriber_count,
-                COUNT(DISTINCT {searched_cell}) AS cell_count,
+                COUNT(
+                    DISTINCT {subscriber}
+                ) AS subscriber_count,
+                COUNT(
+                    DISTINCT {searched_cell}
+                ) AS cell_count,
+                COUNT(
+                    DISTINCT
+                    {source_relative_path}
+                ) AS source_file_count,
                 MIN({event_ts}) AS first_seen,
                 MAX({event_ts}) AS last_seen
             FROM tower_ipdr_events
-            WHERE {source_file} IS NOT NULL
+            WHERE {spot_id} IS NOT NULL
+            GROUP BY 1, 2, 3
+            ORDER BY 1
+            """
+        )
+
+        repeated_spot_cells = read_sql(
+            f"""
+            SELECT
+                {searched_cell}
+                    AS searched_cell_id,
+                COUNT(
+                    DISTINCT {spot_id}
+                ) AS spot_count,
+                STRING_AGG(
+                    DISTINCT CAST(
+                        {spot_id} AS VARCHAR
+                    ),
+                    ', '
+                    ORDER BY CAST(
+                        {spot_id} AS VARCHAR
+                    )
+                ) AS spots,
+                COUNT(*) AS event_count,
+                COUNT(
+                    DISTINCT {subscriber}
+                ) AS subscriber_count,
+                MIN({event_ts}) AS first_seen,
+                MAX({event_ts}) AS last_seen
+            FROM tower_ipdr_events
+            WHERE
+                {searched_cell} IS NOT NULL
+                AND {spot_id} IS NOT NULL
             GROUP BY 1
-            ORDER BY event_count DESC
-            LIMIT 1000
+            HAVING
+                COUNT(
+                    DISTINCT {spot_id}
+                ) >= 2
+            ORDER BY
+                spot_count DESC,
+                event_count DESC
+            """
+        )
+
+        multi_spot_subscribers = read_sql(
+            f"""
+            SELECT
+                {subscriber}
+                    AS subscriber_number,
+                COUNT(*) AS event_count,
+                COUNT(
+                    DISTINCT {spot_id}
+                ) AS spots_seen,
+                STRING_AGG(
+                    DISTINCT CAST(
+                        {spot_id} AS VARCHAR
+                    ),
+                    ', '
+                    ORDER BY CAST(
+                        {spot_id} AS VARCHAR
+                    )
+                ) AS spots,
+                COUNT(
+                    DISTINCT {searched_cell}
+                ) AS cells_seen,
+                COUNT(
+                    DISTINCT {imei}
+                ) AS imei_count,
+                COUNT(
+                    DISTINCT {imsi}
+                ) AS imsi_count,
+                MIN({event_ts}) AS first_seen,
+                MAX({event_ts}) AS last_seen
+            FROM tower_ipdr_events
+            WHERE
+                {subscriber} IS NOT NULL
+                AND {spot_id} IS NOT NULL
+            GROUP BY 1
+            HAVING
+                COUNT(
+                    DISTINCT {spot_id}
+                ) >= 2
+            ORDER BY
+                spots_seen DESC,
+                cells_seen DESC,
+                event_count DESC
+            LIMIT 500
+            """
+        )
+
+        spot_exclusive_subscribers = read_sql(
+            f"""
+            SELECT
+                {subscriber}
+                    AS subscriber_number,
+                COUNT(*) AS event_count,
+                MIN({spot_id}) AS spot_id,
+                COUNT(
+                    DISTINCT {searched_cell}
+                ) AS cells_seen,
+                COUNT(
+                    DISTINCT {imei}
+                ) AS imei_count,
+                COUNT(
+                    DISTINCT {imsi}
+                ) AS imsi_count,
+                MIN({event_ts}) AS first_seen,
+                MAX({event_ts}) AS last_seen
+            FROM tower_ipdr_events
+            WHERE
+                {subscriber} IS NOT NULL
+                AND {spot_id} IS NOT NULL
+            GROUP BY 1
+            HAVING
+                COUNT(
+                    DISTINCT {spot_id}
+                ) = 1
+            ORDER BY
+                event_count DESC
+            LIMIT 500
             """
         )
 
@@ -1199,11 +1433,42 @@ def _run_complete_tower_ipdr_analysis(case: dict[str, Any]) -> None:
             )
 
         for label, column in [
-            ("Missing subscriber number", "subscriber_number"),
-            ("Missing searched cell", "searched_cell_id"),
-            ("Missing IMEI", "imei"),
-            ("Missing IMSI", "imsi"),
-            ("Missing source file", "source_file"),
+            (
+                "Missing subscriber number",
+                "subscriber_number",
+            ),
+            (
+                "Missing searched cell",
+                "searched_cell_id",
+            ),
+            (
+                "Missing IMEI",
+                "imei",
+            ),
+            (
+                "Missing IMSI",
+                "imsi",
+            ),
+            (
+                "Missing source IP",
+                "source_ip",
+            ),
+            (
+                "Missing destination IP",
+                "destination_ip",
+            ),
+            (
+                "Missing destination port",
+                "destination_port",
+            ),
+            (
+                "Missing relative source path",
+                "source_relative_path",
+            ),
+            (
+                "Missing Spot ID",
+                "spot_id",
+            ),
         ]:
             rows = missing_count(column)
             percentage = round((rows / total_events * 100), 4) if total_events else 0
@@ -1215,9 +1480,86 @@ def _run_complete_tower_ipdr_analysis(case: dict[str, Any]) -> None:
                 }
             )
 
-        data_quality = pd.DataFrame(checks)
+        if event_ts != "NULL":
+            invalid_event_time_rows = int(
+                con.execute(
+                    f"""
+                    SELECT COUNT(*)
+                    FROM tower_ipdr_events
+                    WHERE {event_ts} IS NULL
+                    """
+                ).fetchone()[0]
+                or 0
+            )
+        else:
+            invalid_event_time_rows = (
+                total_events
+            )
 
-        priority_leads = top_subscribers.copy()
+        checks.append(
+            {
+                "check": (
+                    "Missing or invalid event time"
+                ),
+                "rows": invalid_event_time_rows,
+                "percentage": round(
+                    (
+                        invalid_event_time_rows
+                        / total_events
+                        * 100
+                    ),
+                    4,
+                )
+                if total_events
+                else 0,
+            }
+        )
+
+        duplicate_rows = 0
+
+        if has("exact_duplicate_flag"):
+            duplicate_rows = int(
+                con.execute(
+                    """
+                    SELECT COUNT(*)
+                    FROM tower_ipdr_events
+                    WHERE
+                        COALESCE(
+                            exact_duplicate_flag,
+                            FALSE
+                        )
+                    """
+                ).fetchone()[0]
+                or 0
+            )
+
+        checks.append(
+            {
+                "check": (
+                    "Exact duplicate rows flagged "
+                    "and preserved"
+                ),
+                "rows": duplicate_rows,
+                "percentage": round(
+                    (
+                        duplicate_rows
+                        / total_events
+                        * 100
+                    ),
+                    4,
+                )
+                if total_events
+                else 0,
+            }
+        )
+
+        data_quality = pd.DataFrame(
+            checks
+        )
+
+        priority_leads = (
+            top_subscribers.copy()
+        )
 
         if not priority_leads.empty:
             priority_leads["priority_score"] = (
@@ -1259,75 +1601,560 @@ def _run_complete_tower_ipdr_analysis(case: dict[str, Any]) -> None:
                 ascending=False,
             ).head(500)
 
-        sheets = {
-            "1. Executive Summary": summary,
-            "2. Cell Summary": cell_summary,
-            "3. Top Subscribers": top_subscribers,
-            "4. Repeat Presence": repeat_presence,
-            "5. Rare Presence": rare_presence,
-            "6. Multi Cell Presence": multi_cell_presence,
-            "7. Priority Leads": priority_leads,
-            "8. Shared IMEI": shared_imei,
-            "9. Shared IMSI": shared_imsi,
-            "10. Hourly Activity": hourly_activity,
-            "11. Source Files": source_file_summary,
-            "12. Data Quality": data_quality,
+        multi_queue = (
+            priority_leads.loc[
+                priority_leads[
+                    "cells_seen"
+                ].fillna(0).ge(2)
+            ]
+            .head(250)
+            .copy()
+            if not priority_leads.empty
+            else pd.DataFrame()
+        )
+
+        if not multi_queue.empty:
+            multi_queue[
+                "lead_category"
+            ] = "MULTI_CELL_OR_MULTI_SPOT"
+
+        single_activity_queue = (
+            priority_leads.loc[
+                priority_leads[
+                    "cells_seen"
+                ].fillna(0).lt(2)
+            ]
+            .head(150)
+            .copy()
+            if not priority_leads.empty
+            else pd.DataFrame()
+        )
+
+        if not single_activity_queue.empty:
+            single_activity_queue[
+                "lead_category"
+            ] = "HIGH_ACTIVITY_SINGLE_CELL"
+
+        rare_queue = rare_presence.head(
+            100
+        ).copy()
+
+        if not rare_queue.empty:
+            rare_queue[
+                "lead_category"
+            ] = "RARE_PRESENCE"
+            rare_queue[
+                "priority_score"
+            ] = (
+                60
+                + rare_queue[
+                    "cells_seen"
+                ].fillna(0).clip(
+                    upper=5
+                )
+                * 5
+            )
+            rare_queue[
+                "priority"
+            ] = "Review"
+            rare_queue[
+                "confidence"
+            ] = "Medium"
+            rare_queue[
+                "why_important"
+            ] = (
+                "rare or limited presence; "
+                "verify local context"
+            )
+            rare_queue[
+                "next_action"
+            ] = (
+                "Verify against local residents, "
+                "CDR/SDR/CAF, CCTV timing and field input."
+            )
+
+        priority_review_queue = pd.concat(
+            [
+                multi_queue,
+                rare_queue,
+                single_activity_queue,
+            ],
+            ignore_index=True,
+            sort=False,
+        )
+
+        if (
+            not priority_review_queue.empty
+            and "subscriber_number"
+            in priority_review_queue.columns
+        ):
+            priority_review_queue = (
+                priority_review_queue
+                .drop_duplicates(
+                    subset=[
+                        "subscriber_number"
+                    ],
+                    keep="first",
+                )
+            )
+
+        if (
+            len(priority_review_queue)
+            < 500
+            and not priority_leads.empty
+        ):
+            selected_numbers = set(
+                priority_review_queue.get(
+                    "subscriber_number",
+                    pd.Series(
+                        dtype="string"
+                    ),
+                )
+                .fillna("")
+                .astype(str)
+            )
+
+            fill_queue = priority_leads.loc[
+                ~priority_leads[
+                    "subscriber_number"
+                ]
+                .fillna("")
+                .astype(str)
+                .isin(selected_numbers)
+            ].copy()
+
+            fill_queue[
+                "lead_category"
+            ] = "GENERAL_PRIORITY"
+
+            priority_review_queue = pd.concat(
+                [
+                    priority_review_queue,
+                    fill_queue,
+                ],
+                ignore_index=True,
+                sort=False,
+            )
+
+        if not priority_review_queue.empty:
+            category_rank = {
+                "MULTI_CELL_OR_MULTI_SPOT": 1,
+                "RARE_PRESENCE": 2,
+                "HIGH_ACTIVITY_SINGLE_CELL": 3,
+                "GENERAL_PRIORITY": 4,
+            }
+
+            priority_review_queue[
+                "_category_rank"
+            ] = (
+                priority_review_queue[
+                    "lead_category"
+                ]
+                .map(category_rank)
+                .fillna(9)
+            )
+
+            priority_review_queue = (
+                priority_review_queue
+                .sort_values(
+                    [
+                        "_category_rank",
+                        "priority_score",
+                        "event_count",
+                    ],
+                    ascending=[
+                        True,
+                        False,
+                        False,
+                    ],
+                    na_position="last",
+                )
+                .drop(
+                    columns=[
+                        "_category_rank"
+                    ]
+                )
+                .head(500)
+                .reset_index(
+                    drop=True
+                )
+            )
+
+        priority_leads = (
+            priority_review_queue
+        )
+
+        spot_tables = []
+
+        if not spot_summary.empty:
+            spot_tables.append(
+                spot_summary.assign(
+                    record_type=(
+                        "SPOT_SUMMARY"
+                    )
+                )
+            )
+
+        if not cell_summary.empty:
+            spot_tables.append(
+                cell_summary.assign(
+                    record_type=(
+                        "CELL_SUMMARY"
+                    )
+                )
+            )
+
+        if not repeated_spot_cells.empty:
+            spot_tables.append(
+                repeated_spot_cells.assign(
+                    record_type=(
+                        "CELL_IN_MULTIPLE_SPOTS"
+                    )
+                )
+            )
+
+        spot_cell_summary = (
+            pd.concat(
+                spot_tables,
+                ignore_index=True,
+                sort=False,
+            )
+            if spot_tables
+            else pd.DataFrame()
+        )
+
+        multi_spot_tables = []
+
+        if not multi_spot_subscribers.empty:
+            multi_spot_tables.append(
+                multi_spot_subscribers.assign(
+                    record_type=(
+                        "MULTI_SPOT_SUBSCRIBER"
+                    )
+                )
+            )
+
+        if not spot_exclusive_subscribers.empty:
+            multi_spot_tables.append(
+                spot_exclusive_subscribers.assign(
+                    record_type=(
+                        "SPOT_EXCLUSIVE_SUBSCRIBER"
+                    )
+                )
+            )
+
+        if not repeated_spot_cells.empty:
+            multi_spot_tables.append(
+                repeated_spot_cells.assign(
+                    record_type=(
+                        "CELL_IN_MULTIPLE_SPOTS"
+                    )
+                )
+            )
+
+        multi_spot_intelligence = (
+            pd.concat(
+                multi_spot_tables,
+                ignore_index=True,
+                sort=False,
+            )
+            if multi_spot_tables
+            else pd.DataFrame()
+        )
+
+        device_alert_tables = []
+
+        if not shared_imei.empty:
+            imei_alerts = (
+                shared_imei
+                .rename(
+                    columns={
+                        "imei": "identifier"
+                    }
+                )
+                .copy()
+            )
+            imei_alerts.insert(
+                0,
+                "alert_type",
+                "SHARED_IMEI",
+            )
+            device_alert_tables.append(
+                imei_alerts
+            )
+
+        if not shared_imsi.empty:
+            imsi_alerts = (
+                shared_imsi
+                .rename(
+                    columns={
+                        "imsi": "identifier"
+                    }
+                )
+                .copy()
+            )
+            imsi_alerts.insert(
+                0,
+                "alert_type",
+                "SHARED_IMSI",
+            )
+            device_alert_tables.append(
+                imsi_alerts
+            )
+
+        device_sim_alerts = (
+            pd.concat(
+                device_alert_tables,
+                ignore_index=True,
+                sort=False,
+            )
+            if device_alert_tables
+            else pd.DataFrame(
+                columns=[
+                    "alert_type",
+                    "identifier",
+                    "event_count",
+                    "subscriber_count",
+                    "subscribers",
+                    "cells_seen",
+                    "first_seen",
+                    "last_seen",
+                ]
+            )
+        )
+
+        executive_extra = pd.DataFrame(
+            [
+                {
+                    "metric": "Unique Spots",
+                    "value": len(
+                        spot_summary
+                    ),
+                },
+                {
+                    "metric": (
+                        "Multi-Spot Subscribers"
+                    ),
+                    "value": len(
+                        multi_spot_subscribers
+                    ),
+                },
+                {
+                    "metric": (
+                        "Cells Present in "
+                        "Multiple Spots"
+                    ),
+                    "value": len(
+                        repeated_spot_cells
+                    ),
+                },
+                {
+                    "metric": (
+                        "Priority Review Queue"
+                    ),
+                    "value": len(
+                        priority_review_queue
+                    ),
+                },
+                {
+                    "metric": (
+                        "Rare Presence Leads"
+                    ),
+                    "value": len(
+                        rare_presence
+                    ),
+                },
+            ]
+        )
+
+        executive_summary = pd.concat(
+            [
+                summary,
+                executive_extra,
+            ],
+            ignore_index=True,
+            sort=False,
+        )
+
+        analysis_elapsed_seconds = round(
+            perf_counter()
+            - analysis_started,
+            3,
+        )
+
+        analysis_status = pd.DataFrame(
+            [
+                {
+                    "stage": "DuckDB Staging",
+                    "status": "READY",
+                    "details": (
+                        f"{total_events:,} events "
+                        "available in canonical staging"
+                    ),
+                },
+                {
+                    "stage": "Spot Provenance",
+                    "status": (
+                        "VERIFIED"
+                        if (
+                            has("spot_id")
+                            and missing_count(
+                                "spot_id"
+                            )
+                            == 0
+                        )
+                        else "REVIEW REQUIRED"
+                    ),
+                    "details": (
+                        f"{len(spot_summary)} Spot(s)"
+                    ),
+                },
+                {
+                    "stage": (
+                        "Complete SQL Analysis"
+                    ),
+                    "status": "COMPLETED",
+                    "details": (
+                        f"{analysis_elapsed_seconds:.3f} "
+                        "seconds before Excel rendering"
+                    ),
+                },
+                {
+                    "stage": (
+                        "Compact Excel Report"
+                    ),
+                    "status": "COMPLETED",
+                    "details": (
+                        "Canonical 12-sheet "
+                        "investigator report"
+                    ),
+                },
+                {
+                    "stage": "Backend Evidence",
+                    "status": "PRESERVED",
+                    "details": (
+                        "Full data remains in DuckDB; "
+                        "Excel contains compact summaries"
+                    ),
+                },
+            ]
+        )
+
+        methodology_limits = pd.DataFrame(
+            [
+                {
+                    "topic": (
+                        "Location interpretation"
+                    ),
+                    "guidance": (
+                        "Tower or Spot presence is an "
+                        "investigative indicator and not "
+                        "proof of exact physical location."
+                    ),
+                },
+                {
+                    "topic": (
+                        "Multi-Spot presence"
+                    ),
+                    "guidance": (
+                        "A subscriber appearing in more "
+                        "than one Spot should be verified "
+                        "against event timing, cell overlap "
+                        "and field information."
+                    ),
+                },
+                {
+                    "topic": "Rare presence",
+                    "guidance": (
+                        "Rare presence may represent a "
+                        "visitor, pass-through user, sparse "
+                        "data or incomplete coverage. It is "
+                        "not automatically suspicious."
+                    ),
+                },
+                {
+                    "topic": (
+                        "Repeated searched cells"
+                    ),
+                    "guidance": (
+                        "The same searched Cell ID may be "
+                        "included in more than one Spot. "
+                        "Spot folder provenance must be "
+                        "considered with Cell ID."
+                    ),
+                },
+                {
+                    "topic": (
+                        "IMEI and IMSI alerts"
+                    ),
+                    "guidance": (
+                        "Shared identifiers require "
+                        "verification with CDR, SDR, CAF, "
+                        "device seizure and operator data."
+                    ),
+                },
+                {
+                    "topic": "Priority score",
+                    "guidance": (
+                        "Priority ranking supports review "
+                        "order only. It is not a finding of "
+                        "guilt or conclusive identity."
+                    ),
+                },
+                {
+                    "topic": "Evidence preservation",
+                    "guidance": (
+                        "Raw source files remain unchanged. "
+                        "Complete normalized evidence is "
+                        "preserved in the DuckDB backend."
+                    ),
+                },
+            ]
+        )
+
+        complete_tables = {
+            "executive_summary": (
+                executive_summary
+            ),
+            "data_quality": data_quality,
+            "spot_cell_summary": (
+                spot_cell_summary
+            ),
+            "priority_review_queue": (
+                priority_review_queue
+            ),
+            "rare_presence": rare_presence,
+            "multi_spot_intelligence": (
+                multi_spot_intelligence
+            ),
+            "subscriber_activity": (
+                top_subscribers
+            ),
+            "device_sim_alerts": (
+                device_sim_alerts
+            ),
+            "hourly_activity": (
+                hourly_activity
+            ),
+            "source_file_summary": (
+                source_file_summary
+            ),
+            "analysis_status": (
+                analysis_status
+            ),
+            "methodology_limits": (
+                methodology_limits
+            ),
         }
 
-        with pd.ExcelWriter(excel_path, engine="openpyxl") as writer:
-            for sheet_name, dataframe in sheets.items():
-                if dataframe is None:
-                    dataframe = pd.DataFrame()
-                dataframe.to_excel(writer, sheet_name=sheet_name[:31], index=False)
-
-        from openpyxl import load_workbook
-        from openpyxl.styles import Alignment, Font, PatternFill
-        from openpyxl.utils import get_column_letter
-
-        workbook = load_workbook(excel_path)
-
-        header_fill = PatternFill(
-            fill_type="solid",
-            fgColor="D9EAF7",
+        generate_tower_ipdr_complete_excel_report(
+            case=case,
+            report_path=excel_path,
+            tables=complete_tables,
+            generated_at=datetime.now().isoformat(
+                timespec="seconds"
+            ),
         )
-        header_font = Font(bold=True)
-
-        for worksheet in workbook.worksheets:
-            worksheet.freeze_panes = "A2"
-
-            if worksheet.max_row >= 1 and worksheet.max_column >= 1:
-                worksheet.auto_filter.ref = worksheet.dimensions
-
-            for cell in worksheet[1]:
-                cell.font = header_font
-                cell.fill = header_fill
-                cell.alignment = Alignment(
-                    horizontal="center",
-                    vertical="center",
-                    wrap_text=True,
-                )
-
-            for column_cells in worksheet.columns:
-                column_letter = get_column_letter(column_cells[0].column)
-                max_length = 0
-
-                for cell in column_cells[:200]:
-                    value = cell.value
-                    if value is None:
-                        continue
-                    max_length = max(max_length, len(str(value)))
-
-                width = min(max(max_length + 2, 12), 45)
-                worksheet.column_dimensions[column_letter].width = width
-
-            for row in worksheet.iter_rows(min_row=2):
-                for cell in row:
-                    cell.alignment = Alignment(
-                        vertical="top",
-                        wrap_text=False,
-                    )
-
-        workbook.save(excel_path)
 
         summary_lines = [
             "=" * 78,
@@ -1419,27 +2246,6 @@ def _run_complete_tower_ipdr_analysis(case: dict[str, Any]) -> None:
                 "user_output": "excel_and_text_summary",
             },
         )
-
-        def _summary_value(metric_name: str) -> str:
-            matched = summary.loc[summary["metric"] == metric_name, "value"]
-            if matched.empty:
-                return "0"
-
-            value = str(matched.iloc[0])
-            try:
-                numeric_value = float(value)
-                if numeric_value.is_integer():
-                    return f"{int(numeric_value):,}"
-            except Exception:
-                pass
-
-            return value
-
-        def _count_rows(dataframe) -> str:
-            try:
-                return f"{len(dataframe):,}"
-            except Exception:
-                return "0"
 
         def _summary_value(metric_name: str) -> str:
             matched = summary.loc[summary["metric"] == metric_name, "value"]

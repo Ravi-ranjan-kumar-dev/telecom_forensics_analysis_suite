@@ -523,3 +523,359 @@ def generate_tower_ipdr_excel_report(
     append_methodology_sheet(workbook, "Tower IPDR / NAT Analysis")
     workbook.save(report_path)
     return report_path
+# TOWER_IPDR_COMPLETE_REPORT_V1
+
+COMPLETE_REPORT_SHEET_ORDER = (
+    (
+        "executive_summary",
+        "1. Executive Summary",
+        (
+            "Answer-first overview of the complete "
+            "Tower IPDR investigation."
+        ),
+    ),
+    (
+        "data_quality",
+        "2. Data Quality",
+        (
+            "Evidence-quality checks, missing fields, "
+            "duplicates and staging coverage."
+        ),
+    ),
+    (
+        "spot_cell_summary",
+        "3. Spot & Cell Summary",
+        (
+            "Spot-wise and searched-cell-wise event, "
+            "subscriber and source-file coverage."
+        ),
+    ),
+    (
+        "priority_review_queue",
+        "4. Priority Review Queue",
+        (
+            "Deduplicated and category-balanced leads "
+            "for investigator review."
+        ),
+    ),
+    (
+        "rare_presence",
+        "5. Rare Presence",
+        (
+            "Subscribers with limited or unusual "
+            "presence requiring contextual verification."
+        ),
+    ),
+    (
+        "multi_spot_intelligence",
+        "6. Multi-Spot Intelligence",
+        (
+            "Cross-Spot presence, Spot-exclusive presence "
+            "and repeated cells across Spots."
+        ),
+    ),
+    (
+        "subscriber_activity",
+        "7. Subscriber Activity",
+        (
+            "Compact subscriber-level event, Spot, cell, "
+            "IMEI and IMSI activity summary."
+        ),
+    ),
+    (
+        "device_sim_alerts",
+        "8. Device & SIM Alerts",
+        (
+            "Shared or changing IMEI/IMSI indicators. "
+            "Verify against CDR, SDR and CAF records."
+        ),
+    ),
+    (
+        "hourly_activity",
+        "9. Hourly Activity",
+        (
+            "Actual event coverage grouped by date and hour."
+        ),
+    ),
+    (
+        "source_file_summary",
+        "10. Source File Summary",
+        (
+            "Relative evidence provenance only. Absolute "
+            "workstation paths are intentionally excluded."
+        ),
+    ),
+    (
+        "analysis_status",
+        "11. Analysis Status",
+        (
+            "Execution stages, cache status, record counts "
+            "and report-generation timings."
+        ),
+    ),
+    (
+        "methodology_limits",
+        "12. Methodology & Limits",
+        (
+            "Interpretation rules, analytical limitations "
+            "and recommended verification steps."
+        ),
+    ),
+)
+
+
+_COMPLETE_REPORT_ROW_LIMITS = {
+    "priority_review_queue": 500,
+    "rare_presence": 500,
+    "multi_spot_intelligence": 1000,
+    "subscriber_activity": 1000,
+    "device_sim_alerts": 500,
+    "source_file_summary": 2000,
+}
+
+
+def _public_source_file_summary(
+    dataframe: pd.DataFrame,
+) -> pd.DataFrame:
+    """Return report-safe relative evidence provenance.
+
+    Absolute local paths are useful internally, but must not
+    appear in an investigator-facing workbook.
+    """
+
+    frame = _frame(
+        dataframe
+    )
+
+    if frame.empty:
+        return frame
+
+    if (
+        "source_relative_path"
+        not in frame.columns
+    ):
+        if "source_file" in frame.columns:
+            frame.insert(
+                0,
+                "source_relative_path",
+                frame[
+                    "source_file"
+                ].map(
+                    lambda value: (
+                        Path(
+                            str(value)
+                        ).name
+                        if str(
+                            value
+                            or ""
+                        ).strip()
+                        else ""
+                    )
+                ),
+            )
+        elif "file_name" in frame.columns:
+            frame.insert(
+                0,
+                "source_relative_path",
+                frame[
+                    "file_name"
+                ].fillna(
+                    ""
+                ).astype(
+                    str
+                ),
+            )
+
+    private_columns = [
+        column
+        for column in (
+            "source_path",
+            "source_file",
+            "database_path",
+            "report_folder",
+            "input_folder",
+        )
+        if column in frame.columns
+    ]
+
+    if private_columns:
+        frame = frame.drop(
+            columns=private_columns
+        )
+
+    preferred_columns = [
+        "spot_id",
+        "spot_name",
+        "spot_folder",
+        "source_relative_path",
+        "file_name",
+        "sha256",
+        "status",
+        "rows_loaded",
+        "searched_cell_id",
+        "event_time_min",
+        "event_time_max",
+        "unique_subscribers",
+        "warnings",
+        "errors",
+        "loaded_at",
+    ]
+
+    ordered = [
+        column
+        for column in preferred_columns
+        if column in frame.columns
+    ]
+
+    remaining = [
+        column
+        for column in frame.columns
+        if column not in ordered
+    ]
+
+    return frame[
+        ordered
+        + remaining
+    ].copy()
+
+
+def _complete_report_frame(
+    key: str,
+    value: Any,
+) -> pd.DataFrame:
+    """Normalize and safely limit one compact report table."""
+
+    frame = _frame(
+        value
+    )
+
+    if key == "source_file_summary":
+        frame = _public_source_file_summary(
+            frame
+        )
+
+    row_limit = _COMPLETE_REPORT_ROW_LIMITS.get(
+        key
+    )
+
+    if (
+        row_limit is not None
+        and len(frame) > row_limit
+    ):
+        frame = frame.head(
+            row_limit
+        ).copy()
+
+    return frame
+
+
+def generate_tower_ipdr_complete_excel_report(
+    *,
+    case: dict[str, Any],
+    report_path: str | Path,
+    tables: dict[str, Any],
+    generated_at: str = "",
+) -> Path:
+    """Generate the compact complete Tower IPDR workbook.
+
+    Heavy evidence remains in the DuckDB staging backend.
+    The workbook contains investigation summaries and
+    controlled lead tables only.
+    """
+
+    case_id = str(
+        case.get(
+            "case_id",
+            "",
+        )
+    ).strip() or "CASE"
+
+    case_name = str(
+        case.get(
+            "case_name",
+            "",
+        )
+    ).strip()
+
+    output_path = Path(
+        report_path
+    ).expanduser().resolve()
+
+    output_path.parent.mkdir(
+        parents=True,
+        exist_ok=True,
+    )
+
+    workbook = Workbook()
+    workbook.remove(
+        workbook.active
+    )
+
+    subtitle_suffix = (
+        f"Case: {case_id}"
+        + (
+            f" | {case_name}"
+            if case_name
+            else ""
+        )
+        + (
+            f" | Generated: {generated_at}"
+            if generated_at
+            else ""
+        )
+    )
+
+    for (
+        key,
+        sheet_name,
+        description,
+    ) in COMPLETE_REPORT_SHEET_ORDER:
+        frame = _complete_report_frame(
+            key,
+            tables.get(
+                key
+            ),
+        )
+
+        worksheet_name = _sheet_name(
+            workbook,
+            sheet_name,
+        )
+
+        worksheet = workbook.create_sheet(
+            worksheet_name
+        )
+
+        _write_page(
+            worksheet,
+            frame,
+            title=sheet_name,
+            subtitle=(
+                f"{subtitle_suffix} | "
+                f"{description}"
+            ),
+        )
+
+        worksheet.row_dimensions[2].height = (
+            56
+            if len(frame.columns) <= 3
+            else 36
+        )
+
+    workbook.properties.title = (
+        "Tower IPDR Complete Analysis "
+        f"- {case_id}"
+    )
+    workbook.properties.subject = (
+        "Compact Spot-aware Tower IPDR/NAT "
+        "forensic analysis"
+    )
+    workbook.properties.creator = (
+        "Telecom Forensics Analysis Suite"
+    )
+
+    workbook.save(
+        output_path
+    )
+
+    return output_path
