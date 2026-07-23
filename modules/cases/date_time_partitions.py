@@ -104,39 +104,185 @@ def build_date_time_parts(
     return parts
 
 
+
 def save_date_time_parts(
     case_id: str,
     workflow: str,
-    ranges: Iterable[tuple[Any, Any]],
+    ranges: Iterable[Any],
 ) -> dict[str, Any]:
-    """Save pair-based date-time parts for a case workflow."""
+    """Save pair-based Date-Time Parts with optional Spot scope.
 
-    parts = build_date_time_parts(ranges)
+    Backward compatibility:
+    - (start_time, end_time)
+    - dictionaries containing start/end and Spot metadata
+    """
+
+    raw_ranges = list(ranges)
+    normalized_pairs: list[tuple[Any, Any]] = []
+    metadata_rows: list[dict[str, Any]] = []
+
+    for item in raw_ranges:
+        metadata: dict[str, Any] = {}
+
+        if isinstance(item, dict):
+            start_time = item.get(
+                "start_time"
+            )
+            end_time = item.get(
+                "end_time"
+            )
+            metadata = dict(item)
+        else:
+            values = list(item)
+
+            if len(values) < 2:
+                raise ValueError(
+                    "Har Date-Time Part ke liye "
+                    "Start aur End required hai."
+                )
+
+            start_time = values[0]
+            end_time = values[1]
+
+            if len(values) >= 3:
+                metadata["spot_id"] = values[2]
+
+            if len(values) >= 4:
+                metadata["spot_name"] = values[3]
+
+            if len(values) >= 5:
+                metadata["spot_folder"] = values[4]
+
+        normalized_pairs.append(
+            (
+                start_time,
+                end_time,
+            )
+        )
+        metadata_rows.append(
+            metadata
+        )
+
+    parts = build_date_time_parts(
+        normalized_pairs
+    )
+
+    for part, metadata in zip(
+        parts,
+        metadata_rows,
+    ):
+        spot_id = str(
+            metadata.get(
+                "spot_id",
+                "",
+            )
+            or ""
+        ).strip()
+
+        spot_name = str(
+            metadata.get(
+                "spot_name",
+                "",
+            )
+            or ""
+        ).strip()
+
+        spot_folder = str(
+            metadata.get(
+                "spot_folder",
+                "",
+            )
+            or ""
+        ).strip()
+
+        if spot_id:
+            part.update(
+                {
+                    "spot_id": spot_id,
+                    "spot_name": (
+                        spot_name
+                        or spot_id
+                    ),
+                    "spot_folder": (
+                        spot_folder
+                        or spot_name
+                        or spot_id
+                    ),
+                    "spot_scope_mode": (
+                        "SELECTED_SPOT_ONLY"
+                    ),
+                    "spot_scope_status": (
+                        "VALID_SELECTED_SPOT"
+                    ),
+                }
+            )
+        else:
+            part.update(
+                {
+                    "spot_id": "",
+                    "spot_name": (
+                        "ALL LOADED SPOTS"
+                    ),
+                    "spot_folder": "",
+                    "spot_scope_mode": (
+                        "LEGACY_ALL_SPOTS"
+                    ),
+                    "spot_scope_status": (
+                        "LEGACY_NO_SPOT_MAPPING"
+                    ),
+                }
+            )
 
     payload = {
-        "schema_version": 1,
+        "schema_version": 2,
         "case_id": str(case_id),
         "workflow": str(workflow),
         "updated_at": _now_iso(),
-        "partition_method": "start_end_pair",
-        "range_rule": "start_time <= event_time < end_time",
-        "display_rule": "Start aur End Date-Time ke beech ka data",
+        "partition_method": (
+            "start_end_pair"
+        ),
+        "range_rule": (
+            "start_time <= event_time < end_time"
+        ),
+        "display_rule": (
+            "Start aur End Date-Time ke "
+            "beech ka data"
+        ),
+        "spot_scope_rule": (
+            "Selected Spot only when spot_id "
+            "is configured"
+        ),
         "parts_count": len(parts),
         "parts": parts,
         "note": (
-            "Date-time parts are created in start/end pairs. "
-            "Two date-times create one part; four date-times create two parts."
+            "Date-Time Parts start/end pairs "
+            "mein save hote hain. Schema v2 "
+            "optional Spot scope preserve karta hai."
         ),
     }
 
-    path = date_time_partition_path(case_id, workflow)
-    path.parent.mkdir(parents=True, exist_ok=True)
+    path = date_time_partition_path(
+        case_id,
+        workflow,
+    )
+
+    path.parent.mkdir(
+        parents=True,
+        exist_ok=True,
+    )
+
     path.write_text(
-        json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True),
+        json.dumps(
+            payload,
+            ensure_ascii=False,
+            indent=2,
+            sort_keys=True,
+        ),
         encoding="utf-8",
     )
 
     return payload
+
 
 
 
@@ -343,9 +489,22 @@ def clear_date_time_parts(case_id: str, workflow: str) -> bool:
     return False
 
 
-def print_date_time_parts(case_id: str, workflow: str) -> None:
-    payload = load_date_time_parts(case_id, workflow)
-    parts = list(payload.get("parts", []))
+
+def print_date_time_parts(
+    case_id: str,
+    workflow: str,
+) -> None:
+    payload = load_date_time_parts(
+        case_id,
+        workflow,
+    )
+
+    parts = list(
+        payload.get(
+            "parts",
+            [],
+        )
+    )
 
     print("\n" + "=" * 78)
     print("SAVED DATE-TIME PARTS")
@@ -353,35 +512,44 @@ def print_date_time_parts(case_id: str, workflow: str) -> None:
 
     if not parts:
         print("No date-time parts saved.")
-        print("Create parts first by entering start and end date-time pairs.")
+        print(
+            "Create parts first by entering "
+            "start and end date-time pairs."
+        )
         return
 
-    print(f"Method    : Start/End Pair")
-    print(f"Rule      : {payload.get('display_rule', 'Start aur End Date-Time ke beech ka data')}")
+    print("Method    : Start/End Pair")
+    print(
+        "Rule      : "
+        + str(
+            payload.get(
+                "display_rule",
+                (
+                    "Start aur End Date-Time "
+                    "ke beech ka data"
+                ),
+            )
+        )
+    )
     print(f"Total Part: {len(parts)}")
 
     for part in parts:
         print()
-
-        part_name = str(
-            part.get(
-                "part_name",
-                "Part",
+        print(
+            str(
+                part.get(
+                    "part_name",
+                    "Part",
+                )
             )
         )
-
-        spot_scope_mode = str(
-            part.get(
-                "spot_scope_mode",
-                "",
-            )
-        ).strip().upper()
 
         spot_id = str(
             part.get(
                 "spot_id",
                 "",
             )
+            or ""
         ).strip()
 
         spot_name = str(
@@ -389,29 +557,36 @@ def print_date_time_parts(case_id: str, workflow: str) -> None:
                 "spot_name",
                 "",
             )
+            or ""
         ).strip()
 
-        if spot_scope_mode == "ALL_SPOTS":
-            spot_display = (
-                "ALL LOADED SPOTS "
-                "(explicit selection)"
-            )
-        elif spot_id or spot_name:
-            spot_display = (
-                f"{spot_name or 'Unnamed Spot'} "
-                f"({spot_id or 'No Spot ID'})"
+        if spot_id:
+            print(
+                "  Spot  : "
+                f"{spot_id}"
+                + (
+                    f" | {spot_name}"
+                    if (
+                        spot_name
+                        and spot_name != spot_id
+                    )
+                    else ""
+                )
             )
         else:
-            spot_display = (
-                "ALL LOADED SPOTS "
+            print(
+                "  Spot  : ALL LOADED SPOTS "
                 "(legacy Part without Spot mapping)"
             )
 
-        print(part_name)
-        print(f"  Spot  : {spot_display}")
         print(
-            f"  Scope : "
-            f"{spot_scope_mode or 'LEGACY_ALL_SPOTS'}"
+            "  Scope : "
+            + str(
+                part.get(
+                    "spot_scope_mode",
+                    "LEGACY_ALL_SPOTS",
+                )
+            )
         )
         print(
             f"  Start : "
@@ -422,9 +597,15 @@ def print_date_time_parts(case_id: str, workflow: str) -> None:
             f"{part.get('end_time')}"
         )
         print(
-            f"  Meaning: "
-            f"{part.get('simple_meaning')}"
+            "  Meaning: "
+            + str(
+                part.get(
+                    "simple_meaning",
+                    "",
+                )
+            )
         )
+
 
 
 def find_overlapping_date_time_parts(parts: list[dict[str, Any]]) -> list[dict[str, Any]]:

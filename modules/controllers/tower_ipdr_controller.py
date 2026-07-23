@@ -2328,100 +2328,607 @@ def _run_complete_tower_ipdr_analysis(case: dict[str, Any]) -> None:
     finally:
         con.close()
 
-def _create_date_time_parts(case: dict[str, Any]) -> None:
-    case_id = str(case["case_id"])
+
+def _tower_ipdr_available_spots(
+    case_id: str,
+) -> list[dict[str, Any]]:
+    """Return canonical Spot choices from DuckDB staging."""
+
+    import duckdb
+
+    database_path = (
+        tower_ipdr_database_path(
+            case_id
+        )
+    )
+
+    if not Path(database_path).exists():
+        return []
+
+    connection = duckdb.connect(
+        str(database_path),
+        read_only=True,
+    )
+
+    try:
+        table_names = {
+            str(row[0])
+            for row in connection.execute(
+                "SHOW TABLES"
+            ).fetchall()
+        }
+
+        if (
+            "tower_ipdr_events"
+            not in table_names
+        ):
+            return []
+
+        frame = connection.execute(
+            """
+            SELECT
+                CAST(spot_id AS VARCHAR)
+                    AS spot_id,
+                COALESCE(
+                    NULLIF(
+                        CAST(
+                            spot_name
+                            AS VARCHAR
+                        ),
+                        ''
+                    ),
+                    CAST(
+                        spot_id
+                        AS VARCHAR
+                    )
+                ) AS spot_name,
+                COALESCE(
+                    NULLIF(
+                        CAST(
+                            spot_folder
+                            AS VARCHAR
+                        ),
+                        ''
+                    ),
+                    CAST(
+                        spot_name
+                        AS VARCHAR
+                    ),
+                    CAST(
+                        spot_id
+                        AS VARCHAR
+                    )
+                ) AS spot_folder,
+                COUNT(*) AS event_count,
+                COUNT(
+                    DISTINCT searched_cell_id
+                ) AS cell_count,
+                COUNT(
+                    DISTINCT subscriber_number
+                ) AS subscriber_count
+            FROM tower_ipdr_events
+            WHERE
+                spot_id IS NOT NULL
+                AND TRIM(
+                    CAST(
+                        spot_id AS VARCHAR
+                    )
+                ) <> ''
+            GROUP BY
+                spot_id,
+                spot_name,
+                spot_folder
+            ORDER BY
+                spot_id
+            """
+        ).fetchdf()
+
+        return frame.to_dict(
+            orient="records"
+        )
+
+    finally:
+        connection.close()
+
+
+def _select_tower_ipdr_spot(
+    spots: list[dict[str, Any]],
+    part_number: int,
+) -> dict[str, Any]:
+    """Prompt one mandatory Spot selection for one Date-Time Part."""
+
+    if len(spots) == 1:
+        selected = spots[0]
+
+        print(
+            f"[+] Part {part_number} Spot "
+            "automatically selected: "
+            f"{selected.get('spot_id')} | "
+            f"{selected.get('spot_name')}"
+        )
+
+        return selected
+
+    print()
+    print(
+        f"Select Spot for Part "
+        f"{part_number}"
+    )
+    print("-" * 78)
+
+    for index, spot in enumerate(
+        spots,
+        start=1,
+    ):
+        print(
+            f"{index}. "
+            f"{spot.get('spot_id')} | "
+            f"{spot.get('spot_name')} | "
+            f"{int(spot.get('event_count', 0)):,} "
+            "events | "
+            f"{int(spot.get('cell_count', 0))} "
+            "cell(s)"
+        )
+
+    while True:
+        choice = input(
+            "Choose Spot Number: "
+        ).strip()
+
+        try:
+            selected_index = int(choice)
+        except ValueError:
+            print(
+                "[-] Valid Spot number enter karein."
+            )
+            continue
+
+        if not (
+            1
+            <= selected_index
+            <= len(spots)
+        ):
+            print(
+                "[-] Listed Spot number choose karein."
+            )
+            continue
+
+        return spots[
+            selected_index - 1
+        ]
+
+
+def _create_date_time_parts(
+    case: dict[str, Any],
+) -> None:
+    case_id = str(
+        case["case_id"]
+    )
 
     ranges = _collect_date_time_ranges()
 
     if not ranges:
-        print("[-] Koi Date-Time Part enter nahi kiya gaya.")
+        print(
+            "[-] Koi Date-Time Part "
+            "enter nahi kiya gaya."
+        )
         return
+
+    spots = _tower_ipdr_available_spots(
+        case_id
+    )
+
+    if not spots:
+        print(
+            "[-] Tower IPDR Spot metadata "
+            "available nahi hai."
+        )
+        print(
+            "    Pehle option 1 se Complete "
+            "Tower IPDR Analysis chalayein."
+        )
+        return
+
+    scoped_ranges = []
+
+    for part_number, (
+        start_time,
+        end_time,
+    ) in enumerate(
+        ranges,
+        start=1,
+    ):
+        selected_spot = (
+            _select_tower_ipdr_spot(
+                spots,
+                part_number,
+            )
+        )
+
+        scoped_ranges.append(
+            {
+                "start_time": start_time,
+                "end_time": end_time,
+                "spot_id": str(
+                    selected_spot.get(
+                        "spot_id",
+                        "",
+                    )
+                ),
+                "spot_name": str(
+                    selected_spot.get(
+                        "spot_name",
+                        "",
+                    )
+                ),
+                "spot_folder": str(
+                    selected_spot.get(
+                        "spot_folder",
+                        "",
+                    )
+                ),
+            }
+        )
 
     payload = save_date_time_parts(
         case_id,
         TOWER_IPDR_WORKFLOW,
-        ranges,
+        scoped_ranges,
     )
 
-    print_date_time_parts(case_id, TOWER_IPDR_WORKFLOW)
-    print_date_time_part_warnings(case_id, TOWER_IPDR_WORKFLOW)
+    print_date_time_parts(
+        case_id,
+        TOWER_IPDR_WORKFLOW,
+    )
 
-    print("\n[+] Date-Time Parts saved.")
-    print(f"[+] Total Parts: {payload.get('parts_count', 0)}")
-    print("[+] Ab option 3: Part-wise Analysis chalayein.")
+    print_date_time_part_warnings(
+        case_id,
+        TOWER_IPDR_WORKFLOW,
+    )
+
+    print()
+    print(
+        "[+] Spot-aware Date-Time "
+        "Parts saved."
+    )
+    print(
+        "[+] Total Parts: "
+        f"{payload.get('parts_count', 0)}"
+    )
+    print(
+        "[+] Next patch analysis SQL ko "
+        "saved Spot scope se bind karega."
+    )
 
 
-def _run_partwise_analysis(case: dict[str, Any]) -> None:
-    case_id = str(case["case_id"])
-    parts = list_date_time_parts(case_id, TOWER_IPDR_WORKFLOW)
+
+
+def _run_partwise_analysis(
+    case: dict[str, Any],
+) -> None:
+    """Manage, analyze and export saved Tower IPDR Parts."""
+
+    case_id = str(
+        case["case_id"]
+    )
+
+    parts = list_date_time_parts(
+        case_id,
+        TOWER_IPDR_WORKFLOW,
+    )
 
     if not parts:
-        print("[-] Date-Time Parts saved nahi hain.")
-        print("[+] Pehle option 2: Create Date-Time Parts chalayein.")
+        print(
+            "[-] No Date-Time Parts are saved."
+        )
+        print(
+            "[+] Use option 2 to create "
+            "Date-Time Parts."
+        )
         return
 
-    if count_tower_ipdr_events(case_id) <= 0:
-        print("[-] Tower IPDR dump loaded nahi hai.")
-        print("[+] Pehle option 1: Load Dump Data chalayein.")
+    if count_tower_ipdr_events(
+        case_id
+    ) <= 0:
+        print(
+            "[-] Tower IPDR data is not loaded."
+        )
+        print(
+            "[+] Run Complete Tower IPDR "
+            "Analysis first."
+        )
         return
 
-    print_date_time_parts(case_id, TOWER_IPDR_WORKFLOW)
+    print_date_time_parts(
+        case_id,
+        TOWER_IPDR_WORKFLOW,
+    )
 
-    print("" + "=" * 78)
-    print("PART-WISE TOWER IPDR ANALYSIS")
+    print("\n" + "=" * 78)
+    print(
+        "PART-WISE TOWER IPDR ANALYSIS"
+    )
     print("=" * 78)
-    print("A. Analyze All Date-Time Parts")
+    print("A. Analyze All Saved Parts")
+    print("D. Delete One Saved Part")
+    print("C. Clear All Saved Parts")
     print("0. Back")
 
     for part in parts:
         print(
             f"{part.get('part_no')}. "
             f"{part.get('part_name')} | "
-            f"{part.get('start_time')} to {part.get('end_time')}"
+            f"{part.get('spot_id') or 'ALL-SPOTS'} | "
+            f"{part.get('start_time')} to "
+            f"{part.get('end_time')}"
         )
 
-    choice = input("Choose Part Number or A: ").strip().lower()
+    choice = input(
+        "Choose Part, A, D, C or 0: "
+    ).strip().lower()
 
     if choice == "0":
         return
 
-    selected_parts = []
+    if choice == "c":
+        confirmation = input(
+            "Type CLEAR to remove all saved Parts: "
+        ).strip()
+
+        if confirmation != "CLEAR":
+            print(
+                "[-] Clear operation cancelled."
+            )
+            return
+
+        save_date_time_parts(
+            case_id,
+            TOWER_IPDR_WORKFLOW,
+            [],
+        )
+
+        print(
+            "[+] All saved Date-Time Parts "
+            "were cleared."
+        )
+        return
+
+    if choice == "d":
+        delete_value = input(
+            "Enter Part number to delete: "
+        ).strip()
+
+        try:
+            delete_number = int(
+                delete_value
+            )
+        except ValueError:
+            print(
+                "[-] Enter a valid Part number."
+            )
+            return
+
+        remaining_parts = [
+            part
+            for part in parts
+            if int(
+                part.get(
+                    "part_no",
+                    -1,
+                )
+            )
+            != delete_number
+        ]
+
+        if len(
+            remaining_parts
+        ) == len(parts):
+            print(
+                "[-] Selected Part was not found."
+            )
+            return
+
+        payload = save_date_time_parts(
+            case_id,
+            TOWER_IPDR_WORKFLOW,
+            remaining_parts,
+        )
+
+        print(
+            f"[+] Part {delete_number} "
+            "was deleted."
+        )
+        print(
+            "[+] Remaining Parts: "
+            f"{payload.get('parts_count', 0)}"
+        )
+
+        print_date_time_parts(
+            case_id,
+            TOWER_IPDR_WORKFLOW,
+        )
+        return
 
     if choice == "a":
         selected_parts = parts
     else:
         try:
-            selected_no = int(choice)
+            selected_number = int(
+                choice
+            )
         except ValueError:
-            print("[-] Invalid choice.")
+            print(
+                "[-] Invalid menu choice."
+            )
             return
 
         selected_parts = [
-            part for part in parts
-            if int(part.get("part_no", -1)) == selected_no
+            part
+            for part in parts
+            if int(
+                part.get(
+                    "part_no",
+                    -1,
+                )
+            )
+            == selected_number
         ]
 
         if not selected_parts:
-            print("[-] Selected part nahi mila.")
+            print(
+                "[-] Selected Part was not found."
+            )
             return
 
-    for part in selected_parts:
-        print("" + "#" * 78)
-        print(f"{part.get('part_name')} ANALYSIS")
-        print("#" * 78)
-        print(f"Period: {part.get('start_time')} to {part.get('end_time')}")
+    results_by_part: dict[
+        int,
+        dict[str, Any],
+    ] = {}
 
-        result = tower_ipdr_range_investigation_summary(
-            case_id,
-            str(part.get("start_time")),
-            str(part.get("end_time")),
-            lead_limit=50,
+    for part in selected_parts:
+        part_number = int(
+            part.get(
+                "part_no",
+                0,
+            )
+            or 0
         )
+
+        print("\n" + "#" * 78)
+        print(
+            f"{part.get('part_name')} ANALYSIS"
+        )
+        print("#" * 78)
+
+        print(
+            "Spot  : "
+            f"{part.get('spot_id') or 'ALL-SPOTS'}"
+            + (
+                f" | {part.get('spot_name')}"
+                if part.get(
+                    "spot_name"
+                )
+                else ""
+            )
+        )
+
+        print(
+            "Period: "
+            f"{part.get('start_time')} to "
+            f"{part.get('end_time')}"
+        )
+
+        result = (
+            tower_ipdr_range_investigation_summary(
+                case_id,
+                str(
+                    part.get(
+                        "start_time"
+                    )
+                ),
+                str(
+                    part.get(
+                        "end_time"
+                    )
+                ),
+                spot_id=str(
+                    part.get(
+                        "spot_id",
+                        "",
+                    )
+                    or ""
+                ),
+                spot_name=str(
+                    part.get(
+                        "spot_name",
+                        "",
+                    )
+                    or ""
+                ),
+                comparison_parts=parts,
+                current_part_no=part_number,
+                lead_limit=50,
+            )
+        )
+
+        results_by_part[
+            part_number
+        ] = result
 
         print_tower_ipdr_investigation_summary(
             result,
             max_leads=10,
         )
+
+    print()
+    print(
+        "[+] Generating Part-wise reports..."
+    )
+
+    try:
+        manifest = (
+            export_tower_ipdr_partwise_range_report(
+                case_id,
+                selected_parts,
+                comparison_parts=parts,
+                precomputed_results=(
+                    results_by_part
+                ),
+                lead_limit=50,
+                max_leads_in_text=20,
+            )
+        )
+    except Exception as error:
+        print(
+            "[-] Part-wise report generation failed."
+        )
+        print(
+            f"    Error Type : "
+            f"{type(error).__name__}"
+        )
+        print(
+            f"    Message    : {error}"
+        )
+        return
+
+    saved_files = dict(
+        manifest.get(
+            "saved_files",
+            {},
+        )
+    )
+
+    print("\n" + "=" * 78)
+    print(
+        "PART-WISE TOWER IPDR REPORT GENERATED"
+    )
+    print("=" * 78)
+    print(
+        "Parts Analyzed : "
+        f"{len(selected_parts)}"
+    )
+    print(
+        "Report Folder  : "
+        f"{manifest.get('output_dir', '')}"
+    )
+    print(
+        "Excel Report   : "
+        f"{saved_files.get('excel_workbook', '')}"
+    )
+    print(
+        "Text Report    : "
+        f"{saved_files.get('investigation_summary_all_parts', '')}"
+    )
+    print(
+        "Manifest       : "
+        f"{saved_files.get('manifest', '')}"
+    )
+    print(
+        "Latest Report  : "
+        f"{saved_files.get('latest_report', '')}"
+    )
+    print("=" * 78)
+
 
 
 def _view_or_export_report(case: dict[str, Any]) -> None:
