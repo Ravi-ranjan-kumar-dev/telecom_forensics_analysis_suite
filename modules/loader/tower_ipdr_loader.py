@@ -22,6 +22,7 @@ from modules.loader.evidence_csv import (
     quarantine_dataframe_rows,
     read_csv_with_quarantine,
 )
+from modules.loader.tower_spot_layout import build_tower_spot_layout
 
 
 FORMAT_JIO_TOWER_IPDR_NAT = "JIO_TOWER_IPDR_NAT"
@@ -83,6 +84,10 @@ NORMALIZED_COLUMNS = [
     "sim_type",
     "exact_duplicate_flag",
     "source_file",
+    "source_relative_path",
+    "spot_id",
+    "spot_name",
+    "spot_folder",
     "source_row_number",
 ]
 
@@ -669,6 +674,7 @@ def load_tower_ipdr_case(
             "df": pd.DataFrame(columns=NORMALIZED_COLUMNS),
             "file_results": [],
             "file_summary": pd.DataFrame(),
+            "spot_summary": pd.DataFrame(),
             "operators": [],
             "cell_ids": [],
             "metadata": {"input_folder": str(input_folder)},
@@ -676,9 +682,115 @@ def load_tower_ipdr_case(
             "errors": [f"Input folder not found: {input_folder}"],
         }
 
-    files = _candidate_files(input_folder, recursive)
-    results = [load_tower_ipdr_file(path) for path in files]
-    successful = [result for result in results if result.get("ok")]
+    files = _candidate_files(
+        input_folder,
+        recursive,
+    )
+
+    spot_layout = build_tower_spot_layout(
+        input_folder,
+        files,
+    )
+    spot_assignments = spot_layout.get(
+        "assignments",
+        {},
+    )
+
+    results: list[dict[str, Any]] = []
+
+    for path in files:
+        relative_path = str(
+            path.relative_to(input_folder)
+        )
+
+        assignment = dict(
+            spot_assignments.get(
+                str(path.resolve()),
+                {
+                    "spot_id": "UNASSIGNED-ROOT",
+                    "spot_name": "ROOT_LEVEL_FILES",
+                    "spot_folder": ".",
+                    "source_relative_path": (
+                        relative_path
+                    ),
+                    "is_root_file": True,
+                },
+            )
+        )
+
+        result = load_tower_ipdr_file(path)
+
+        result["spot_id"] = assignment[
+            "spot_id"
+        ]
+        result["spot_name"] = assignment[
+            "spot_name"
+        ]
+        result["spot_folder"] = assignment[
+            "spot_folder"
+        ]
+        result["source_relative_path"] = (
+            assignment[
+                "source_relative_path"
+            ]
+        )
+
+        result_metadata = dict(
+            result.get(
+                "metadata",
+                {},
+            )
+            or {}
+        )
+        result_metadata.update(
+            {
+                "spot_id": assignment[
+                    "spot_id"
+                ],
+                "spot_name": assignment[
+                    "spot_name"
+                ],
+                "spot_folder": assignment[
+                    "spot_folder"
+                ],
+                "source_relative_path": (
+                    assignment[
+                        "source_relative_path"
+                    ]
+                ),
+            }
+        )
+        result["metadata"] = result_metadata
+
+        frame = result.get("df")
+
+        if isinstance(frame, pd.DataFrame):
+            frame = frame.copy()
+
+            frame["source_relative_path"] = (
+                assignment[
+                    "source_relative_path"
+                ]
+            )
+            frame["spot_id"] = assignment[
+                "spot_id"
+            ]
+            frame["spot_name"] = assignment[
+                "spot_name"
+            ]
+            frame["spot_folder"] = assignment[
+                "spot_folder"
+            ]
+
+            result["df"] = frame
+
+        results.append(result)
+
+    successful = [
+        result
+        for result in results
+        if result.get("ok")
+    ]
     warnings = list(dict.fromkeys(
         message
         for result in results
@@ -690,6 +802,18 @@ def load_tower_ipdr_case(
         if not result.get("ok")
         for message in result.get("errors", [])
     ))
+
+    warnings = list(
+        dict.fromkeys(
+            [
+                *warnings,
+                *spot_layout.get(
+                    "warnings",
+                    [],
+                ),
+            ]
+        )
+    )
 
     reject_frames = [
         result["rejected_rows"]
@@ -711,6 +835,10 @@ def load_tower_ipdr_case(
             if column not in {
                 "exact_duplicate_flag",
                 "source_file",
+                "source_relative_path",
+                "spot_id",
+                "spot_name",
+                "spot_folder",
                 "source_row_number",
             }
         ]
@@ -733,6 +861,22 @@ def load_tower_ipdr_case(
             {
                 "file_name": Path(result.get("file", "")).name,
                 "file_path": result.get("file", ""),
+                "source_relative_path": result.get(
+                    "source_relative_path",
+                    "",
+                ),
+                "spot_id": result.get(
+                    "spot_id",
+                    "",
+                ),
+                "spot_name": result.get(
+                    "spot_name",
+                    "",
+                ),
+                "spot_folder": result.get(
+                    "spot_folder",
+                    "",
+                ),
                 "status": "LOADED" if result.get("ok") else "FAILED",
                 "source_format": result.get("source_format", ""),
                 "operator": metadata.get("operator", ""),
@@ -752,6 +896,13 @@ def load_tower_ipdr_case(
         )
 
     file_summary = pd.DataFrame(file_rows)
+    spot_summary = pd.DataFrame(
+        spot_layout.get(
+            "spot_summary",
+            [],
+        )
+    )
+
     cell_ids = sorted(
         value
         for value in dataframe.get("searched_cell_id", pd.Series(dtype=str))
@@ -789,6 +940,28 @@ def load_tower_ipdr_case(
             .sum()
         ),
         "raw_rows_preserved": True,
+        "input_mode": spot_layout.get(
+            "input_mode",
+            "LEGACY_ROOT_FILES",
+        ),
+        "spot_count": int(
+            spot_layout.get(
+                "spot_count",
+                0,
+            )
+        ),
+        "spot_names": list(
+            spot_layout.get(
+                "spot_names",
+                [],
+            )
+        ),
+        "root_level_file_count": int(
+            spot_layout.get(
+                "root_level_file_count",
+                0,
+            )
+        ),
         "rejected_rows": int(sum(len(item) for item in reject_frames)),
     }
 
@@ -797,6 +970,7 @@ def load_tower_ipdr_case(
         "df": dataframe,
         "file_results": results,
         "file_summary": file_summary,
+        "spot_summary": spot_summary,
         "operators": operators,
         "cell_ids": cell_ids,
         "metadata": metadata,
