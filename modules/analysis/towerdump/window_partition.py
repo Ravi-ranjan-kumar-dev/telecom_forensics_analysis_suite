@@ -8,6 +8,10 @@ from typing import Any
 
 import pandas as pd
 
+from modules.analysis.spot_partition_scope import (
+    resolve_partition_spot_scope,
+)
+
 from modules.analysis.partition_scope import (
     infer_active_cell_scope,
     loaded_cell_map,
@@ -599,6 +603,39 @@ def _normalise_partition_visitor_table(
 
     output.insert(
         0,
+        "partition_spot_scope_mode",
+        str(
+            sighting.get(
+                "spot_scope_mode",
+                "LEGACY_ALL_SPOTS",
+            )
+        ),
+    )
+
+    output.insert(
+        0,
+        "partition_spot_name",
+        str(
+            sighting.get(
+                "spot_name",
+                "ALL LOADED SPOTS",
+            )
+        ),
+    )
+
+    output.insert(
+        0,
+        "partition_spot_id",
+        str(
+            sighting.get(
+                "spot_id",
+                "ALL_SPOTS",
+            )
+        ),
+    )
+
+    output.insert(
+        0,
         "partition_cgi_group_id",
         str(
             sighting.get(
@@ -833,12 +870,6 @@ def create_sighting_partitions(
     status_rows: list[dict[str, Any]] = []
     valid_sightings: list[dict[str, Any]] = []
     warnings: list[str] = []
-    loaded_cells = loaded_cell_map(
-        df,
-        "searched_cell_id",
-    )
-    loaded_cell_keys = set(loaded_cells)
-
     for sighting in ordered_sightings:
         sighting_id = str(sighting.get("sighting_id", "")).strip()
         group_id = str(sighting.get("cgi_group_id", "")).strip().upper()
@@ -849,11 +880,88 @@ def create_sighting_partitions(
             "window_start": sighting.get("window_start", ""),
             "window_end": sighting.get("window_end", ""),
             "cgi_group_id": group_id,
+            "spot_id": str(
+                sighting.get(
+                    "spot_id",
+                    "",
+                )
+            ),
+            "spot_name": str(
+                sighting.get(
+                    "spot_name",
+                    "",
+                )
+            ),
+            "spot_scope_mode": str(
+                sighting.get(
+                    "spot_scope_mode",
+                    "",
+                )
+            ),
         }
 
         if not sighting_id:
             status_rows.append({**base_status, "status": "INVALID_SIGHTING_ID", "included": False, "message": "Sighting ID missing hai."})
             continue
+
+        spot_scope = resolve_partition_spot_scope(
+            df,
+            sighting,
+        )
+
+        base_status.update(
+            {
+                "spot_id": spot_scope.get(
+                    "spot_id",
+                    "",
+                ),
+                "spot_name": spot_scope.get(
+                    "spot_name",
+                    "",
+                ),
+                "spot_folder": spot_scope.get(
+                    "spot_folder",
+                    "",
+                ),
+                "spot_scope_mode": spot_scope.get(
+                    "spot_scope_mode",
+                    "",
+                ),
+                "spot_scope_status": spot_scope.get(
+                    "status",
+                    "",
+                ),
+            }
+        )
+
+        if not spot_scope.get("valid"):
+            status_rows.append(
+                {
+                    **base_status,
+                    "status": spot_scope.get(
+                        "status",
+                        "INVALID_SPOT_SCOPE",
+                    ),
+                    "included": False,
+                    "message": spot_scope.get(
+                        "message",
+                        "Selected Spot resolve नहीं हुआ।",
+                    ),
+                }
+            )
+            continue
+
+        spot_dataframe = spot_scope[
+            "dataframe"
+        ]
+
+        loaded_cells = loaded_cell_map(
+            spot_dataframe,
+            "searched_cell_id",
+        )
+        loaded_cell_keys = set(
+            loaded_cells
+        )
 
         configured_sources = {
             str(value).strip().upper()
@@ -877,7 +985,7 @@ def create_sighting_partitions(
             "AUTO_ACTIVE",
         }:
             scope = infer_active_cell_scope(
-                df,
+                spot_dataframe,
                 window_start=start_time,
                 window_end=end_time,
                 loaded_cells=loaded_cells,
@@ -1061,6 +1169,42 @@ def create_sighting_partitions(
             status_name = "VALID_LOCATION_SCOPED"
 
         effective_sighting = dict(sighting)
+        effective_sighting["spot_id"] = (
+            spot_scope.get(
+                "spot_id",
+                "",
+            )
+        )
+        effective_sighting["spot_name"] = (
+            spot_scope.get(
+                "spot_name",
+                "",
+            )
+        )
+        effective_sighting["spot_folder"] = (
+            spot_scope.get(
+                "spot_folder",
+                "",
+            )
+        )
+        effective_sighting["spot_scope_mode"] = (
+            spot_scope.get(
+                "spot_scope_mode",
+                "",
+            )
+        )
+        effective_sighting["spot_scope_status"] = (
+            spot_scope.get(
+                "status",
+                "",
+            )
+        )
+        effective_sighting["spot_scope_message"] = (
+            spot_scope.get(
+                "message",
+                "",
+            )
+        )
         effective_sighting["cgi_group_id"] = group_id
         effective_sighting["scope_mode"] = scope_mode
         effective_sighting["scope_confidence"] = (
@@ -1083,7 +1227,7 @@ def create_sighting_partitions(
         )
 
         part = _filter_one_sighting(
-            df,
+            spot_dataframe,
             effective_sighting,
             group,
         )
@@ -1091,7 +1235,7 @@ def create_sighting_partitions(
 
         partition_visitor_tables[sighting_id] = (
             _build_partition_visitor_intelligence(
-                df,
+                spot_dataframe,
                 sighting=effective_sighting,
                 cgi_group=group,
             )
@@ -1148,6 +1292,26 @@ def create_sighting_partitions(
         summary_rows.append(
             {
                 "sighting_id": sighting_id,
+                "spot_id": spot_scope.get(
+                    "spot_id",
+                    "",
+                ),
+                "spot_name": spot_scope.get(
+                    "spot_name",
+                    "",
+                ),
+                "spot_folder": spot_scope.get(
+                    "spot_folder",
+                    "",
+                ),
+                "spot_scope_mode": spot_scope.get(
+                    "spot_scope_mode",
+                    "",
+                ),
+                "spot_scope_status": spot_scope.get(
+                    "status",
+                    "",
+                ),
                 "location_name": sighting.get("location_name", ""),
                 "cctv_timestamp": sighting.get("cctv_timestamp", ""),
                 "window_start": sighting.get("window_start", ""),
@@ -1272,5 +1436,9 @@ def create_sighting_partitions(
         "total_sightings": total_sightings,
         "total_configured_sightings": len(ordered_sightings),
         "total_input_records": len(df),
+        "spot_rule": (
+            "SELECTED_SPOT_ONLY when spot_id/spot_name is configured; "
+            "legacy records without Spot fields use LEGACY_ALL_SPOTS"
+        ),
         "warnings": warnings,
     }

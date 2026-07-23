@@ -17,7 +17,7 @@ _GUIDANCE_ROWS = (
     ("Location limitation", "Cell-site records indicate network handling or sector association and do not establish a handset's exact physical position."),
     ("Identity limitation", "MSISDN, IMSI, IMEI, IP address and subscriber details may be shared, reassigned, translated, proxied, spoofed or affected by operator processing."),
     ("Time limitation", "Timestamps depend on operator format, timezone, clock quality and source normalization. Material events should be checked against the original record."),
-    ("Data quality", "Missing, malformed, rejected, duplicated or incomplete records can affect totals and rankings. Review diagnostics and rejected-row sheets."),
+    ("Data quality", "Missing, malformed, rejected, duplicated or incomplete records can affect totals and rankings. Review diagnostics and any rejected-row output generated for this analysis."),
     ("Scoring limitation", "Scores, thresholds and ranked results are prioritization aids, not probabilities, validated risk levels or legal conclusions."),
     ("Evidence handling", "Retain the original source files, acquisition details and cryptographic hashes. This workbook is a derived analytical artifact."),
     ("Excel safety", "Text beginning with formula-like characters is stored as literal text to prevent spreadsheet formula execution."),

@@ -139,6 +139,177 @@ def save_date_time_parts(
     return payload
 
 
+
+def save_spot_date_time_parts(
+    case_id: str,
+    workflow: str,
+    part_specs: Iterable[dict[str, Any]],
+) -> dict[str, Any]:
+    """Save Spot-aware pair-based Date-Time Parts.
+
+    Existing save_date_time_parts() remains unchanged for backward
+    compatibility. New records permanently preserve the selected Spot.
+    """
+
+    specs = [
+        dict(item)
+        for item in part_specs
+        if isinstance(item, dict)
+    ]
+
+    ranges = [
+        (
+            spec.get("start_time", ""),
+            spec.get("end_time", ""),
+        )
+        for spec in specs
+    ]
+
+    parts = build_date_time_parts(
+        ranges
+    )
+
+    for index, (
+        part,
+        spec,
+    ) in enumerate(
+        zip(parts, specs),
+        start=1,
+    ):
+        spot_scope_mode = str(
+            spec.get(
+                "spot_scope_mode",
+                "SELECTED_SPOT_ONLY",
+            )
+        ).strip().upper()
+
+        spot_id = str(
+            spec.get(
+                "spot_id",
+                "",
+            )
+        ).strip()
+
+        spot_name = str(
+            spec.get(
+                "spot_name",
+                "",
+            )
+        ).strip()
+
+        spot_folder = str(
+            spec.get(
+                "spot_folder",
+                "",
+            )
+        ).strip()
+
+        try:
+            spot_part_no = int(
+                spec.get(
+                    "spot_part_no",
+                    index,
+                )
+            )
+        except (
+            TypeError,
+            ValueError,
+        ):
+            spot_part_no = index
+
+        part["part_name"] = str(
+            spec.get(
+                "part_name",
+                f"Part {index}",
+            )
+        ).strip() or f"Part {index}"
+
+        part["spot_part_no"] = (
+            spot_part_no
+        )
+
+        part["spot_scope_mode"] = (
+            spot_scope_mode
+        )
+
+        part["spot_id"] = spot_id
+        part["spot_name"] = spot_name
+        part["spot_folder"] = spot_folder
+
+        part["source_type"] = str(
+            spec.get(
+                "source_type",
+                "",
+            )
+        ).strip().upper()
+
+        part["spot_mapping_status"] = (
+            "EXPLICIT_SELECTED_SPOT"
+            if (
+                spot_scope_mode
+                == "SELECTED_SPOT_ONLY"
+                and (
+                    spot_id
+                    or spot_name
+                )
+            )
+            else (
+                "EXPLICIT_ALL_SPOTS"
+                if spot_scope_mode
+                == "ALL_SPOTS"
+                else "LEGACY_OR_UNRESOLVED"
+            )
+        )
+
+    payload = {
+        "schema_version": 2,
+        "case_id": str(case_id),
+        "workflow": str(workflow),
+        "updated_at": _now_iso(),
+        "partition_method": (
+            "spot_aware_start_end_pair"
+        ),
+        "spot_aware": True,
+        "range_rule": (
+            "start_time <= event_time "
+            "< end_time"
+        ),
+        "display_rule": (
+            "Selected Spot ke Start aur "
+            "End Date-Time ke beech ka data"
+        ),
+        "parts_count": len(parts),
+        "parts": parts,
+        "note": (
+            "Every Date-Time Part is permanently "
+            "linked to one selected investigation Spot, "
+            "unless ALL_SPOTS was explicitly selected."
+        ),
+    }
+
+    output_path = date_time_partition_path(
+        case_id,
+        workflow,
+    )
+
+    output_path.parent.mkdir(
+        parents=True,
+        exist_ok=True,
+    )
+
+    output_path.write_text(
+        json.dumps(
+            payload,
+            ensure_ascii=False,
+            indent=2,
+            sort_keys=True,
+        ),
+        encoding="utf-8",
+    )
+
+    return payload
+
+
 def load_date_time_parts(case_id: str, workflow: str) -> dict[str, Any]:
     path = date_time_partition_path(case_id, workflow)
 
@@ -191,10 +362,69 @@ def print_date_time_parts(case_id: str, workflow: str) -> None:
 
     for part in parts:
         print()
-        print(f"{part.get('part_name', 'Part')}")
-        print(f"  Start : {part.get('start_time')}")
-        print(f"  End   : {part.get('end_time')}")
-        print(f"  Meaning: {part.get('simple_meaning')}")
+
+        part_name = str(
+            part.get(
+                "part_name",
+                "Part",
+            )
+        )
+
+        spot_scope_mode = str(
+            part.get(
+                "spot_scope_mode",
+                "",
+            )
+        ).strip().upper()
+
+        spot_id = str(
+            part.get(
+                "spot_id",
+                "",
+            )
+        ).strip()
+
+        spot_name = str(
+            part.get(
+                "spot_name",
+                "",
+            )
+        ).strip()
+
+        if spot_scope_mode == "ALL_SPOTS":
+            spot_display = (
+                "ALL LOADED SPOTS "
+                "(explicit selection)"
+            )
+        elif spot_id or spot_name:
+            spot_display = (
+                f"{spot_name or 'Unnamed Spot'} "
+                f"({spot_id or 'No Spot ID'})"
+            )
+        else:
+            spot_display = (
+                "ALL LOADED SPOTS "
+                "(legacy Part without Spot mapping)"
+            )
+
+        print(part_name)
+        print(f"  Spot  : {spot_display}")
+        print(
+            f"  Scope : "
+            f"{spot_scope_mode or 'LEGACY_ALL_SPOTS'}"
+        )
+        print(
+            f"  Start : "
+            f"{part.get('start_time')}"
+        )
+        print(
+            f"  End   : "
+            f"{part.get('end_time')}"
+        )
+        print(
+            f"  Meaning: "
+            f"{part.get('simple_meaning')}"
+        )
 
 
 def find_overlapping_date_time_parts(parts: list[dict[str, Any]]) -> list[dict[str, Any]]:

@@ -15,6 +15,7 @@ from modules.loader.evidence_csv import (
     read_csv_with_quarantine,
 )
 from modules.loader.duplicate_flags import flag_potential_duplicates
+from modules.loader.tower_spot_layout import build_tower_spot_layout
 
 
 SUPPORTED_SUFFIXES = {".csv", ".txt", ".tsv"}
@@ -55,6 +56,10 @@ NORMALIZED_COLUMNS = [
     "last_cell_matches_search",
     "present_at_searched_cell",
     "source_file",
+    "source_relative_path",
+    "spot_id",
+    "spot_name",
+    "spot_folder",
     "source_row",
 ]
 
@@ -787,8 +792,90 @@ def load_tower_dump(
         ).as_dict()
 
     except Exception as exc:
-        errors.append(f"{type(exc).__name__}: {exc}")
-        return TowerDumpLoadResult(
+        error_message = f"{type(exc).__name__}: {exc}"
+
+        try:
+            preview_lines = list(
+                locals().get("lines")
+                or _read_preview(
+                    path,
+                    limit=120,
+                )
+            )
+        except Exception:
+            preview_lines = []
+
+        preview_text = "\n".join(
+            preview_lines
+        ).casefold()
+
+        no_data_markers = (
+            "no data found",
+            "no records found",
+            "no record found",
+        )
+
+        is_valid_empty_report = any(
+            marker in preview_text
+            for marker in no_data_markers
+        )
+
+        if is_valid_empty_report:
+            detected_metadata = dict(
+                locals().get("metadata")
+                or {}
+            )
+
+            detected_operator = str(
+                locals().get("operator")
+                or "unknown"
+            ).strip()
+
+            detected_cell_id = _normalize_cell_id(
+                locals().get("searched_cell_id")
+                or detected_metadata.get(
+                    "searched_cell_id",
+                    "",
+                )
+            )
+
+            detected_metadata.update(
+                {
+                    "source_file": path.name,
+                    "empty_report": True,
+                    "data_status": "EMPTY_NO_DATA",
+                }
+            )
+
+            empty_warnings = [
+                *warnings,
+                (
+                    "Valid operator report loaded, lekin "
+                    "requested Cell ID/date range ke liye "
+                    "koi CDR record available nahi tha."
+                ),
+            ]
+
+            payload = TowerDumpLoadResult(
+                file=path.name,
+                operator=detected_operator,
+                searched_cell_id=detected_cell_id,
+                dataframe=empty,
+                metadata=detected_metadata,
+                warnings=empty_warnings,
+                errors=[],
+            ).as_dict()
+
+            # File successfully processed hui, lekin records zero hain.
+            payload["ok"] = True
+            payload["has_records"] = False
+            payload["data_status"] = "EMPTY_NO_DATA"
+
+            return payload
+
+        errors.append(error_message)
+
+        payload = TowerDumpLoadResult(
             file=path.name,
             operator="unknown",
             searched_cell_id="",
@@ -797,6 +884,11 @@ def load_tower_dump(
             warnings=warnings,
             errors=errors,
         ).as_dict()
+
+        payload["has_records"] = False
+        payload["data_status"] = "FAILED"
+
+        return payload
 
 
 def load_tower_dump_folder(
@@ -861,6 +953,7 @@ def load_tower_dump_case(
             "files": [],
             "file_results": [],
             "file_summary": pd.DataFrame(),
+            "spot_summary": pd.DataFrame(),
             "operators": [],
             "cell_ids": [],
             "metadata": {},
@@ -886,6 +979,7 @@ def load_tower_dump_case(
             "files": [],
             "file_results": [],
             "file_summary": pd.DataFrame(),
+            "spot_summary": pd.DataFrame(),
             "operators": [],
             "cell_ids": [],
             "metadata": {"input_folder": str(folder)},
@@ -901,8 +995,66 @@ def load_tower_dump_case(
     summary_rows: list[dict[str, Any]] = []
     reject_frames: list[pd.DataFrame] = []
 
+    spot_layout = build_tower_spot_layout(
+        folder,
+        files,
+    )
+    spot_assignments = spot_layout.get(
+        "assignments",
+        {},
+    )
+    warnings.extend(
+        spot_layout.get(
+            "warnings",
+            [],
+        )
+    )
+
     for path in files:
-        result = load_tower_dump(path, enrich_cgi=enrich_cgi)
+        relative_path = str(
+            path.relative_to(folder)
+        )
+
+        assignment = dict(
+            spot_assignments.get(
+                str(path.resolve()),
+                {
+                    "spot_id": "UNASSIGNED-ROOT",
+                    "spot_name": "ROOT_LEVEL_FILES",
+                    "spot_folder": ".",
+                    "source_relative_path": relative_path,
+                    "is_root_file": True,
+                },
+            )
+        )
+
+        result = load_tower_dump(
+            path,
+            enrich_cgi=enrich_cgi,
+        )
+
+        result["spot_id"] = assignment["spot_id"]
+        result["spot_name"] = assignment["spot_name"]
+        result["spot_folder"] = assignment["spot_folder"]
+        result["source_relative_path"] = assignment[
+            "source_relative_path"
+        ]
+
+        result_metadata = result.setdefault(
+            "metadata",
+            {},
+        )
+        result_metadata.update(
+            {
+                "spot_id": assignment["spot_id"],
+                "spot_name": assignment["spot_name"],
+                "spot_folder": assignment["spot_folder"],
+                "source_relative_path": assignment[
+                    "source_relative_path"
+                ],
+            }
+        )
+
         file_results.append(result)
 
         result_warnings = result.get("warnings") or []
@@ -918,16 +1070,43 @@ def load_tower_dump_case(
             reject_frames.append(rejected)
 
         df = result.get("df")
-        record_count = len(df) if isinstance(df, pd.DataFrame) else 0
+        record_count = (
+            len(df)
+            if isinstance(df, pd.DataFrame)
+            else 0
+        )
+
+        data_status = str(
+            result.get(
+                "data_status",
+                "",
+            )
+        ).strip().upper()
+
+        if not data_status:
+            if result.get("ok") and record_count > 0:
+                data_status = "LOADED"
+            elif result.get("ok") and record_count == 0:
+                data_status = "EMPTY_NO_DATA"
+            else:
+                data_status = "FAILED"
+
+        result["data_status"] = data_status
+        result["has_records"] = record_count > 0
 
         summary_rows.append(
             {
+                "spot_id": assignment["spot_id"],
+                "spot_name": assignment["spot_name"],
+                "spot_folder": assignment["spot_folder"],
                 "file": path.name,
-                "relative_path": str(path.relative_to(folder)),
+                "relative_path": assignment[
+                    "source_relative_path"
+                ],
                 "operator": result.get("operator", "unknown"),
                 "searched_cell_id": result.get("searched_cell_id", ""),
                 "records": record_count,
-                "status": "LOADED" if result.get("ok") else "FAILED",
+                "status": data_status,
                 "warnings": " | ".join(result_warnings),
                 "errors": " | ".join(result_errors),
             }
@@ -936,8 +1115,30 @@ def load_tower_dump_case(
         if isinstance(df, pd.DataFrame) and not df.empty:
             frame = df.copy()
             frame.attrs = {}
-            frame["source_relative_path"] = str(path.relative_to(folder))
+            frame["source_relative_path"] = assignment[
+                "source_relative_path"
+            ]
+            frame["spot_id"] = assignment["spot_id"]
+            frame["spot_name"] = assignment["spot_name"]
+            frame["spot_folder"] = assignment["spot_folder"]
             frames.append(frame)
+
+    files_loaded_count = sum(
+        row.get("status") == "LOADED"
+        for row in summary_rows
+    )
+    files_empty_no_data_count = sum(
+        row.get("status") == "EMPTY_NO_DATA"
+        for row in summary_rows
+    )
+    files_failed_count = sum(
+        row.get("status") == "FAILED"
+        for row in summary_rows
+    )
+    files_processed_count = (
+        files_loaded_count
+        + files_empty_no_data_count
+    )
 
     if not frames:
         return {
@@ -945,13 +1146,46 @@ def load_tower_dump_case(
             "files": [str(path) for path in files],
             "file_results": file_results,
             "file_summary": pd.DataFrame(summary_rows),
+            "spot_summary": pd.DataFrame(
+                spot_layout.get(
+                    "spot_summary",
+                    [],
+                )
+            ),
             "operators": [],
             "cell_ids": [],
             "metadata": {
                 "input_folder": str(folder),
+                "input_mode": spot_layout.get(
+                    "input_mode",
+                    "LEGACY_ROOT_FILES",
+                ),
+                "spot_count": int(
+                    spot_layout.get(
+                        "spot_count",
+                        0,
+                    )
+                    or 0
+                ),
+                "spot_names": list(
+                    spot_layout.get(
+                        "spot_names",
+                        [],
+                    )
+                    or []
+                ),
+                "root_level_file_count": int(
+                    spot_layout.get(
+                        "root_level_file_count",
+                        0,
+                    )
+                    or 0
+                ),
                 "files_found": len(files),
-                "files_loaded": 0,
-                "files_failed": len(files),
+                "files_loaded": files_loaded_count,
+                "files_empty_no_data": files_empty_no_data_count,
+                "files_failed": files_failed_count,
+                "files_processed": files_processed_count,
             },
             "warnings": warnings,
             "errors": errors or ["No valid Tower Dump records loaded."],
@@ -1030,9 +1264,36 @@ def load_tower_dump_case(
 
     metadata = {
         "input_folder": str(folder),
+        "input_mode": spot_layout.get(
+            "input_mode",
+            "LEGACY_ROOT_FILES",
+        ),
+        "spot_count": int(
+            spot_layout.get(
+                "spot_count",
+                0,
+            )
+            or 0
+        ),
+        "spot_names": list(
+            spot_layout.get(
+                "spot_names",
+                [],
+            )
+            or []
+        ),
+        "root_level_file_count": int(
+            spot_layout.get(
+                "root_level_file_count",
+                0,
+            )
+            or 0
+        ),
         "files_found": len(files),
-        "files_loaded": len(frames),
-        "files_failed": len(files) - len(frames),
+        "files_loaded": files_loaded_count,
+        "files_empty_no_data": files_empty_no_data_count,
+        "files_failed": files_failed_count,
+        "files_processed": files_processed_count,
         "records_before_deduplication": records_before_dedup,
         "records_after_deduplication": len(combined),
         "potential_exact_duplicate_records": potential_duplicate_records,
@@ -1054,6 +1315,12 @@ def load_tower_dump_case(
         "files": [str(path) for path in files],
         "file_results": file_results,
         "file_summary": pd.DataFrame(summary_rows),
+        "spot_summary": pd.DataFrame(
+            spot_layout.get(
+                "spot_summary",
+                [],
+            )
+        ),
         "operators": operators,
         "cell_ids": cell_ids,
         "metadata": metadata,

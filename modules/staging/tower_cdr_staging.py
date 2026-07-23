@@ -159,6 +159,361 @@ def load_latest_tower_cdr_stage(case_id: str) -> dict[str, Any] | None:
     return json.loads(path.read_text(encoding="utf-8"))
 
 
+
+TOWER_CDR_REUSE_SCHEMA_VERSION = 1
+
+
+def tower_cdr_reuse_manifest_path(
+    case_id: str,
+) -> Path:
+    """Return normalized Tower CDR reusable-cache manifest path."""
+
+    return (
+        tower_cdr_staging_root(case_id)
+        / "cache"
+        / "reuse_manifest.json"
+    )
+
+
+def save_tower_cdr_reuse_manifest(
+    case_id: str,
+    input_folder: str | Path,
+    dataframe: pd.DataFrame,
+) -> dict[str, Any]:
+    """Save a verified reusable-stage manifest after successful staging."""
+
+    if not isinstance(
+        dataframe,
+        pd.DataFrame,
+    ):
+        raise TypeError(
+            "Tower CDR reuse manifest requires a pandas DataFrame."
+        )
+
+    parquet_path = tower_cdr_parquet_path(
+        case_id
+    )
+
+    database_path = tower_cdr_duckdb_path(
+        case_id
+    )
+
+    if not parquet_path.exists():
+        raise FileNotFoundError(
+            f"Tower CDR Parquet stage missing: {parquet_path}"
+        )
+
+    if not database_path.exists():
+        raise FileNotFoundError(
+            f"Tower CDR DuckDB stage missing: {database_path}"
+        )
+
+    database_rows = int(
+        count_tower_cdr_events(
+            case_id
+        )
+    )
+
+    dataframe_rows = int(
+        len(dataframe)
+    )
+
+    if (
+        database_rows <= 0
+        or dataframe_rows <= 0
+        or database_rows != dataframe_rows
+    ):
+        raise ValueError(
+            "Tower CDR reusable stage row-count mismatch. "
+            f"DataFrame={dataframe_rows}, DuckDB={database_rows}"
+        )
+
+    parquet_stat = parquet_path.stat()
+    database_stat = database_path.stat()
+
+    payload = {
+        "schema_version": (
+            TOWER_CDR_REUSE_SCHEMA_VERSION
+        ),
+        "workflow": TOWER_CDR_WORKFLOW,
+        "dataset": TOWER_CDR_DATASET,
+        "table_name": TOWER_CDR_TABLE,
+        "input_fingerprint": (
+            tower_cdr_input_fingerprint(
+                input_folder
+            )
+        ),
+        "record_count": dataframe_rows,
+        "column_count": int(
+            len(dataframe.columns)
+        ),
+        "columns": [
+            str(column)
+            for column in dataframe.columns
+        ],
+        "parquet_path": str(
+            parquet_path
+        ),
+        "parquet_size": int(
+            parquet_stat.st_size
+        ),
+        "parquet_mtime_ns": int(
+            parquet_stat.st_mtime_ns
+        ),
+        "duckdb_path": str(
+            database_path
+        ),
+        "duckdb_size": int(
+            database_stat.st_size
+        ),
+        "duckdb_mtime_ns": int(
+            database_stat.st_mtime_ns
+        ),
+        "created_at": datetime.now().isoformat(
+            timespec="seconds"
+        ),
+    }
+
+    manifest_path = (
+        tower_cdr_reuse_manifest_path(
+            case_id
+        )
+    )
+
+    manifest_path.parent.mkdir(
+        parents=True,
+        exist_ok=True,
+    )
+
+    temporary_path = manifest_path.with_suffix(
+        ".json.tmp"
+    )
+
+    temporary_path.write_text(
+        json.dumps(
+            payload,
+            indent=2,
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+
+    temporary_path.replace(
+        manifest_path
+    )
+
+    return payload
+
+
+def load_reusable_tower_cdr_stage(
+    case_id: str,
+    input_folder: str | Path,
+) -> dict[str, Any]:
+    """Load normalized Parquet only when input and stage are unchanged."""
+
+    manifest_path = (
+        tower_cdr_reuse_manifest_path(
+            case_id
+        )
+    )
+
+    if not manifest_path.exists():
+        return {
+            "reused": False,
+            "reason": "REUSE_MANIFEST_NOT_FOUND",
+            "dataframe": None,
+            "manifest": {},
+        }
+
+    try:
+        manifest = json.loads(
+            manifest_path.read_text(
+                encoding="utf-8"
+            )
+        )
+    except Exception as error:
+        return {
+            "reused": False,
+            "reason": (
+                "REUSE_MANIFEST_INVALID"
+            ),
+            "error": (
+                f"{type(error).__name__}: "
+                f"{error}"
+            ),
+            "dataframe": None,
+            "manifest": {},
+        }
+
+    if int(
+        manifest.get(
+            "schema_version",
+            0,
+        )
+    ) != TOWER_CDR_REUSE_SCHEMA_VERSION:
+        return {
+            "reused": False,
+            "reason": "REUSE_SCHEMA_CHANGED",
+            "dataframe": None,
+            "manifest": manifest,
+        }
+
+    current_fingerprint = (
+        tower_cdr_input_fingerprint(
+            input_folder
+        )
+    )
+
+    saved_fingerprint = manifest.get(
+        "input_fingerprint",
+        {},
+    )
+
+    if current_fingerprint != saved_fingerprint:
+        return {
+            "reused": False,
+            "reason": "INPUT_FILES_CHANGED",
+            "dataframe": None,
+            "manifest": manifest,
+            "current_fingerprint": (
+                current_fingerprint
+            ),
+        }
+
+    parquet_path = tower_cdr_parquet_path(
+        case_id
+    )
+
+    database_path = tower_cdr_duckdb_path(
+        case_id
+    )
+
+    if not parquet_path.exists():
+        return {
+            "reused": False,
+            "reason": "PARQUET_STAGE_MISSING",
+            "dataframe": None,
+            "manifest": manifest,
+        }
+
+    if not database_path.exists():
+        return {
+            "reused": False,
+            "reason": "DUCKDB_STAGE_MISSING",
+            "dataframe": None,
+            "manifest": manifest,
+        }
+
+    expected_records = int(
+        manifest.get(
+            "record_count",
+            0,
+        )
+        or 0
+    )
+
+    try:
+        database_records = int(
+            count_tower_cdr_events(
+                case_id
+            )
+        )
+    except Exception as error:
+        return {
+            "reused": False,
+            "reason": "DUCKDB_COUNT_FAILED",
+            "error": (
+                f"{type(error).__name__}: "
+                f"{error}"
+            ),
+            "dataframe": None,
+            "manifest": manifest,
+        }
+
+    if (
+        expected_records <= 0
+        or database_records
+        != expected_records
+    ):
+        return {
+            "reused": False,
+            "reason": (
+                "DUCKDB_RECORD_COUNT_MISMATCH"
+            ),
+            "dataframe": None,
+            "manifest": manifest,
+            "database_records": (
+                database_records
+            ),
+        }
+
+    try:
+        dataframe = pd.read_parquet(
+            parquet_path
+        )
+    except Exception as error:
+        return {
+            "reused": False,
+            "reason": "PARQUET_READ_FAILED",
+            "error": (
+                f"{type(error).__name__}: "
+                f"{error}"
+            ),
+            "dataframe": None,
+            "manifest": manifest,
+        }
+
+    if len(dataframe) != expected_records:
+        return {
+            "reused": False,
+            "reason": (
+                "PARQUET_RECORD_COUNT_MISMATCH"
+            ),
+            "dataframe": None,
+            "manifest": manifest,
+            "parquet_records": int(
+                len(dataframe)
+            ),
+        }
+
+    required_columns = {
+        "subscriber_number",
+        "call_datetime",
+        "searched_cell_id",
+        "source_relative_path",
+        "spot_id",
+        "spot_name",
+    }
+
+    missing_columns = sorted(
+        required_columns.difference(
+            dataframe.columns
+        )
+    )
+
+    if missing_columns:
+        return {
+            "reused": False,
+            "reason": (
+                "PARQUET_REQUIRED_COLUMNS_MISSING"
+            ),
+            "missing_columns": (
+                missing_columns
+            ),
+            "dataframe": None,
+            "manifest": manifest,
+        }
+
+    return {
+        "reused": True,
+        "reason": "INPUT_UNCHANGED",
+        "dataframe": dataframe,
+        "manifest": manifest,
+        "current_fingerprint": (
+            current_fingerprint
+        ),
+    }
+
 def count_tower_cdr_events(case_id: str) -> int:
     """Return count of staged Tower CDR events from DuckDB."""
 

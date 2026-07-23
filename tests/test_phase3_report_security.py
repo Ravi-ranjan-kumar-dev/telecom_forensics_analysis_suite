@@ -186,8 +186,9 @@ def test_tower_dump_workbook_sanitizes_normalized_values_and_adds_guidance(tmp_p
     report = generate_tower_dump_excel_report(result, output_dir=tmp_path)
     workbook = load_workbook(report, data_only=False)
     assert "Methodology & Limits" in workbook.sheetnames
+    assert "8. Normalized Sample" in workbook.sheetnames
 
-    normalized = workbook["15. Normalized Dump"]
+    normalized = workbook["8. Normalized Sample"]
     values = [cell for row in normalized.iter_rows() for cell in row if cell.value == "'=1+1"]
     assert values
     assert all(cell.data_type != "f" for cell in values)

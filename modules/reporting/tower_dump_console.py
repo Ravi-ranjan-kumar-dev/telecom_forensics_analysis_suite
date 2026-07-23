@@ -205,6 +205,196 @@ def _print_analysis_status(status: Any) -> None:
     )
 
 
+# TOWER_COMBINED_RECORD_COUNT_V1
+def _tower_combined_record_count(result) -> int:
+    """Resolve the actual loaded Tower CDR record count."""
+
+    if not isinstance(
+        result,
+        dict,
+    ):
+        return 0
+
+    def positive_integer(value) -> int:
+        try:
+            if value is None:
+                return 0
+
+            converted = int(
+                value
+            )
+
+            return (
+                converted
+                if converted > 0
+                else 0
+            )
+
+        except (
+            TypeError,
+            ValueError,
+            OverflowError,
+        ):
+            return 0
+
+    # Canonical source of truth during current execution.
+    dataframe = result.get(
+        "df"
+    )
+
+    if dataframe is not None:
+        try:
+            dataframe_count = len(
+                dataframe
+            )
+
+        except TypeError:
+            dataframe_count = 0
+
+        if dataframe_count > 0:
+            return int(
+                dataframe_count
+            )
+
+    # Loader metadata fallbacks, including cached-stage aliases.
+    metadata = (
+        result.get(
+            "metadata",
+            {},
+        )
+        or {}
+    )
+
+    for key in (
+        "records_after_deduplication",
+        "combined_records",
+        "combined_record_count",
+        "total_records",
+        "records_loaded",
+        "cached_records",
+        "record_count",
+    ):
+        count = positive_integer(
+            metadata.get(
+                key
+            )
+        )
+
+        if count > 0:
+            return count
+
+    # Analytical summary fallback.
+    analysis = (
+        result.get(
+            "analysis",
+            {},
+        )
+        or {}
+    )
+
+    results = (
+        analysis.get(
+            "results",
+            {},
+        )
+        or {}
+    )
+
+    summary = results.get(
+        "tower_dump_summary"
+    )
+
+    if isinstance(
+        summary,
+        dict,
+    ):
+        for key in (
+            "total_records",
+            "records",
+            "record_count",
+        ):
+            count = positive_integer(
+                summary.get(
+                    key
+                )
+            )
+
+            if count > 0:
+                return count
+
+    # Support a DataFrame-style Field/Value summary.
+    columns_object = getattr(
+        summary,
+        "columns",
+        None,
+    )
+
+    columns = (
+        [
+            str(column)
+            for column in columns_object
+        ]
+        if columns_object is not None
+        else []
+    )
+
+    for field_column, value_column in (
+        (
+            "Field",
+            "Value",
+        ),
+        (
+            "field",
+            "value",
+        ),
+        (
+            "metric",
+            "value",
+        ),
+        (
+            "Metric",
+            "Value",
+        ),
+    ):
+        if {
+            field_column,
+            value_column,
+        }.issubset(
+            columns
+        ):
+            try:
+                mapping = {
+                    str(key).strip().lower(): value
+                    for key, value in zip(
+                        summary[
+                            field_column
+                        ],
+                        summary[
+                            value_column
+                        ],
+                    )
+                }
+
+            except Exception:
+                mapping = {}
+
+            for key in (
+                "total_records",
+                "records",
+                "record_count",
+            ):
+                count = positive_integer(
+                    mapping.get(
+                        key
+                    )
+                )
+
+                if count > 0:
+                    return count
+
+    return 0
+
+
 def print_tower_dump_report(
     result: dict[str, Any],
     *,
@@ -219,7 +409,10 @@ def print_tower_dump_report(
     print(f"Files found        : {metadata.get('files_found', 0)}")
     print(f"Files loaded       : {metadata.get('files_loaded', 0)}")
     print(f"Files failed       : {metadata.get('files_failed', 0)}")
-    print(f"Combined records   : {metadata.get('records_after_deduplication', 0)}")
+    print(
+        "Combined records   : "
+        f"{_tower_combined_record_count(result):,}"
+    )
     print(f"Possible duplicates: {metadata.get('potential_exact_duplicate_records', 0)}")
     print(f"Duplicates removed : {metadata.get('duplicates_removed', 0)}")
     print(f"Operators          : {', '.join(result.get('operators', [])) or 'None'}")

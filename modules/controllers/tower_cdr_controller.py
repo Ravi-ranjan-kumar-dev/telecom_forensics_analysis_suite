@@ -149,6 +149,36 @@ def _partition_records_from_parts(
                 "cgi_group_id": "AUTO_ALL",
                 "source_types": ["NORMAL_CDR"],
                 "scope_mode": "TIME_ONLY_ALL_CELLS",
+                "spot_scope_mode": str(
+                    part.get(
+                        "spot_scope_mode",
+                        "LEGACY_ALL_SPOTS",
+                    )
+                ),
+                "spot_id": str(
+                    part.get(
+                        "spot_id",
+                        "",
+                    )
+                ),
+                "spot_name": str(
+                    part.get(
+                        "spot_name",
+                        "",
+                    )
+                ),
+                "spot_folder": str(
+                    part.get(
+                        "spot_folder",
+                        "",
+                    )
+                ),
+                "source_type": str(
+                    part.get(
+                        "source_type",
+                        "NORMAL_CDR",
+                    )
+                ),
                 "range_rule": str(
                     part.get(
                         "range_rule",
@@ -234,6 +264,287 @@ def _collect_date_time_ranges() -> list[tuple[str, str]]:
     return ranges
 
 
+
+def _cached_tower_cdr_load_result(
+    cache_payload: dict[str, Any],
+    input_folder: Path,
+) -> dict[str, Any]:
+    """Convert verified staged Parquet into the normal loader contract."""
+
+    dataframe = cache_payload.get(
+        "dataframe"
+    )
+
+    if (
+        not isinstance(
+            dataframe,
+            pd.DataFrame,
+        )
+        or dataframe.empty
+    ):
+        return {
+            "df": pd.DataFrame(),
+            "ok": False,
+            "errors": [
+                "Reusable Tower CDR dataframe empty hai."
+            ],
+        }
+
+    fingerprint = cache_payload.get(
+        "current_fingerprint",
+        {},
+    )
+
+    fingerprint_files = (
+        fingerprint.get(
+            "files",
+            [],
+        )
+        if isinstance(
+            fingerprint,
+            dict,
+        )
+        else []
+    )
+
+    file_summary_rows = []
+
+    if (
+        "source_relative_path"
+        in dataframe.columns
+    ):
+        for relative_path, group in dataframe.groupby(
+            "source_relative_path",
+            dropna=False,
+            sort=True,
+        ):
+            file_summary_rows.append(
+                {
+                    "file": str(
+                        group.get(
+                            "source_file",
+                            pd.Series(
+                                [Path(str(relative_path)).name]
+                            ),
+                        ).iloc[0]
+                    ),
+                    "relative_path": str(
+                        relative_path
+                    ),
+                    "operator": str(
+                        group.get(
+                            "operator",
+                            pd.Series([""]),
+                        ).iloc[0]
+                    ),
+                    "searched_cell_id": str(
+                        group.get(
+                            "searched_cell_id",
+                            pd.Series([""]),
+                        ).iloc[0]
+                    ),
+                    "spot_id": str(
+                        group.get(
+                            "spot_id",
+                            pd.Series([""]),
+                        ).iloc[0]
+                    ),
+                    "spot_name": str(
+                        group.get(
+                            "spot_name",
+                            pd.Series([""]),
+                        ).iloc[0]
+                    ),
+                    "records": int(
+                        len(group)
+                    ),
+                    "status": "CACHED_STAGE",
+                    "warnings": "",
+                    "errors": "",
+                }
+            )
+
+    operators = sorted(
+        value
+        for value in dataframe.get(
+            "operator",
+            pd.Series(dtype="object"),
+        )
+        .fillna("")
+        .astype(str)
+        .str.strip()
+        .unique()
+        if value
+    )
+
+    cell_ids = sorted(
+        value
+        for value in dataframe.get(
+            "searched_cell_id",
+            pd.Series(dtype="object"),
+        )
+        .fillna("")
+        .astype(str)
+        .str.strip()
+        .unique()
+        if value
+    )
+
+    spot_summary_rows = []
+
+    if "spot_id" in dataframe.columns:
+        for spot_id, group in dataframe.groupby(
+            "spot_id",
+            dropna=False,
+            sort=True,
+        ):
+            spot_summary_rows.append(
+                {
+                    "spot_id": str(
+                        spot_id
+                    ),
+                    "spot_name": str(
+                        group.get(
+                            "spot_name",
+                            pd.Series([""]),
+                        ).iloc[0]
+                    ),
+                    "spot_folder": str(
+                        group.get(
+                            "spot_folder",
+                            pd.Series([""]),
+                        ).iloc[0]
+                    ),
+                    "records": int(
+                        len(group)
+                    ),
+                    "file_count": int(
+                        group.get(
+                            "source_relative_path",
+                            pd.Series(dtype="object"),
+                        ).nunique()
+                    ),
+                }
+            )
+
+    potential_duplicate_records = 0
+
+    for duplicate_column in (
+        "potential_duplicate",
+        "is_potential_duplicate",
+    ):
+        if duplicate_column in dataframe.columns:
+            potential_duplicate_records = int(
+                dataframe[
+                    duplicate_column
+                ]
+                .fillna(False)
+                .astype(bool)
+                .sum()
+            )
+            break
+
+    metadata = {
+        "input_folder": str(
+            input_folder
+        ),
+        "files_found": int(
+            fingerprint.get(
+                "file_count",
+                len(file_summary_rows),
+            )
+            or 0
+        ),
+        "files_loaded": int(
+            fingerprint.get(
+                "file_count",
+                len(file_summary_rows),
+            )
+            or 0
+        ),
+        "files_failed": 0,
+        "records_before_dedup": int(
+            len(dataframe)
+        ),
+        "records_after_dedup": int(
+            len(dataframe)
+        ),
+        "potential_duplicate_records": (
+            potential_duplicate_records
+        ),
+        "duplicates_removed": 0,
+        "cache_reused": True,
+        "cache_source": (
+            "normalized.parquet"
+        ),
+        "spot_count": int(
+            dataframe.get(
+                "spot_id",
+                pd.Series(dtype="object"),
+            ).nunique()
+        ),
+        "spot_names": sorted(
+            value
+            for value in dataframe.get(
+                "spot_name",
+                pd.Series(dtype="object"),
+            )
+            .fillna("")
+            .astype(str)
+            .str.strip()
+            .unique()
+            if value
+        ),
+    }
+
+    return {
+        "df": dataframe,
+        "files": [
+            str(
+                input_folder
+                / str(
+                    item.get(
+                        "path",
+                        "",
+                    )
+                )
+            )
+            for item in fingerprint_files
+        ],
+        "file_results": [],
+        "file_summary": pd.DataFrame(
+            file_summary_rows
+        ),
+        "spot_summary": pd.DataFrame(
+            spot_summary_rows
+        ),
+        "operators": operators,
+        "cell_ids": cell_ids,
+        "metadata": metadata,
+        "warnings": [
+            (
+                "Raw input files unchanged; "
+                "verified normalized Parquet stage reused."
+            )
+        ],
+        "errors": [],
+        "rejected_rows": pd.DataFrame(),
+        "cache_reused": True,
+        "cache_reason": str(
+            cache_payload.get(
+                "reason",
+                "INPUT_UNCHANGED",
+            )
+        ),
+        "scalable_stage": dict(
+            cache_payload.get(
+                "manifest",
+                {},
+            )
+        ),
+        "ok": True,
+    }
+
 def _run_complete_analysis(
     case: dict[str, Any],
 ) -> dict[str, Any] | None:
@@ -253,6 +564,8 @@ def _run_complete_analysis(
         TOWER_CDR_DATASET,
         TOWER_CDR_TABLE,
         TOWER_CDR_WORKFLOW,
+        load_reusable_tower_cdr_stage,
+        save_tower_cdr_reuse_manifest,
     )
 
     case_id = str(case["case_id"])
@@ -265,12 +578,64 @@ def _run_complete_analysis(
         details={"input_folder": str(input_folder)},
     )
 
+    def _pipeline_loader(
+        folder,
+        **loader_kwargs,
+    ):
+        cache_payload = (
+            load_reusable_tower_cdr_stage(
+                case_id,
+                folder,
+            )
+        )
+
+        if cache_payload.get("reused"):
+            cached_dataframe = (
+                cache_payload.get(
+                    "dataframe"
+                )
+            )
+
+            print(
+                "[+] Existing Tower CDR indexed "
+                "data reused."
+            )
+            print(
+                "[+] Raw input files unchanged; "
+                "CSV/Excel parsing skipped."
+            )
+            print(
+                f"[+] Cached records: "
+                f"{len(cached_dataframe):,}"
+            )
+
+            return (
+                _cached_tower_cdr_load_result(
+                    cache_payload,
+                    Path(folder),
+                )
+            )
+
+        print(
+            "[=] Tower CDR cache not reused: "
+            f"{cache_payload.get('reason', 'UNKNOWN')}"
+        )
+        print(
+            "[+] Raw files will be loaded and "
+            "the cache will be refreshed."
+        )
+
+        return load_tower_dump_case(
+            folder,
+            **loader_kwargs,
+        )
+
     try:
         pipeline_result = run_scalable_analysis_pipeline(
             case_id=case_id,
             workflow=TOWER_CDR_WORKFLOW,
             input_folder=input_folder,
-            loader=load_tower_dump_case,
+            loader=_pipeline_loader,
             loader_kwargs={
                 "enrich_cgi": True,
                 "recursive": True,
@@ -301,6 +666,18 @@ def _run_complete_analysis(
 
         if not isinstance(dataframe, pd.DataFrame) or dataframe.empty:
             raise ValueError("Koi valid Tower CDR Dump record load nahi hua.")
+
+        cache_manifest = (
+            save_tower_cdr_reuse_manifest(
+                case_id,
+                input_folder,
+                dataframe,
+            )
+        )
+
+        pipeline_result[
+            "reuse_manifest"
+        ] = cache_manifest
 
         sql_presence_tables = pipeline_result.get("sql_analysis", {}) or {}
 
@@ -615,21 +992,285 @@ def _run_partition_analysis(
     return result
 
 
+
+def _discover_partition_spots(
+    case_id: str,
+) -> list[dict[str, Any]]:
+    """Discover deterministic investigation Spots from input folders."""
+
+    from modules.loader.tower_dump_loader import (
+        SUPPORTED_SUFFIXES,
+    )
+    from modules.loader.tower_spot_layout import (
+        ROOT_SPOT_ID,
+        build_tower_spot_layout,
+    )
+
+    input_folder = _input_folder(
+        case_id
+    )
+
+    if (
+        not input_folder.exists()
+        or not input_folder.is_dir()
+    ):
+        return []
+
+    files = sorted(
+        path
+        for path in input_folder.rglob("*")
+        if (
+            path.is_file()
+            and path.suffix.lower()
+            in SUPPORTED_SUFFIXES
+            and not path.name.startswith(
+                (
+                    "~$",
+                    ".",
+                )
+            )
+        )
+    )
+
+    if not files:
+        return []
+
+    layout = build_tower_spot_layout(
+        input_folder,
+        files,
+    )
+
+    summary = [
+        dict(item)
+        for item in layout.get(
+            "spot_summary",
+            [],
+        )
+        if isinstance(item, dict)
+    ]
+
+    actual_spots = [
+        item
+        for item in summary
+        if str(
+            item.get(
+                "spot_id",
+                "",
+            )
+        ).strip() != ROOT_SPOT_ID
+    ]
+
+    # Legacy root files remain selectable when no
+    # real Spot folder has been configured yet.
+    return actual_spots or summary
+
+
+def _collect_spot_date_time_specs(
+    case_id: str,
+) -> list[dict[str, Any]]:
+    """Collect one or more Start/End ranges for selected Spots."""
+
+    spots = _discover_partition_spots(
+        case_id
+    )
+
+    if not spots:
+        print(
+            "[-] Tower CDR input folder mein "
+            "koi supported dump file nahi mila."
+        )
+        return []
+
+    specifications: list[
+        dict[str, Any]
+    ] = []
+
+    while True:
+        print("\n" + "=" * 78)
+        print("SELECT SPOT FOR DATE-TIME PARTS")
+        print("=" * 78)
+
+        for index, spot in enumerate(
+            spots,
+            start=1,
+        ):
+            print(
+                f"{index}. "
+                f"{spot.get('spot_name')} "
+                f"({spot.get('spot_id')}) | "
+                f"Files: "
+                f"{spot.get('files_found', 0)}"
+            )
+
+        print(
+            "A. Apply Parts to all loaded Spots "
+            "(intentional comparison)"
+        )
+        print(
+            "0. Finish Spot-Part entry"
+        )
+
+        choice = input(
+            "Choose Spot: "
+        ).strip()
+
+        if choice == "0":
+            break
+
+        if choice.lower() == "a":
+            selected = {
+                "spot_id": "ALL_SPOTS",
+                "spot_name": (
+                    "ALL LOADED SPOTS"
+                ),
+                "spot_folder": "",
+            }
+            scope_mode = "ALL_SPOTS"
+
+        else:
+            try:
+                selected_index = int(
+                    choice
+                )
+            except ValueError:
+                print(
+                    "[-] Invalid Spot choice."
+                )
+                continue
+
+            if not (
+                1
+                <= selected_index
+                <= len(spots)
+            ):
+                print(
+                    "[-] Selected Spot number "
+                    "available nahi hai."
+                )
+                continue
+
+            selected = spots[
+                selected_index - 1
+            ]
+
+            scope_mode = (
+                "SELECTED_SPOT_ONLY"
+            )
+
+        selected_spot_id = str(
+            selected.get(
+                "spot_id",
+                "",
+            )
+        ).strip()
+
+        selected_spot_name = str(
+            selected.get(
+                "spot_name",
+                "",
+            )
+        ).strip()
+
+        selected_spot_folder = str(
+            selected.get(
+                "spot_folder",
+                "",
+            )
+        ).strip()
+
+        print("\n" + "-" * 78)
+        print(
+            "Selected Spot: "
+            f"{selected_spot_name} "
+            f"({selected_spot_id})"
+        )
+        print("-" * 78)
+
+        ranges = _collect_date_time_ranges()
+
+        if not ranges:
+            print(
+                "[-] Is Spot ke liye koi "
+                "Date-Time Part enter nahi hua."
+            )
+            continue
+
+        for spot_part_number, (
+            start_time,
+            end_time,
+        ) in enumerate(
+            ranges,
+            start=1,
+        ):
+            specifications.append(
+                {
+                    "part_name": (
+                        f"{selected_spot_name} "
+                        f"- Part "
+                        f"{spot_part_number}"
+                    ),
+                    "spot_part_no": (
+                        spot_part_number
+                    ),
+                    "spot_scope_mode": (
+                        scope_mode
+                    ),
+                    "spot_id": (
+                        selected_spot_id
+                    ),
+                    "spot_name": (
+                        selected_spot_name
+                    ),
+                    "spot_folder": (
+                        selected_spot_folder
+                    ),
+                    "start_time": (
+                        start_time
+                    ),
+                    "end_time": (
+                        end_time
+                    ),
+                    "source_type": (
+                        "NORMAL_CDR"
+                    ),
+                }
+            )
+
+        print(
+            f"[+] {len(ranges)} Part(s) "
+            f"{selected_spot_name} ke saath "
+            "mapped."
+        )
+
+    return specifications
+
+
 def _new_partition_workflow(
     case: dict[str, Any],
 ) -> dict[str, Any] | None:
+    from modules.cases.date_time_partitions import (
+        save_spot_date_time_parts,
+    )
+
     case_id = str(case["case_id"])
 
-    ranges = _collect_date_time_ranges()
+    part_specs = (
+        _collect_spot_date_time_specs(
+            case_id
+        )
+    )
 
-    if not ranges:
-        print("[-] Koi Date-Time Part enter nahi hua.")
+    if not part_specs:
+        print(
+            "[-] Koi Spot-aware "
+            "Date-Time Part enter nahi hua."
+        )
         return None
 
-    payload = save_date_time_parts(
+    payload = save_spot_date_time_parts(
         case_id,
         TOWER_CDR_WORKFLOW,
-        ranges,
+        part_specs,
     )
 
     total_parts = int(
@@ -639,9 +1280,34 @@ def _new_partition_workflow(
         )
     )
 
+    selected_spot_count = len(
+        {
+            (
+                str(
+                    item.get(
+                        "spot_scope_mode",
+                        "",
+                    )
+                ),
+                str(
+                    item.get(
+                        "spot_id",
+                        "",
+                    )
+                ),
+            )
+            for item in part_specs
+        }
+    )
+
     print(
-        f"\n[+] {total_parts} pair-based "
+        f"\n[+] {total_parts} Spot-aware "
         "Date-Time Part(s) saved."
+    )
+
+    print(
+        f"[+] Spot scopes used: "
+        f"{selected_spot_count}"
     )
 
     print_date_time_parts(
@@ -649,7 +1315,9 @@ def _new_partition_workflow(
         TOWER_CDR_WORKFLOW,
     )
 
-    return _run_partition_analysis(case)
+    return _run_partition_analysis(
+        case
+    )
 
 
 def _show_latest(case_id: str) -> None:

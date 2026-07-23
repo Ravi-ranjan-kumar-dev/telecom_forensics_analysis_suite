@@ -19,6 +19,7 @@ from .devices import (
     shared_imsi_from_summary,
 )
 from .movement import subscriber_movements
+from .multi_spot import build_multi_spot_analysis
 from .subscribers import (
     frequent_visitors_from_summary,
     repeat_visitors_from_summary,
@@ -50,6 +51,16 @@ ANALYSIS_NAMES = [
     "subscribers_across_cells",
     "subscribers_across_operators",
     "common_subscriber_matrix",
+    "spot_summary",
+    "subscriber_spot_detail",
+    "subscriber_spot_presence",
+    "n_of_m_spot_presence",
+    "all_spot_common_numbers",
+    "spot_exclusive_numbers",
+    "cross_spot_device_continuity",
+    "shared_imei_across_spots",
+    "shared_imsi_across_spots",
+    "cross_spot_sequence",
     "hourly_activity",
     "daily_activity",
     "night_activity",
@@ -276,6 +287,90 @@ def build_tower_dump_analysis_bundle(
         lambda: subscribers_across_operators_from_summary(results["subscriber_summary"], df),
     )
     execute("common_subscriber_matrix", lambda: common_subscriber_matrix(df))
+
+    multi_spot_tables: dict[str, Any] | None = None
+
+    def multi_spot_table(name: str) -> pd.DataFrame:
+        nonlocal multi_spot_tables
+
+        if multi_spot_tables is None:
+            multi_spot_tables = build_multi_spot_analysis(
+                df
+            )
+
+        value = multi_spot_tables.get(
+            name,
+            pd.DataFrame(),
+        )
+
+        if isinstance(
+            value,
+            pd.DataFrame,
+        ):
+            return value
+
+        return pd.DataFrame()
+
+    execute(
+        "spot_summary",
+        lambda: multi_spot_table(
+            "spot_summary"
+        ),
+    )
+    execute(
+        "subscriber_spot_detail",
+        lambda: multi_spot_table(
+            "subscriber_spot_detail"
+        ),
+    )
+    execute(
+        "subscriber_spot_presence",
+        lambda: multi_spot_table(
+            "subscriber_spot_presence"
+        ),
+    )
+    execute(
+        "n_of_m_spot_presence",
+        lambda: multi_spot_table(
+            "n_of_m_spot_presence"
+        ),
+    )
+    execute(
+        "all_spot_common_numbers",
+        lambda: multi_spot_table(
+            "all_spot_common_numbers"
+        ),
+    )
+    execute(
+        "spot_exclusive_numbers",
+        lambda: multi_spot_table(
+            "spot_exclusive_numbers"
+        ),
+    )
+    execute(
+        "cross_spot_device_continuity",
+        lambda: multi_spot_table(
+            "cross_spot_device_continuity"
+        ),
+    )
+    execute(
+        "shared_imei_across_spots",
+        lambda: multi_spot_table(
+            "shared_imei_across_spots"
+        ),
+    )
+    execute(
+        "shared_imsi_across_spots",
+        lambda: multi_spot_table(
+            "shared_imsi_across_spots"
+        ),
+    )
+    execute(
+        "cross_spot_sequence",
+        lambda: multi_spot_table(
+            "cross_spot_sequence"
+        ),
+    )
 
     execute("hourly_activity", lambda: hourly_activity(df))
     execute("daily_activity", lambda: daily_activity(df))
