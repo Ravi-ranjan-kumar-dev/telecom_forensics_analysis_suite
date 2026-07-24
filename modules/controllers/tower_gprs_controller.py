@@ -46,7 +46,10 @@ from modules.reporting.tower_gprs_console import (
 SUPPORTED_SUFFIXES = {".csv", ".txt"}
 
 
+
 def _menu(case: dict[str, Any]) -> str:
+    """Print the Tower GPRS workspace menu."""
+
     print("\n" + "=" * 78)
     print(
         f"TOWER GPRS DUMP WORKSPACE | "
@@ -54,14 +57,34 @@ def _menu(case: dict[str, Any]) -> str:
         f"{case.get('case_name', '')}"
     )
     print("=" * 78)
-    print("1. Run Complete Tower GPRS Dump Analysis")
-    print("2. New Date-Time Partition Analysis")
-    print("3. List Current Date-Time Partitions")
-    print("4. Re-run Partition Using Saved Date-Times")
-    print("5. Clear Saved Date-Time Partitions")
-    print("6. View Latest GPRS Run")
-    print("0. Back to Case Workspace")
-    return input("\nChoose Action: ").strip()
+    print(
+        "1. Run Complete Tower GPRS "
+        "Dump Analysis"
+    )
+    print(
+        "2. Create Spot-based "
+        "Date-Time Parts"
+    )
+    print(
+        "3. List Saved Spot-based Parts"
+    )
+    print(
+        "4. Analyze Saved Parts"
+    )
+    print(
+        "5. Clear Saved GPRS Parts"
+    )
+    print(
+        "6. View Latest GPRS Run"
+    )
+    print(
+        "0. Back to Case Workspace"
+    )
+
+    return input(
+        "\nChoose Action: "
+    ).strip()
+
 
 
 def _has_files(directory: Path) -> bool:
@@ -95,66 +118,540 @@ def _input_folder(case_id: str) -> Path:
     return TOWER_GPRS_DUMP_DATA_DIR / "input"
 
 
-def _collect_date_time_pairs() -> list[tuple[str, str]]:
-    print("\n" + "=" * 72)
-    print("ENTER DATE-TIME PARTS")
-    print("=" * 72)
-    print("Date example : 11-06-2026")
-    print("Time example : 19:50 or 19:50:00")
-    print("Sabhi parts enter karne ke baad Date blank chhodkar Enter dabayein.")
+def _parse_gprs_part_datetime(
+    date_value: str,
+    time_value: str,
+) -> str:
+    """Parse investigator-entered date and time."""
 
-    pairs: list[tuple[str, str]] = []
-    number = 1
+    from datetime import datetime
 
-    while True:
-        date_value = input(
-            f"\nPartition {number} - Date (blank = finish): "
-        ).strip()
+    raw_value = (
+        f"{str(date_value).strip()} "
+        f"{str(time_value).strip()}"
+    ).strip()
 
-        if not date_value:
-            break
+    formats = (
+        "%d-%m-%Y %H:%M",
+        "%d-%m-%Y %H:%M:%S",
+        "%Y-%m-%d %H:%M",
+        "%Y-%m-%d %H:%M:%S",
+    )
 
-        time_value = input(
-            f"Partition {number} - Time: "
-        ).strip()
+    for date_format in formats:
+        try:
+            parsed = datetime.strptime(
+                raw_value,
+                date_format,
+            )
 
-        if not time_value:
-            print("[-] Time required hai. Entry dobara karein.")
+            return parsed.strftime(
+                "%Y-%m-%d %H:%M:%S"
+            )
+
+        except ValueError:
             continue
 
-        pairs.append((date_value, time_value))
-        number += 1
+    raise ValueError(
+        "Invalid date or time. "
+        "Use DD-MM-YYYY and HH:MM."
+    )
 
-    return pairs
+
+def _available_gprs_spots(
+    case_id: str,
+) -> list[dict[str, Any]]:
+    """Return available Tower GPRS Spots with accurate file counts."""
+
+    from modules.loader.tower_spot_layout import (
+        build_tower_spot_layout,
+    )
+
+    input_folder = _input_folder(
+        case_id
+    )
+
+    if not input_folder.is_dir():
+        return []
+
+    files = sorted(
+        path
+        for path in input_folder.rglob("*")
+        if (
+            path.is_file()
+            and path.suffix.lower()
+            in SUPPORTED_SUFFIXES
+        )
+    )
+
+    if not files:
+        return []
+
+    layout = build_tower_spot_layout(
+        input_folder,
+        files,
+    )
+
+    assignments = layout.get(
+        "assignments",
+        {},
+    )
+
+    spot_records: dict[
+        str,
+        dict[str, Any],
+    ] = {}
+
+    for assignment in assignments.values():
+        if not isinstance(
+            assignment,
+            dict,
+        ):
+            continue
+
+        spot_id = str(
+            assignment.get(
+                "spot_id",
+                "",
+            )
+            or ""
+        ).strip()
+
+        if not spot_id:
+            continue
+
+        record = spot_records.setdefault(
+            spot_id,
+            {
+                "spot_id": spot_id,
+                "spot_name": str(
+                    assignment.get(
+                        "spot_name",
+                        spot_id,
+                    )
+                    or spot_id
+                ),
+                "spot_folder": str(
+                    assignment.get(
+                        "spot_folder",
+                        "",
+                    )
+                    or ""
+                ),
+                "file_count": 0,
+            },
+        )
+
+        record["file_count"] += 1
+
+    return sorted(
+        spot_records.values(),
+        key=lambda item: (
+            str(
+                item.get(
+                    "spot_id",
+                    "",
+                )
+            ),
+            str(
+                item.get(
+                    "spot_name",
+                    "",
+                )
+            ),
+        ),
+    )
 
 
-def _print_sightings(case_id: str) -> None:
-    sightings = list_sightings(case_id)
+
+def _select_gprs_spot(
+    spots: list[dict[str, Any]],
+    part_number: int,
+) -> dict[str, Any]:
+    """Ask the investigator to select one Spot."""
+
+    print()
+    print(
+        f"SELECT SPOT FOR PART {part_number}"
+    )
+    print("-" * 72)
+
+    for index, spot in enumerate(
+        spots,
+        start=1,
+    ):
+        print(
+            f"{index}. "
+            f"{spot.get('spot_id')} | "
+            f"{spot.get('spot_name')} | "
+            f"Files: "
+            f"{spot.get('file_count', 0)}"
+        )
+
+    while True:
+        value = input(
+            "Choose Spot number: "
+        ).strip()
+
+        try:
+            selected_index = int(
+                value
+            )
+        except ValueError:
+            print(
+                "[-] Enter a valid Spot number."
+            )
+            continue
+
+        if (
+            1
+            <= selected_index
+            <= len(spots)
+        ):
+            return dict(
+                spots[
+                    selected_index - 1
+                ]
+            )
+
+        print(
+            "[-] Selected Spot was not found."
+        )
+
+
+def _parts_to_gprs_sightings(
+    parts: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Convert saved Parts to GPRS analysis scopes."""
+
+    sightings: list[
+        dict[str, Any]
+    ] = []
+
+    for index, part in enumerate(
+        parts,
+        start=1,
+    ):
+        part_number = int(
+            part.get(
+                "part_no",
+                index,
+            )
+            or index
+        )
+
+        start_time = str(
+            part.get(
+                "start_time",
+                "",
+            )
+            or ""
+        )
+
+        end_time = str(
+            part.get(
+                "end_time",
+                "",
+            )
+            or ""
+        )
+
+        sightings.append(
+            {
+                "sighting_id": (
+                    f"GPRS-PART-"
+                    f"{part_number:02d}"
+                ),
+                "part_no": part_number,
+                "part_name": str(
+                    part.get(
+                        "part_name",
+                        f"Part {part_number}",
+                    )
+                ),
+                "location_name": str(
+                    part.get(
+                        "spot_name",
+                        "",
+                    )
+                    or part.get(
+                        "spot_id",
+                        "",
+                    )
+                ),
+                "cctv_timestamp": start_time,
+                "window_start": start_time,
+                "window_end": end_time,
+                "minutes_before": 0,
+                "minutes_after": 0,
+                "cgi_group_id": "AUTO_ALL",
+                "spot_id": str(
+                    part.get(
+                        "spot_id",
+                        "",
+                    )
+                    or ""
+                ),
+                "spot_name": str(
+                    part.get(
+                        "spot_name",
+                        "",
+                    )
+                    or ""
+                ),
+                "spot_folder": str(
+                    part.get(
+                        "spot_folder",
+                        "",
+                    )
+                    or ""
+                ),
+                "spot_scope_mode": str(
+                    part.get(
+                        "spot_scope_mode",
+                        "SELECTED_SPOT_ONLY",
+                    )
+                    or "SELECTED_SPOT_ONLY"
+                ),
+            }
+        )
+
+    return sightings
+
+
+
+def _collect_date_time_pairs(
+    spots: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Collect exact Start-End Parts with Spot selection."""
+
+    print("\n" + "=" * 72)
+    print(
+        "CREATE GPRS DATE-TIME PARTS"
+    )
+    print("=" * 72)
+    print(
+        "Date format : DD-MM-YYYY"
+    )
+    print(
+        "Time format : HH:MM or HH:MM:SS"
+    )
+    print(
+        "Each Part requires Start, End "
+        "and one selected Spot."
+    )
+    print(
+        "Leave the next Start Date blank "
+        "when all Parts are entered."
+    )
+
+    parts: list[
+        dict[str, Any]
+    ] = []
+
+    part_number = 1
+
+    while True:
+        print()
+        print(
+            f"PART {part_number}"
+        )
+        print("-" * 72)
+
+        start_date = input(
+            "Start Date "
+            "(blank = finish): "
+        ).strip()
+
+        if not start_date:
+            break
+
+        start_clock = input(
+            "Start Time: "
+        ).strip()
+
+        if not start_clock:
+            print(
+                "[-] Start Time is required."
+            )
+            continue
+
+        end_date = input(
+            "End Date "
+            "(blank = same date): "
+        ).strip()
+
+        if not end_date:
+            end_date = start_date
+
+        end_clock = input(
+            "End Time: "
+        ).strip()
+
+        if not end_clock:
+            print(
+                "[-] End Time is required."
+            )
+            continue
+
+        try:
+            start_time = (
+                _parse_gprs_part_datetime(
+                    start_date,
+                    start_clock,
+                )
+            )
+
+            end_time = (
+                _parse_gprs_part_datetime(
+                    end_date,
+                    end_clock,
+                )
+            )
+
+        except ValueError as error:
+            print(
+                f"[-] {error}"
+            )
+            continue
+
+        start_value = pd.Timestamp(
+            start_time
+        )
+
+        end_value = pd.Timestamp(
+            end_time
+        )
+
+        if end_value <= start_value:
+            print(
+                "[-] End Date-Time must be "
+                "later than Start Date-Time."
+            )
+            continue
+
+        selected_spot = (
+            _select_gprs_spot(
+                spots,
+                part_number,
+            )
+        )
+
+        parts.append(
+            {
+                "start_time": start_time,
+                "end_time": end_time,
+                "spot_id": str(
+                    selected_spot.get(
+                        "spot_id",
+                        "",
+                    )
+                    or ""
+                ),
+                "spot_name": str(
+                    selected_spot.get(
+                        "spot_name",
+                        "",
+                    )
+                    or ""
+                ),
+                "spot_folder": str(
+                    selected_spot.get(
+                        "spot_folder",
+                        "",
+                    )
+                    or ""
+                ),
+                "spot_scope_mode": (
+                    "SELECTED_SPOT_ONLY"
+                ),
+            }
+        )
+
+        print(
+            "[+] Part added: "
+            f"{start_time} to {end_time} | "
+            f"{selected_spot.get('spot_id')}"
+        )
+
+        part_number += 1
+
+    return parts
+
+
+
+
+def _print_sightings(
+    case_id: str,
+) -> None:
+    """Print saved Spot-based GPRS Parts."""
+
+    from modules.cases.date_time_partitions import (
+        list_date_time_parts,
+    )
+
+    parts = list_date_time_parts(
+        case_id,
+        "tower_gprs",
+    )
 
     print("\n" + "=" * 92)
-    print("SAVED DATE-TIME PARTS")
+    print(
+        "SAVED GPRS DATE-TIME PARTS"
+    )
     print("=" * 92)
 
-    if not sightings:
-        print("No date-time part configured.")
+    if not parts:
+        print(
+            "No Spot-based GPRS Parts are saved."
+        )
+        print("=" * 92)
         return
 
     print(
-        f"{'#':<4}{'Partition':<12}"
-        f"{'Partition Time':<24}"
-        f"{'Window Start':<24}"
-        f"{'Window End':<24}"
+        "Session Rule : "
+        "session_start < Part End "
+        "AND session_end > Part Start"
     )
-    print("-" * 92)
+    print(
+        "Spot Rule    : "
+        "Only the selected Spot is included"
+    )
+    print(
+        f"Total Parts  : {len(parts)}"
+    )
 
-    for index, item in enumerate(sightings, start=1):
+    for part in parts:
+        print()
         print(
-            f"{index:<4}"
-            f"{'P' + str(index):<12}"
-            f"{str(item.get('cctv_timestamp', '')):<24}"
-            f"{str(item.get('window_start', '')):<24}"
-            f"{str(item.get('window_end', '')):<24}"
+            f"{part.get('part_name', 'Part')}"
         )
+        print(
+            "  Spot  : "
+            f"{part.get('spot_id', '')}"
+            + (
+                f" | {part.get('spot_name')}"
+                if part.get(
+                    "spot_name"
+                )
+                else ""
+            )
+        )
+        print(
+            "  Scope : "
+            f"{part.get('spot_scope_mode', '')}"
+        )
+        print(
+            "  Start : "
+            f"{part.get('start_time', '')}"
+        )
+        print(
+            "  End   : "
+            f"{part.get('end_time', '')}"
+        )
+
+    print("=" * 92)
+
 
 
 def _load(case_id: str) -> tuple[dict[str, Any], Path]:
@@ -167,7 +664,7 @@ def _load(case_id: str) -> tuple[dict[str, Any], Path]:
     )
 
     if not load_result.get("ok"):
-        print("[-] Supported Tower GPRS Dump load nahi hua (current parser: Airtel GPRS session format).")
+        print("[-] Supported Tower GPRS Dump data could not be loaded (current parser: Airtel GPRS session format).")
 
         for error in load_result.get("errors", []):
             print(f"    ERROR: {error}")
@@ -190,6 +687,139 @@ def _load(case_id: str) -> tuple[dict[str, Any], Path]:
         )
 
     return load_result, input_folder
+
+
+def _separate_gprs_identifier_leads(
+    analysis: dict[str, Any],
+    *,
+    limit: int = 200,
+) -> dict[str, Any]:
+    """Separate valid Indian MSISDN leads from other identifiers."""
+
+    import re
+
+    lead_keys = (
+        "gprs_common_numbers",
+        "gprs_uncommon_numbers",
+        "gprs_multi_cell_presence",
+        "gprs_device_consistency",
+        "gprs_suspicious_timing",
+        "gprs_priority_leads",
+    )
+
+    non_standard_frames: list[
+        pd.DataFrame
+    ] = []
+
+    for key in lead_keys:
+        frame = analysis.get(
+            key
+        )
+
+        if (
+            not isinstance(
+                frame,
+                pd.DataFrame,
+            )
+            or frame.empty
+            or "subscriber_number"
+            not in frame.columns
+        ):
+            continue
+
+        work = frame.copy()
+
+        identifiers = (
+            work["subscriber_number"]
+            .fillna("")
+            .astype(str)
+            .str.strip()
+        )
+
+        valid_mask = identifiers.str.fullmatch(
+            r"[6-9]\d{9}",
+            na=False,
+        )
+
+        valid = work.loc[
+            valid_mask
+        ].copy()
+
+        analysis[key] = valid.head(
+            limit
+        ).reset_index(
+            drop=True
+        )
+
+        non_standard = work.loc[
+            ~valid_mask
+            & identifiers.ne("")
+        ].copy()
+
+        if non_standard.empty:
+            continue
+
+        non_standard.insert(
+            0,
+            "source_analysis",
+            key,
+        )
+        non_standard.insert(
+            1,
+            "identifier_type",
+            "NON_STANDARD_SUBSCRIBER_ID",
+        )
+
+        non_standard_frames.append(
+            non_standard
+        )
+
+    if non_standard_frames:
+        combined = pd.concat(
+            non_standard_frames,
+            ignore_index=True,
+            sort=False,
+        )
+
+        sort_columns = [
+            column
+            for column in (
+                "priority_score",
+                "match_count",
+                "session_count",
+                "cells_seen",
+                "total_volume",
+            )
+            if column in combined.columns
+        ]
+
+        if sort_columns:
+            combined = combined.sort_values(
+                sort_columns,
+                ascending=[
+                    False
+                    for _ in sort_columns
+                ],
+                na_position="last",
+            )
+
+        combined = combined.drop_duplicates(
+            subset=["subscriber_number"],
+            keep="first",
+        ).head(
+            limit
+        ).reset_index(
+            drop=True
+        )
+
+    else:
+        combined = pd.DataFrame()
+
+    analysis[
+        "gprs_non_standard_leads"
+    ] = combined
+
+    return analysis
 
 
 def _execute(
@@ -236,7 +866,7 @@ def _execute(
             dataset_name=TOWER_GPRS_DATASET,
             dataframe_key="df",
             sql_analysis=build_tower_gprs_duckdb_presence,
-            sql_analysis_kwargs={"top_limit": 200},
+            sql_analysis_kwargs={"top_limit": 500},
             supported_suffixes=SUPPORTED_SUFFIXES,
             status_title="TOWER GPRS FAST ANALYSIS BACKEND READY",
             print_status=True,
@@ -246,7 +876,7 @@ def _execute(
         dataframe = pipeline_result.get("dataframe")
 
         if not isinstance(load_result, dict) or not load_result.get("ok"):
-            print("[-] Supported Tower GPRS Dump load nahi hua (current parser: Airtel GPRS session format).")
+            print("[-] Supported Tower GPRS Dump data could not be loaded (current parser: Airtel GPRS session format).")
 
             for error in load_result.get("errors", []):
                 print(f"    ERROR: {error}")
@@ -309,6 +939,11 @@ def _execute(
                 ]
             )
 
+        analysis = _separate_gprs_identifier_leads(
+            analysis,
+            limit=200,
+        )
+
         analysis["rejected_rows"] = load_result.get("rejected_rows", pd.DataFrame())
         analysis["scalable_pipeline"] = {
             "stage": pipeline_result.get("stage", {}),
@@ -322,19 +957,39 @@ def _execute(
         partition = None
 
         if use_partitions:
-            sightings = list_sightings(case_id)
+            from modules.cases.date_time_partitions import (
+                list_date_time_parts,
+            )
 
-            if not sightings:
+            parts = list_date_time_parts(
+                case_id,
+                "tower_gprs",
+            )
+
+            if not parts:
                 raise CaseError(
-                    "Date-time parts configured nahi hain."
+                    "No Spot-based GPRS Parts "
+                    "are configured."
                 )
+
+            sightings = (
+                _parts_to_gprs_sightings(
+                    parts
+                )
+            )
 
             partition = create_gprs_partitions(
                 dataframe,
                 sightings=sightings,
-                cgi_groups=list_cgi_groups(case_id),
+                cgi_groups=list_cgi_groups(
+                    case_id
+                ),
             )
-            print_gprs_partition(partition, row_limit=50)
+
+            print_gprs_partition(
+                partition,
+                row_limit=50,
+            )
 
         saved = save_gprs_run(
             case_id,
@@ -439,6 +1094,41 @@ def _execute(
                 f"{len(partition.get('strict_common_candidates', [])):,}"
             )
 
+
+        if isinstance(partition, dict):
+            non_standard_presence = partition.get(
+                "non_standard_subscriber_presence"
+            )
+
+            if isinstance(
+                non_standard_presence,
+                pd.DataFrame,
+            ):
+                strict_non_standard = 0
+
+                if (
+                    not non_standard_presence.empty
+                    and "presence_class"
+                    in non_standard_presence.columns
+                ):
+                    strict_non_standard = int(
+                        non_standard_presence[
+                            "presence_class"
+                        ]
+                        .eq(
+                            "STRICT_COMMON_NON_STANDARD"
+                        )
+                        .sum()
+                    )
+
+                print(
+                    "Part Nonstandard: "
+                    f"{len(non_standard_presence):,}"
+                )
+                print(
+                    "Strict Nonstandard: "
+                    f"{strict_non_standard:,}"
+                )
         print(f"Excel Report  : {excel_path}")
         print("=" * 78)
 
@@ -468,21 +1158,68 @@ def _execute(
         )
         return None
 
-def _new_partition(case: dict[str, Any]) -> dict[str, Any] | None:
-    pairs = _collect_date_time_pairs()
 
-    if not pairs:
-        print("[-] Koi date-time enter nahi hua.")
+def _new_partition(
+    case: dict[str, Any],
+) -> dict[str, Any] | None:
+    """Create and analyze Spot-based Start-End Parts."""
+
+    from modules.cases.date_time_partitions import (
+        save_date_time_parts,
+    )
+
+    case_id = str(
+        case["case_id"]
+    )
+
+    spots = _available_gprs_spots(
+        case_id
+    )
+
+    if not spots:
+        print(
+            "[-] No Tower GPRS Spot folders "
+            "were found."
+        )
+        print(
+            "[+] Place source files inside "
+            "spot_1, spot_2 and similar folders."
+        )
         return None
 
-    replace_simple_sightings(
-        str(case["case_id"]),
-        pairs,
-        minutes_before=0,
-        minutes_after=0,
+    parts = _collect_date_time_pairs(
+        spots
     )
-    _print_sightings(str(case["case_id"]))
-    return _execute(case, use_partitions=True)
+
+    if not parts:
+        print(
+            "[-] No Date-Time Part was entered."
+        )
+        return None
+
+    payload = save_date_time_parts(
+        case_id,
+        "tower_gprs",
+        parts,
+    )
+
+    _print_sightings(
+        case_id
+    )
+
+    print(
+        "[+] Spot-based GPRS Parts saved."
+    )
+    print(
+        "[+] Total Parts: "
+        f"{payload.get('parts_count', 0)}"
+    )
+
+    return _execute(
+        case,
+        use_partitions=True,
+    )
+
 
 
 def _show_latest(case_id: str) -> None:
@@ -512,48 +1249,93 @@ def _show_latest(case_id: str) -> None:
     print("=" * 78)
 
 
+
 def handle_tower_gprs_workspace(
     case: dict[str, Any],
 ) -> dict[str, Any] | None:
-    case_id = str(case["case_id"])
+    """Run the Tower GPRS workspace."""
+
+    from modules.cases.date_time_partitions import (
+        clear_date_time_parts,
+    )
+
+    case_id = str(
+        case["case_id"]
+    )
 
     while True:
         try:
-            choice = _menu(case)
+            choice = _menu(
+                case
+            )
 
             if choice == "1":
-                _execute(case, use_partitions=False)
+                _execute(
+                    case,
+                    use_partitions=False,
+                )
 
             elif choice == "2":
-                _new_partition(case)
+                _new_partition(
+                    case
+                )
 
             elif choice == "3":
-                _print_sightings(case_id)
+                _print_sightings(
+                    case_id
+                )
 
             elif choice == "4":
-                _execute(case, use_partitions=True)
+                _execute(
+                    case,
+                    use_partitions=True,
+                )
 
             elif choice == "5":
-                clear_sightings(case_id)
-                print("[+] Saved date-time parts cleared.")
+                removed = (
+                    clear_date_time_parts(
+                        case_id,
+                        "tower_gprs",
+                    )
+                )
+
+                if removed:
+                    print(
+                        "[+] Saved GPRS Parts "
+                        "were cleared."
+                    )
+                else:
+                    print(
+                        "[=] No saved GPRS Parts "
+                        "were available."
+                    )
 
             elif choice == "6":
-                _show_latest(case_id)
+                _show_latest(
+                    case_id
+                )
 
             elif choice == "0":
                 return None
 
             else:
-                print("[-] Invalid choice. Select 0 to 6.")
+                print(
+                    "[-] Invalid choice. "
+                    "Select 0 to 6."
+                )
 
         except KeyboardInterrupt:
-            print("\n[-] Returning to GPRS workspace.")
+            print(
+                "\n[-] Returning to "
+                "the GPRS workspace."
+            )
 
         except EOFError:
             return None
 
         except Exception as error:
             print(
-                f"[-] GPRS workspace error: "
-                f"{type(error).__name__}: {error}"
+                "[-] GPRS workspace error: "
+                f"{type(error).__name__}: "
+                f"{error}"
             )

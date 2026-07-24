@@ -266,8 +266,7 @@ def resolve_sighting_scope(
             "cell_keys": set(loaded_cells),
             "cell_values": sorted(loaded_cells.values()),
             "message": (
-                "Explicit CGI group configured nahi tha; all loaded searched cells "
-                "use kiye gaye. Result ko location-confirmed na maana jaye."
+                'No explicit CGI group was configured; all searched cells loaded for the selected Spot were used. Treat this result as Spot-and-time presence, not independently verified tower-location evidence.'
             ),
         }
 

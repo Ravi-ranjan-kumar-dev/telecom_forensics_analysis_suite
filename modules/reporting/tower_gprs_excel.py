@@ -268,6 +268,335 @@ def _warnings(
     return pd.DataFrame(rows)
 
 
+def _portable_report_path(
+    value: Any,
+) -> str:
+    """Return a portable report path without workstation details."""
+
+    text = str(
+        value
+        or ""
+    ).strip()
+
+    if not text:
+        return ""
+
+    normalized = text.replace(
+        "\\",
+        "/",
+    )
+
+    for marker in (
+        "data/",
+        "cases/",
+        "database/",
+        "config/",
+        "logs/",
+    ):
+        position = normalized.find(
+            marker
+        )
+
+        if position >= 0:
+            return normalized[
+                position:
+            ]
+
+    path = Path(
+        normalized
+    )
+
+    if path.is_absolute():
+        return path.name
+
+    return normalized
+
+
+def _sanitize_gprs_report_frame(
+    value: Any,
+) -> pd.DataFrame:
+    """Remove private paths and preserve identifiers as text."""
+
+    frame = _frame(
+        value
+    ).copy()
+
+    if frame.empty:
+        return frame
+
+    if (
+        "source_relative_path"
+        in frame.columns
+        and "source_file"
+        in frame.columns
+    ):
+        relative = (
+            frame[
+                "source_relative_path"
+            ]
+            .fillna("")
+            .astype(str)
+            .str.strip()
+        )
+
+        fallback = frame[
+            "source_file"
+        ].map(
+            _portable_report_path
+        )
+
+        frame["source_file"] = (
+            relative.where(
+                relative.ne(""),
+                fallback,
+            )
+        )
+
+    path_columns = {
+        "source_file",
+        "input_folder",
+        "run_directory",
+        "report_path",
+        "pipeline_state_path",
+        "backend_run_directory",
+    }
+
+    for column in frame.columns:
+        normalized = str(
+            column
+        ).strip().lower()
+
+        if (
+            normalized in path_columns
+            or normalized.endswith(
+                "_path"
+            )
+        ):
+            frame[column] = frame[
+                column
+            ].map(
+                _portable_report_path
+            )
+
+    identifier_columns = {
+        "subscriber_number",
+        "subscriber_number_raw",
+        "subscribers",
+        "imei",
+        "imei_raw",
+        "imsi",
+        "imsi_raw",
+        "searched_cell_id",
+        "cgi",
+        "cell_id",
+        "identifier",
+    }
+
+    for column in frame.columns:
+        normalized = str(
+            column
+        ).strip().lower()
+
+        if normalized not in identifier_columns:
+            continue
+
+        frame[column] = frame[
+            column
+        ].map(
+            lambda item: (
+                ""
+                if pd.isna(item)
+                else str(item)
+            )
+        )
+
+    # This is a legacy internal field from the old
+    # CCTV-window workflow. Start and End are sufficient.
+    if (
+        "cctv_timestamp"
+        in frame.columns
+        and "window_start"
+        in frame.columns
+        and "window_end"
+        in frame.columns
+    ):
+        frame = frame.drop(
+            columns=[
+                "cctv_timestamp",
+            ]
+        )
+
+    return frame
+
+
+
+def _build_gprs_spot_summary(
+    load_result: dict[str, Any],
+) -> pd.DataFrame:
+    """Build accurate Spot-level file and record counts."""
+
+    file_summary = _frame(
+        load_result.get(
+            "file_summary"
+        )
+    )
+
+    if (
+        file_summary.empty
+        or "spot_id"
+        not in file_summary.columns
+    ):
+        return _sanitize_gprs_report_frame(
+            load_result.get(
+                "spot_summary"
+            )
+        )
+
+    rows: list[
+        dict[str, Any]
+    ] = []
+
+    group_columns = [
+        column
+        for column in (
+            "spot_id",
+            "spot_name",
+            "spot_folder",
+        )
+        if column in file_summary.columns
+    ]
+
+    for values, group in file_summary.groupby(
+        group_columns,
+        dropna=False,
+        sort=True,
+    ):
+        if not isinstance(
+            values,
+            tuple,
+        ):
+            values = (
+                values,
+            )
+
+        identity = dict(
+            zip(
+                group_columns,
+                values,
+            )
+        )
+
+        status = (
+            group.get(
+                "status",
+                pd.Series(
+                    "",
+                    index=group.index,
+                ),
+            )
+            .fillna("")
+            .astype(str)
+            .str.upper()
+        )
+
+        records = pd.to_numeric(
+            group.get(
+                "records",
+                pd.Series(
+                    0,
+                    index=group.index,
+                ),
+            ),
+            errors="coerce",
+        ).fillna(0)
+
+        searched_cells = (
+            group.get(
+                "searched_cell_id",
+                pd.Series(
+                    "",
+                    index=group.index,
+                ),
+            )
+            .fillna("")
+            .astype(str)
+            .str.strip()
+        )
+
+        rows.append(
+            {
+                **identity,
+                "files_found": int(
+                    len(group)
+                ),
+                "files_loaded": int(
+                    status.eq(
+                        "LOADED"
+                    ).sum()
+                ),
+                "files_empty_no_data": int(
+                    status.eq(
+                        "EMPTY_NO_DATA"
+                    ).sum()
+                ),
+                "files_failed": int(
+                    status.eq(
+                        "FAILED"
+                    ).sum()
+                ),
+                "records": int(
+                    records.sum()
+                ),
+                "searched_cells": int(
+                    searched_cells[
+                        searched_cells.ne("")
+                    ].nunique()
+                ),
+            }
+        )
+
+    return pd.DataFrame(
+        rows
+    )
+
+
+def _non_standard_identifier_row_count(
+    analysis: dict[str, Any],
+    metadata: dict[str, Any],
+) -> int:
+    """Return the verified non-standard identifier row count."""
+
+    frame = _frame(
+        analysis.get(
+            "non_standard_identifiers"
+        )
+    )
+
+    if not frame.empty:
+        return int(
+            len(frame)
+        )
+
+    raw_count = metadata.get(
+        "non_standard_identifier_rows",
+        0,
+    )
+
+    try:
+        return max(
+            int(
+                raw_count
+                or 0
+            ),
+            0,
+        )
+    except (
+        TypeError,
+        ValueError,
+    ):
+        return 0
+
+
 def generate_tower_gprs_excel_report(
     *,
     case: dict[str, Any],
@@ -277,203 +606,731 @@ def generate_tower_gprs_excel_report(
     output_dir: str | Path,
     saved: dict[str, Any] | None = None,
 ) -> Path:
-    """Generate one consolidated Tower GPRS Dump workbook."""
+    """Generate one consolidated and portable Tower GPRS workbook."""
 
-    case_id = str(case.get("case_id", "")).strip() or "CASE"
-    case_name = str(case.get("case_name", "")).strip()
-    output = Path(output_dir).expanduser().resolve()
-    output.mkdir(parents=True, exist_ok=True)
-    timestamp = utc_now().strftime("%Y%m%d_%H%M%S_%f")
+    case_id = (
+        str(
+            case.get(
+                "case_id",
+                "",
+            )
+        ).strip()
+        or "CASE"
+    )
+    case_name = str(
+        case.get(
+            "case_name",
+            "",
+        )
+    ).strip()
+
+    output = Path(
+        output_dir
+    ).expanduser().resolve()
+
+    output.mkdir(
+        parents=True,
+        exist_ok=True,
+    )
+
+    timestamp = utc_now().strftime(
+        "%Y%m%d_%H%M%S_%f"
+    )
+
     report_path = output / (
-        f"Tower_GPRS_Dump_Analysis_"
-        f"{_safe_filename(case_id)}_{timestamp}.xlsx"
+        "Tower_GPRS_Dump_Analysis_"
+        f"{_safe_filename(case_id)}_"
+        f"{timestamp}.xlsx"
     )
 
     workbook = Workbook()
-    workbook.remove(workbook.active)
+    workbook.remove(
+        workbook.active
+    )
 
     overview = workbook.create_sheet(
-        _sheet_name(workbook, "1. Executive Summary")
+        _sheet_name(
+            workbook,
+            "1. Executive Summary",
+        )
     )
+
     start = _title(
         overview,
         "Tower GPRS Dump Analysis",
-        f"Case: {case_id}" + (f" | {case_name}" if case_name else ""),
+        (
+            f"Case: {case_id}"
+            + (
+                f" | {case_name}"
+                if case_name
+                else ""
+            )
+        ),
         6,
     )
 
-    metadata = load_result.get("metadata", {}) or {}
-    subscriber_summary = _frame(analysis.get("subscriber_summary"))
-    n_of_m = _frame(
-        partition.get("n_of_m_candidates")
-        if isinstance(partition, dict)
+    metadata = (
+        load_result.get(
+            "metadata",
+            {},
+        )
+        or {}
+    )
+
+    subscriber_summary = (
+        _sanitize_gprs_report_frame(
+            analysis.get(
+                "subscriber_summary"
+            )
+        )
+    )
+
+    n_of_m = _sanitize_gprs_report_frame(
+        partition.get(
+            "n_of_m_candidates"
+        )
+        if isinstance(
+            partition,
+            dict,
+        )
         else None
     )
-    strict = _frame(
-        partition.get("strict_common_candidates")
-        if isinstance(partition, dict)
+
+    strict = _sanitize_gprs_report_frame(
+        partition.get(
+            "strict_common_candidates"
+        )
+        if isinstance(
+            partition,
+            dict,
+        )
         else None
+    )
+
+    non_standard_part = (
+        _sanitize_gprs_report_frame(
+            partition.get(
+                "non_standard_subscriber_presence"
+            )
+        )
+        if isinstance(
+            partition,
+            dict,
+        )
+        else pd.DataFrame()
     )
 
     _key_values(
         overview,
         start,
         [
-            ("Case ID", case_id),
-            ("Case Name", case_name),
-            ("Source Section", "Tower GPRS Dump"),
-            ("Currently Supported Parser", "Airtel GPRS Session Dump"),
-            ("Generated At", utc_now_iso()),
-            ("Input Folder", metadata.get("input_folder", "")),
-            ("Files Found", metadata.get("files_found", 0)),
-            ("Files Loaded", metadata.get("files_loaded", 0)),
-            ("Files Failed", metadata.get("files_failed", 0)),
-            ("Normalized Sessions", metadata.get("records", 0)),
-            ("Operators", ", ".join(load_result.get("operators", []) or [])),
-            ("Searched CGI/Cells", len(load_result.get("cell_ids", []) or [])),
-            ("Unique Subscribers", len(subscriber_summary)),
             (
-                "Dynamic Partitions",
-                partition.get("total_partitions", 0)
-                if isinstance(partition, dict)
-                else 0,
+                "Case ID",
+                case_id,
             ),
-            ("Candidates in 2+ Partitions", len(n_of_m)),
-            ("Candidates in All Partitions", len(strict)),
+            (
+                "Case Name",
+                case_name,
+            ),
+            (
+                "Source Section",
+                "Tower GPRS Dump",
+            ),
+            (
+                "Currently Supported Parser",
+                "Airtel GPRS Session Dump",
+            ),
+            (
+                "Generated At",
+                utc_now_iso(),
+            ),
+            (
+                "Input Folder",
+                _portable_report_path(
+                    metadata.get(
+                        "input_folder",
+                        "",
+                    )
+                ),
+            ),
+            (
+                "Files Found",
+                metadata.get(
+                    "files_found",
+                    0,
+                ),
+            ),
+            (
+                "Files Loaded",
+                metadata.get(
+                    "files_loaded",
+                    0,
+                ),
+            ),
+            (
+                "Files Empty/No Data",
+                metadata.get(
+                    "files_empty_no_data",
+                    0,
+                ),
+            ),
+            (
+                "Files Failed",
+                metadata.get(
+                    "files_failed",
+                    0,
+                ),
+            ),
+            (
+                "Spots Found",
+                metadata.get(
+                    "spot_count",
+                    0,
+                ),
+            ),
+            (
+                "Normalized Sessions",
+                metadata.get(
+                    "records",
+                    0,
+                ),
+            ),
+            (
+                "Operators",
+                ", ".join(
+                    load_result.get(
+                        "operators",
+                        [],
+                    )
+                    or []
+                ),
+            ),
+            (
+                "Searched CGI/Cells",
+                len(
+                    load_result.get(
+                        "cell_ids",
+                        [],
+                    )
+                    or []
+                ),
+            ),
+            (
+                "Unique Subscriber Identifiers",
+                len(
+                    subscriber_summary
+                ),
+            ),
+            (
+                "Non-standard Identifier Rows",
+                _non_standard_identifier_row_count(
+                    analysis,
+                    metadata,
+                ),
+            ),
+            (
+                "Dynamic Parts",
+                (
+                    partition.get(
+                        "total_partitions",
+                        0,
+                    )
+                    if isinstance(
+                        partition,
+                        dict,
+                    )
+                    else 0
+                ),
+            ),
+            (
+                "Mobile Numbers in 2+ Parts",
+                len(
+                    n_of_m
+                ),
+            ),
+            (
+                "Strict Common Mobile Numbers",
+                len(
+                    strict
+                ),
+            ),
+            (
+                "Part Non-standard Identifiers",
+                len(
+                    non_standard_part
+                ),
+            ),
             (
                 "Session-overlap Rule",
-                partition.get("overlap_rule", "")
-                if isinstance(partition, dict)
-                else (
-                    "session_start <= window_end AND "
-                    "session_end >= window_start"
+                (
+                    partition.get(
+                        "overlap_rule",
+                        "",
+                    )
+                    if isinstance(
+                        partition,
+                        dict,
+                    )
+                    else (
+                        "session_start < part_end AND "
+                        "session_end > part_start"
+                    )
+                ),
+            ),
+            (
+                "Spot Rule",
+                (
+                    partition.get(
+                        "spot_rule",
+                        "",
+                    )
+                    if isinstance(
+                        partition,
+                        dict,
+                    )
+                    else (
+                        "Complete analysis covers "
+                        "all loaded Spots"
+                    )
+                ),
+            ),
+            (
+                "Identifier Handling",
+                (
+                    "Valid 10-digit Indian MSISDN "
+                    "leads are separated from "
+                    "non-standard identifiers"
                 ),
             ),
             (
                 "Backend Run Directory",
-                saved.get("run_directory", "")
-                if isinstance(saved, dict)
-                else "",
+                _portable_report_path(
+                    saved.get(
+                        "run_directory",
+                        "",
+                    )
+                    if isinstance(
+                        saved,
+                        dict,
+                    )
+                    else ""
+                ),
             ),
         ],
     )
+
     overview.freeze_panes = "A4"
     overview.sheet_view.showGridLines = False
 
-    tables = [
-        ("2. Source Files", load_result.get("file_summary"), "Loaded source-file diagnostics."),
-        ("3. Session Summary", analysis.get("summary"), "Core GPRS session metrics."),
-        ("4. Technology", analysis.get("technology_summary"), "4G/5G technology distribution."),
-        ("5. Connection Type", analysis.get("pre_post_summary"), "Prepaid/Postpaid distribution."),
-        ("6. Roaming", analysis.get("roaming_summary"), "Roaming-circle distribution."),
-        ("7. Subscribers", analysis.get("subscriber_summary"), "Subscriber-wise session intelligence."),
-        ("8. Repeat Subscribers", analysis.get("repeat_subscribers"), "Subscribers with multiple sessions."),
-        ("8A. GPRS Common Repeat", analysis.get("gprs_common_numbers"), "Common/repeat GPRS numbers for investigator review."),
-        ("8B. GPRS Uncommon", analysis.get("gprs_uncommon_numbers"), "Uncommon/new visitor style GPRS numbers."),
-        ("8C. GPRS Multi Cell", analysis.get("gprs_multi_cell_presence"), "Numbers seen across multiple searched cells."),
-        ("8D. GPRS Device Check", analysis.get("gprs_device_consistency"), "IMEI/IMSI/IP consistency review."),
-        ("8E. GPRS Timing", analysis.get("gprs_suspicious_timing"), "High activity, high volume, and timing-based leads."),
-        ("8F. GPRS Priority Leads", analysis.get("gprs_priority_leads"), "Ranked GPRS leads with priority, confidence and next action."),
-        ("9. IMEI Summary", analysis.get("imei_summary"), "Device identity summary."),
-        ("10. Shared IMEI", analysis.get("shared_imei"), "IMEI associated with multiple subscribers."),
-        ("11. IMSI Summary", analysis.get("imsi_summary"), "SIM/subscriber identity summary."),
-        ("12. Shared IMSI", analysis.get("shared_imsi"), "IMSI associated with multiple subscribers."),
-        ("13. IP Analysis", analysis.get("ip_summary"), "IPv4 and IPv6 usage summary."),
-        ("14. Duration Buckets", analysis.get("duration_buckets"), "Session-duration distribution."),
-        ("15. Hourly Activity", analysis.get("hourly_activity"), "Session-start activity by hour."),
-        ("16. Long Sessions", analysis.get("long_sessions"), "Longest sessions for review."),
-        ("17. Zero Volume", analysis.get("zero_volume_sessions"), "Sessions with zero total data volume."),
-        ("18. Nonstandard IDs", analysis.get("non_standard_identifiers"), "Non-standard subscriber identifiers."),
-        ("19. Data Quality", analysis.get("data_quality"), "Validation and quality checks."),
-        ("20. Rejected Rows", analysis.get("rejected_rows"), "Malformed/non-data rows quarantined with physical source-line provenance."),
+    core_tables = [
+        (
+            "2. Source Files",
+            load_result.get(
+                "file_summary"
+            ),
+            (
+                "Source-file status with "
+                "portable relative paths."
+            ),
+        ),
+        (
+            "3. Spot Summary",
+            _build_gprs_spot_summary(
+                load_result
+            ),
+            (
+                "Spot-wise files, loaded records "
+                "and searched-cell coverage."
+            ),
+        ),
+        (
+            "4. Session Summary",
+            analysis.get(
+                "summary"
+            ),
+            "Core GPRS session metrics.",
+        ),
+        (
+            "5. Technology",
+            analysis.get(
+                "technology_summary"
+            ),
+            "Technology distribution.",
+        ),
+        (
+            "6. Connection Type",
+            analysis.get(
+                "pre_post_summary"
+            ),
+            "Prepaid and postpaid distribution.",
+        ),
+        (
+            "7. Roaming",
+            analysis.get(
+                "roaming_summary"
+            ),
+            "Roaming-circle distribution.",
+        ),
+        (
+            "8. Subscribers",
+            analysis.get(
+                "subscriber_summary"
+            ),
+            "Subscriber-identifier session intelligence.",
+        ),
+        (
+            "9. Repeat Subscribers",
+            analysis.get(
+                "repeat_subscribers"
+            ),
+            "Subscriber identifiers with multiple sessions.",
+        ),
+        (
+            "10. Common Mobile",
+            analysis.get(
+                "gprs_common_numbers"
+            ),
+            "Valid mobile numbers with repeat GPRS presence.",
+        ),
+        (
+            "11. Rare Mobile",
+            analysis.get(
+                "gprs_uncommon_numbers"
+            ),
+            "Valid mobile numbers with rare or single-session presence.",
+        ),
+        (
+            "12. Multi Cell Mobile",
+            analysis.get(
+                "gprs_multi_cell_presence"
+            ),
+            "Valid mobile numbers seen across multiple cells.",
+        ),
+        (
+            "13. Device Check",
+            analysis.get(
+                "gprs_device_consistency"
+            ),
+            "IMEI, IMSI and IP consistency review.",
+        ),
+        (
+            "14. Timing Leads",
+            analysis.get(
+                "gprs_suspicious_timing"
+            ),
+            "Timing-based GPRS leads.",
+        ),
+        (
+            "15. Priority Mobile",
+            analysis.get(
+                "gprs_priority_leads"
+            ),
+            "Ranked valid mobile-number leads.",
+        ),
+        (
+            "16. Nonstandard Leads",
+            analysis.get(
+                "gprs_non_standard_leads"
+            ),
+            (
+                "Non-standard subscriber identifiers "
+                "preserved separately for verification."
+            ),
+        ),
+        (
+            "17. IMEI Summary",
+            analysis.get(
+                "imei_summary"
+            ),
+            "Device identity summary.",
+        ),
+        (
+            "18. Shared IMEI",
+            analysis.get(
+                "shared_imei"
+            ),
+            "IMEI associated with multiple subscriber identifiers.",
+        ),
+        (
+            "19. IMSI Summary",
+            analysis.get(
+                "imsi_summary"
+            ),
+            "SIM/subscriber identity summary.",
+        ),
+        (
+            "20. Shared IMSI",
+            analysis.get(
+                "shared_imsi"
+            ),
+            "IMSI associated with multiple subscriber identifiers.",
+        ),
+        (
+            "21. IP Analysis",
+            analysis.get(
+                "ip_summary"
+            ),
+            "IPv4 and IPv6 usage summary.",
+        ),
+        (
+            "22. Duration Buckets",
+            analysis.get(
+                "duration_buckets"
+            ),
+            "Session-duration distribution.",
+        ),
+        (
+            "23. Hourly Activity",
+            analysis.get(
+                "hourly_activity"
+            ),
+            "Session-start activity by hour.",
+        ),
+        (
+            "24. Long Sessions",
+            analysis.get(
+                "long_sessions"
+            ),
+            "Longest sessions for verification.",
+        ),
+        (
+            "25. Zero Volume",
+            analysis.get(
+                "zero_volume_sessions"
+            ),
+            "Sessions with zero total volume.",
+        ),
+        (
+            "26. Nonstandard Raw",
+            analysis.get(
+                "non_standard_identifiers"
+            ),
+            (
+                "Raw non-standard identifier rows "
+                "with evidence provenance."
+            ),
+        ),
+        (
+            "27. Data Quality",
+            analysis.get(
+                "data_quality"
+            ),
+            "Validation and quality checks.",
+        ),
+        (
+            "28. Rejected Rows",
+            analysis.get(
+                "rejected_rows"
+            ),
+            "Malformed or non-data rows kept in quarantine.",
+        ),
     ]
 
-    partition_tables = [
-        ("21. Partition Windows", "partition_windows", "User-entered date/time and automatic ±10-minute windows."),
-        ("22. Partition Summary", "partition_summary", "Window-wise overlapping-session summary."),
-        ("23. Partition Status", "partition_status", "Valid, time-only and rejected sighting configurations."),
-        ("24. Location Exclusions", "time_only_excluded_by_location", "Time-overlapping sessions excluded because the searched cell did not match."),
-        ("25. Subscriber Presence", "subscriber_presence", "Subscriber presence across dynamic partitions."),
-        ("26. N-of-M Candidates", "n_of_m_candidates", "Subscribers present in two or more partitions."),
-        ("27. Strict Common", "strict_common_candidates", "Subscribers present in every partition."),
-        ("28. IMEI Continuity", "imei_presence", "IMEI continuity across partitions."),
-        ("29. IMSI Continuity", "imsi_presence", "IMSI continuity across partitions."),
-        ("30. IPv4 Continuity", "ipv4_presence", "IPv4 continuity across partitions."),
-        ("31. IPv6 Continuity", "ipv6_presence", "IPv6 continuity across partitions."),
-    ]
-
-    for name, dataframe, subtitle in tables:
+    for name, dataframe, subtitle in core_tables:
         _write_table(
             workbook,
             name,
-            _frame(dataframe),
+            _sanitize_gprs_report_frame(
+                dataframe
+            ),
             subtitle=subtitle,
         )
 
-    for name, key, subtitle in partition_tables:
-        dataframe = (
-            _frame(partition.get(key))
-            if isinstance(partition, dict)
-            else pd.DataFrame()
-        )
-        _write_table(
-            workbook,
-            name,
-            dataframe,
-            subtitle=subtitle,
-        )
+    partition_tables: list[
+        tuple[str, str, str]
+    ] = []
+
+    if isinstance(
+        partition,
+        dict,
+    ):
+        partition_tables = [
+            (
+                "29. Part Windows",
+                "partition_windows",
+                (
+                    "Exact Start and End Date-Time "
+                    "with selected Spot scope."
+                ),
+            ),
+            (
+                "30. Part Summary",
+                "partition_summary",
+                (
+                    "Spot-wise session-overlap "
+                    "and subscriber counts."
+                ),
+            ),
+            (
+                "31. Part Status",
+                "partition_status",
+                "Part validation and scope status.",
+            ),
+            (
+                "32. Location Exclusions",
+                "time_only_excluded_by_location",
+                (
+                    "Time-overlapping sessions excluded "
+                    "because the selected scope did not match."
+                ),
+            ),
+            (
+                "33. Mobile Presence",
+                "subscriber_presence",
+                (
+                    "Valid mobile-number presence "
+                    "across configured Parts."
+                ),
+            ),
+            (
+                "34. Mobile in 2+ Parts",
+                "n_of_m_candidates",
+                (
+                    "Valid mobile numbers present "
+                    "in two or more Parts."
+                ),
+            ),
+            (
+                "35. Strict Common Mobile",
+                "strict_common_candidates",
+                (
+                    "Valid mobile numbers present "
+                    "in every configured Part."
+                ),
+            ),
+            (
+                "36. Part Nonstandard IDs",
+                "non_standard_subscriber_presence",
+                (
+                    "Non-standard identifiers preserved "
+                    "with Part presence classification."
+                ),
+            ),
+            (
+                "37. IMEI Continuity",
+                "imei_presence",
+                "IMEI continuity across Parts.",
+            ),
+            (
+                "38. IMSI Continuity",
+                "imsi_presence",
+                "IMSI continuity across Parts.",
+            ),
+            (
+                "39. IPv4 Continuity",
+                "ipv4_presence",
+                "IPv4 continuity across Parts.",
+            ),
+            (
+                "40. IPv6 Continuity",
+                "ipv6_presence",
+                "IPv6 continuity across Parts.",
+            ),
+        ]
+
+        for name, key, subtitle in partition_tables:
+            _write_table(
+                workbook,
+                name,
+                _sanitize_gprs_report_frame(
+                    partition.get(
+                        key
+                    )
+                ),
+                subtitle=subtitle,
+            )
+
+    status_number = (
+        41
+        if partition_tables
+        else 29
+    )
+    warning_number = (
+        42
+        if partition_tables
+        else 30
+    )
 
     status = pd.DataFrame(
         [
             {
                 "Stage": "Tower GPRS Loading",
                 "Status": "COMPLETED",
-                "Details": f"{metadata.get('records', 0):,} normalized sessions",
+                "Details": (
+                    f"{metadata.get('records', 0):,} "
+                    "normalized sessions"
+                ),
             },
             {
                 "Stage": "Core Analysis",
                 "Status": "COMPLETED",
-                "Details": f"{len(tables)} analytical table groups",
+                "Details": (
+                    f"{len(core_tables)} "
+                    "analytical table groups"
+                ),
             },
             {
-                "Stage": "Date-Time Partitioning",
+                "Stage": "Spot-based Part Analysis",
                 "Status": (
                     "COMPLETED"
-                    if isinstance(partition, dict)
+                    if partition_tables
                     else "NOT REQUESTED"
                 ),
                 "Details": (
-                    f"{partition.get('total_partitions', 0)} partitions"
-                    if isinstance(partition, dict)
+                    f"{partition.get('total_partitions', 0)} Parts"
+                    if partition_tables
                     else ""
                 ),
             },
             {
                 "Stage": "Consolidated Excel",
                 "Status": "COMPLETED",
-                "Details": str(report_path),
+                "Details": _portable_report_path(
+                    report_path
+                ),
             },
         ]
     )
+
     _write_table(
         workbook,
-        "29. Analysis Status",
+        f"{status_number}. Analysis Status",
         status,
         subtitle="Execution status for this report.",
     )
+
     warning_names = _write_table(
         workbook,
-        "30. Warnings",
-        _warnings(load_result),
+        f"{warning_number}. Warnings",
+        _sanitize_gprs_report_frame(
+            _warnings(
+                load_result
+            )
+        ),
         subtitle="Loader and normalization warnings.",
     )
 
     for sheet_name in warning_names:
-        worksheet = workbook[sheet_name]
+        worksheet = workbook[
+            sheet_name
+        ]
 
-        for row in range(5, worksheet.max_row + 1):
-            level = str(worksheet.cell(row, 1).value or "").upper()
-            worksheet.cell(row, 1).fill = (
+        for row in range(
+            5,
+            worksheet.max_row + 1,
+        ):
+            level = str(
+                worksheet.cell(
+                    row,
+                    1,
+                ).value
+                or ""
+            ).upper()
+
+            worksheet.cell(
+                row,
+                1,
+            ).fill = (
                 ERROR_FILL
                 if level == "ERROR"
                 else WARNING_FILL
@@ -485,9 +1342,19 @@ def generate_tower_gprs_excel_report(
         f"Tower GPRS Dump Analysis - {case_id}"
     )
     workbook.properties.subject = (
-        "GPRS session and date-time part overlap analysis"
+        "GPRS session, Spot and Date-Time Part analysis"
     )
-    workbook.properties.creator = "Telecom Forensics Analysis Suite"
-    append_methodology_sheet(workbook, "Tower GPRS Dump Analysis")
-    workbook.save(report_path)
+    workbook.properties.creator = (
+        "Telecom Forensics Analysis Suite"
+    )
+
+    append_methodology_sheet(
+        workbook,
+        "Tower GPRS Dump Analysis",
+    )
+
+    workbook.save(
+        report_path
+    )
+
     return report_path

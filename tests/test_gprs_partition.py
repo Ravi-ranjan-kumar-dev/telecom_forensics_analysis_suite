@@ -6,7 +6,11 @@ from modules.analysis.gprsdump import create_gprs_partitions
 def test_true_session_overlap():
     dataframe = pd.DataFrame(
         {
-            "subscriber_number": ["111", "222", "111"],
+            "subscriber_number": [
+                    "9000000001",
+                    "9000000002",
+                    "9000000001",
+                ],
             "imei": ["I1", "I2", "I1"],
             "imsi": ["S1", "S2", "S1"],
             "ipv4_address": ["10.0.0.1", "10.0.0.2", "10.0.0.1"],
@@ -60,5 +64,5 @@ def test_true_session_overlap():
     assert (
         result["strict_common_candidates"]
         .iloc[0]["subscriber_number"]
-        == "111"
+        == "9000000001"
     )

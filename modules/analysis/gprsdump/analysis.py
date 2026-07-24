@@ -315,10 +315,10 @@ def run_gprs_analysis(
     file_summary: pd.DataFrame | None = None,
 ) -> dict[str, Any]:
     if not isinstance(df, pd.DataFrame):
-        raise TypeError("GPRS pandas DataFrame required hai.")
+        raise TypeError("A GPRS pandas DataFrame is required.")
 
     if df.empty:
-        raise ValueError("GPRS DataFrame empty hai.")
+        raise ValueError("The GPRS DataFrame is empty.")
 
     subscriber_summary = _subscriber_summary(df)
     imei_summary = _identity_summary(df, "imei")
@@ -486,7 +486,7 @@ def create_gprs_partitions(
     """Create time-and-CGI scoped GPRS partitions.
 
     Session rule:
-        session_start <= window_end AND session_end >= window_start
+        session_start < window_end AND session_end > window_start
 
     For an explicit CGI group, the session must also match the sighting's
     resolved ``searched_cell_id``. ``AUTO_ALL`` remains available as an
@@ -494,7 +494,7 @@ def create_gprs_partitions(
     """
 
     if not isinstance(df, pd.DataFrame) or df.empty:
-        raise ValueError("Valid GPRS DataFrame required hai.")
+        raise ValueError("A valid GPRS DataFrame is required.")
 
     ordered = sorted(
         [item for item in sightings if isinstance(item, dict)],
@@ -552,7 +552,7 @@ def create_gprs_partitions(
             status.update(
                 status="INVALID_SIGHTING_ID",
                 scope_mode="INVALID",
-                message="Sighting ID missing hai.",
+                message="Part identifier is missing.",
                 included=False,
             )
             status_rows.append(status)
@@ -562,7 +562,7 @@ def create_gprs_partitions(
             status.update(
                 status="INVALID_TIME_WINDOW",
                 scope_mode="INVALID",
-                message="Window start/end invalid hai.",
+                message="Window Start and End are invalid.",
                 included=False,
             )
             status_rows.append(status)
@@ -605,7 +605,7 @@ def create_gprs_partitions(
                 scope_mode="INVALID",
                 message=spot_scope.get(
                     "message",
-                    "Selected Spot resolve नहीं हुआ।",
+                    "The selected Spot could not be resolved.",
                 ),
                 included=False,
             )
@@ -661,7 +661,7 @@ def create_gprs_partitions(
 
         time_mask = (
             session_start.lt(window_end)
-            & session_end.ge(window_start)
+            & session_end.gt(window_start)
             & session_start.notna()
             & session_end.notna()
         )
@@ -836,7 +836,13 @@ def create_gprs_partitions(
                 "scope_mode": scope["scope_mode"],
                 "resolved_cgi_count": len(scope["cell_keys"]),
                 "sessions": len(part),
-                "time_only_location_exclusions": int((time_mask & ~location_mask).sum()),
+                "time_only_location_exclusions": int(
+                    (
+                        time_mask
+                        & spot_mask
+                        & ~location_mask
+                    ).sum()
+                ),
                 "unique_subscribers": _clean_text(part["subscriber_number"]).replace("", pd.NA).nunique() if not part.empty else 0,
                 "unique_imei": _clean_text(part["imei"]).replace("", pd.NA).nunique() if not part.empty else 0,
                 "unique_imsi": _clean_text(part["imsi"]).replace("", pd.NA).nunique() if not part.empty else 0,
@@ -846,22 +852,127 @@ def create_gprs_partitions(
             }
         )
 
-    subscriber_presence = _presence_table(partitions, "subscriber_number")
-    imei_presence = _presence_table(partitions, "imei")
-    imsi_presence = _presence_table(partitions, "imsi")
-    ipv4_presence = _presence_table(partitions, "ipv4_address")
-    ipv6_presence = _presence_table(partitions, "ipv6_address")
+    subscriber_presence_all = _presence_table(
+        partitions,
+        "subscriber_number",
+    )
+    imei_presence = _presence_table(
+        partitions,
+        "imei",
+    )
+    imsi_presence = _presence_table(
+        partitions,
+        "imsi",
+    )
+    ipv4_presence = _presence_table(
+        partitions,
+        "ipv4_address",
+    )
+    ipv6_presence = _presence_table(
+        partitions,
+        "ipv6_address",
+    )
 
     total = len(partitions)
     minimum = 1 if total <= 1 else 2
+
+    if subscriber_presence_all.empty:
+        subscriber_presence = (
+            subscriber_presence_all.copy()
+        )
+        non_standard_subscriber_presence = (
+            subscriber_presence_all.copy()
+        )
+
+    else:
+        identifier_values = (
+            subscriber_presence_all[
+                "subscriber_number"
+            ]
+            .fillna("")
+            .astype(str)
+            .str.strip()
+        )
+
+        valid_msisdn_mask = (
+            identifier_values.str.fullmatch(
+                r"[6-9]\d{9}",
+                na=False,
+            )
+        )
+
+        subscriber_presence = (
+            subscriber_presence_all.loc[
+                valid_msisdn_mask
+            ]
+            .copy()
+            .reset_index(
+                drop=True
+            )
+        )
+
+        non_standard_subscriber_presence = (
+            subscriber_presence_all.loc[
+                ~valid_msisdn_mask
+                & identifier_values.ne("")
+            ]
+            .copy()
+            .reset_index(
+                drop=True
+            )
+        )
+
+        if not non_standard_subscriber_presence.empty:
+            non_standard_subscriber_presence.insert(
+                1,
+                "identifier_type",
+                "NON_STANDARD_SUBSCRIBER_ID",
+            )
+
+            match_counts = pd.to_numeric(
+                non_standard_subscriber_presence[
+                    "match_count"
+                ],
+                errors="coerce",
+            ).fillna(0)
+
+            non_standard_subscriber_presence[
+                "presence_class"
+            ] = "SINGLE_PART_NON_STANDARD"
+
+            non_standard_subscriber_presence.loc[
+                match_counts.ge(minimum),
+                "presence_class",
+            ] = "MULTI_PART_NON_STANDARD"
+
+            if total:
+                non_standard_subscriber_presence.loc[
+                    match_counts.eq(total),
+                    "presence_class",
+                ] = "STRICT_COMMON_NON_STANDARD"
+
     n_of_m = (
-        subscriber_presence.loc[subscriber_presence["match_count"] >= minimum].reset_index(drop=True)
+        subscriber_presence.loc[
+            subscriber_presence[
+                "match_count"
+            ] >= minimum
+        ].reset_index(
+            drop=True
+        )
         if not subscriber_presence.empty
         else subscriber_presence
     )
+
     strict = (
-        subscriber_presence.loc[subscriber_presence["match_count"] == total].reset_index(drop=True)
-        if total and not subscriber_presence.empty
+        subscriber_presence.loc[
+            subscriber_presence[
+                "match_count"
+            ] == total
+        ].reset_index(
+            drop=True
+        )
+        if total
+        and not subscriber_presence.empty
         else subscriber_presence.head(0)
     )
 
@@ -871,7 +982,9 @@ def create_gprs_partitions(
         "partition_status": pd.DataFrame(status_rows),
         "time_only_excluded_by_location": pd.concat(excluded_hits, ignore_index=True) if excluded_hits else pd.DataFrame(),
         "partitions": partitions,
+        "all_subscriber_presence": subscriber_presence_all,
         "subscriber_presence": subscriber_presence,
+        "non_standard_subscriber_presence": non_standard_subscriber_presence,
         "n_of_m_candidates": n_of_m,
         "strict_common_candidates": strict,
         "imei_presence": imei_presence,
@@ -884,7 +997,7 @@ def create_gprs_partitions(
         "warnings": list(dict.fromkeys(warnings)),
         "overlap_rule": (
             "session_start < window_end "
-            "AND session_end >= window_start"
+            "AND session_end > window_start"
         ),
         "spot_rule": (
             "selected Spot is applied before "

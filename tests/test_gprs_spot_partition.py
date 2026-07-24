@@ -221,7 +221,7 @@ def test_gprs_partition_is_spot_aware_and_half_open():
         result["overlap_rule"]
         == (
             "session_start < window_end "
-            "AND session_end >= window_start"
+            "AND session_end > window_start"
         )
     )
 

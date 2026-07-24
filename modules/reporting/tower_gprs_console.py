@@ -35,7 +35,7 @@ DISPLAY_COLUMNS: dict[str, list[str]] = {
         "why_important",
         "next_action",
     ],
-    "GPRS UNCOMMON / NEW VISITOR NUMBERS": [
+    "GPRS RARE / SINGLE-SESSION PRESENCE": [
         "subscriber_number",
         "priority",
         "confidence",
@@ -196,17 +196,26 @@ def print_gprs_analysis(
     *,
     row_limit: int = 15,
 ) -> None:
-    """Print short investigator-focused Tower GPRS console report."""
+    """Print a short investigator-focused Tower GPRS report."""
 
-    display_limit = min(int(row_limit or 15), 15)
+    display_limit = min(
+        int(row_limit or 15),
+        15,
+    )
 
     print("\n" + "#" * 90)
     print("TOWER GPRS DUMP ANALYSIS")
     print("#" * 90)
 
     print("\n" + "-" * 90)
-    print("Console par sirf important investigation leads dikhaye ja rahe hain.")
-    print("Full details Excel report me available rahenge.")
+    print(
+        "Only important investigation leads "
+        "are shown in the console."
+    )
+    print(
+        "Full details are available "
+        "in the Excel report."
+    )
     print("-" * 90)
 
     _print_table(
@@ -225,22 +234,22 @@ def print_gprs_analysis(
         limit=display_limit,
     )
     _print_table(
-        "GPRS PRIORITY LEADS",
+        "GPRS PRIORITY MOBILE LEADS",
         result.get("gprs_priority_leads"),
         limit=display_limit,
     )
     _print_table(
-        "GPRS UNCOMMON / NEW VISITOR NUMBERS",
+        "GPRS RARE / SINGLE-SESSION MOBILE PRESENCE",
         result.get("gprs_uncommon_numbers"),
         limit=display_limit,
     )
     _print_table(
-        "GPRS COMMON / REPEAT NUMBERS",
+        "GPRS COMMON / REPEAT MOBILE NUMBERS",
         result.get("gprs_common_numbers"),
         limit=display_limit,
     )
     _print_table(
-        "GPRS MULTI-CELL PRESENCE",
+        "GPRS MULTI-CELL MOBILE PRESENCE",
         result.get("gprs_multi_cell_presence"),
         limit=display_limit,
     )
@@ -252,6 +261,11 @@ def print_gprs_analysis(
     _print_table(
         "GPRS SUSPICIOUS TIMING",
         result.get("gprs_suspicious_timing"),
+        limit=display_limit,
+    )
+    _print_table(
+        "NON-STANDARD SUBSCRIBER IDENTIFIER LEADS",
+        result.get("gprs_non_standard_leads"),
         limit=display_limit,
     )
     _print_table(
@@ -271,6 +285,7 @@ def print_gprs_analysis(
     )
 
 
+
 def print_tower_gprs_report(
     result: dict[str, Any],
     *,
@@ -286,30 +301,78 @@ def print_gprs_partition(
     *,
     row_limit: int = 50,
 ) -> None:
-    """Print Tower GPRS date-time partition report."""
+    """Print the Spot-based GPRS Part report."""
+
+    def display_frame(
+        value: Any,
+    ) -> Any:
+        if not isinstance(
+            value,
+            pd.DataFrame,
+        ):
+            return value
+
+        frame = value.copy()
+
+        if (
+            "cctv_timestamp"
+            in frame.columns
+            and "window_start"
+            in frame.columns
+            and "window_end"
+            in frame.columns
+        ):
+            frame = frame.drop(
+                columns=[
+                    "cctv_timestamp",
+                ]
+            )
+
+        return frame
 
     _print_table(
-        "GPRS PARTITION WINDOWS",
-        result.get("partition_windows"),
+        "GPRS SPOT-BASED DATE-TIME PARTS",
+        display_frame(
+            result.get(
+                "partition_windows"
+            )
+        ),
         limit=100,
     )
     _print_table(
-        "GPRS PARTITION SUMMARY",
-        result.get("partition_summary"),
+        "GPRS PART SUMMARY",
+        display_frame(
+            result.get(
+                "partition_summary"
+            )
+        ),
         limit=100,
     )
     _print_table(
-        "N-OF-M COMMON CANDIDATES",
-        result.get("n_of_m_candidates"),
+        "MOBILE NUMBERS PRESENT IN 2+ PARTS",
+        result.get(
+            "n_of_m_candidates"
+        ),
         limit=row_limit,
     )
     _print_table(
-        "STRICT COMMON CANDIDATES",
-        result.get("strict_common_candidates"),
+        "STRICT COMMON MOBILE NUMBERS",
+        result.get(
+            "strict_common_candidates"
+        ),
         limit=row_limit,
     )
     _print_table(
-        "PARTITION SUBSCRIBER PRESENCE",
-        result.get("subscriber_presence"),
+        "PART-WISE MOBILE NUMBER PRESENCE",
+        result.get(
+            "subscriber_presence"
+        ),
+        limit=row_limit,
+    )
+    _print_table(
+        "PART-WISE NON-STANDARD IDENTIFIERS",
+        result.get(
+            "non_standard_subscriber_presence"
+        ),
         limit=row_limit,
     )
