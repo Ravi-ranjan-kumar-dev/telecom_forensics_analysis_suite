@@ -151,96 +151,195 @@ def _enrich_target_metadata_with_sdr(
     metadata: dict[str, Any],
     target,
 ) -> dict[str, Any]:
-    """
-    Report target number ki SDR subscriber identity metadata mein add kare.
-    """
-    result = dict(metadata)
+    """Add the target subscriber profile to report metadata."""
+
+    result = dict(
+        metadata
+    )
 
     from modules.enrichment.sdr_subscriber_enrichment import (
         lookup_sdr_subscribers,
         normalize_mobile_number,
     )
 
-    normalized_target = normalize_mobile_number(target)
+    normalized_target = normalize_mobile_number(
+        target
+    )
 
-    result["target_sdr_found"] = "No"
-    result["target_lookup_mobile"] = normalized_target
+    result[
+        "target_sdr_found"
+    ] = "No"
+
+    result[
+        "target_lookup_mobile"
+    ] = normalized_target
 
     if not normalized_target:
+        print(
+            "[=] Target SDR lookup skipped: "
+            "invalid or unsupported mobile number."
+        )
         return result
 
     try:
         lookup = lookup_sdr_subscribers(
-            [normalized_target]
+            [
+                normalized_target,
+            ]
         )
+
     except Exception as error:
         print(
             "[!] Target SDR metadata lookup failed:",
             normalized_target,
             "|",
-            type(error).__name__,
+            type(
+                error
+            ).__name__,
             "|",
-            str(error),
+            str(
+                error
+            ),
         )
         return result
 
-    if lookup is None or not isinstance(
-        lookup,
-        pd.DataFrame,
+    if (
+        not isinstance(
+            lookup,
+            pd.DataFrame,
+        )
+        or lookup.empty
     ):
+        print(
+            "[=] Target SDR profile not found:",
+            normalized_target,
+        )
         return result
 
-    if lookup.empty:
-        return result
+    subscriber = lookup.iloc[
+        0
+    ]
 
-    subscriber = lookup.iloc[0]
+    found_text = str(
+        subscriber.get(
+            "sdr_found",
+            "",
+        )
+        or ""
+    ).strip().lower()
+
+    identity_fields = (
+        "subscriber_name",
+        "father_name",
+        "subscriber_address",
+        "operator",
+        "circle",
+        "activation_date",
+        "caf_number",
+    )
+
+    has_identity_value = any(
+        not _metadata_value_is_blank(
+            subscriber.get(
+                field,
+                "",
+            )
+        )
+        for field in identity_fields
+    )
+
+    profile_found = (
+        found_text
+        in {
+            "yes",
+            "y",
+            "true",
+            "1",
+            "found",
+        }
+        or has_identity_value
+    )
+
+    result[
+        "target_sdr_source"
+    ] = str(
+        subscriber.get(
+            "source_file",
+            "",
+        )
+        or ""
+    ).strip()
+
+    if not profile_found:
+        print(
+            "[=] Target SDR profile not found:",
+            normalized_target,
+        )
+        return result
 
     field_mapping = {
-        "subscriber_name": "subscriber_name",
-        "father_name": "father_name",
-        "address": "subscriber_address",
-        "operator": "operator",
-        "circle": "circle",
-        "activation_date": "activation_date",
-        "caf_number": "caf_number",
+        "subscriber_name": (
+            "subscriber_name"
+        ),
+        "father_name": (
+            "father_name"
+        ),
+        "address": (
+            "subscriber_address"
+        ),
+        "operator": (
+            "operator"
+        ),
+        "circle": (
+            "circle"
+        ),
+        "activation_date": (
+            "activation_date"
+        ),
+        "caf_number": (
+            "caf_number"
+        ),
     }
 
-    for metadata_field, lookup_field in field_mapping.items():
+    for (
+        metadata_field,
+        lookup_field,
+    ) in field_mapping.items():
         lookup_value = subscriber.get(
             lookup_field,
             "",
         )
 
-        if _metadata_value_is_blank(lookup_value):
+        if _metadata_value_is_blank(
+            lookup_value
+        ):
             continue
 
         if _metadata_value_is_blank(
-            result.get(metadata_field)
+            result.get(
+                metadata_field
+            )
         ):
-            result[metadata_field] = lookup_value
+            result[
+                metadata_field
+            ] = lookup_value
 
-    result["target_sdr_found"] = str(
-        subscriber.get(
-            "sdr_found",
-            "Yes",
-        )
-    ).strip() or "Yes"
-
-    result["target_sdr_source"] = str(
-        subscriber.get(
-            "source_file",
-            "",
-        )
-    ).strip()
+    result[
+        "target_sdr_found"
+    ] = "Yes"
 
     print(
-        "[+] Target SDR profile enriched:",
+        "[+] Target SDR profile found:",
         normalized_target,
         "|",
-        result.get("subscriber_name", ""),
+        result.get(
+            "subscriber_name",
+            "",
+        ),
     )
 
     return result
+
 
 
 def _metadata_rows(meta: dict[str, Any], report_name: str) -> list[tuple[str, Any]]:
@@ -261,20 +360,120 @@ def _metadata_rows(meta: dict[str, Any], report_name: str) -> list[tuple[str, An
     ]
 
 
-def _voice_out_mask(data: pd.DataFrame) -> pd.Series:
-    return data["call_type"].eq("outgoing") | ((data["call_direction"].eq("OUTGOING")) & ~data["call_type"].str.contains("sms", na=False))
+def _voice_out_mask(
+    data: pd.DataFrame,
+) -> pd.Series:
+    """Return only canonical outgoing voice records."""
+
+    call_type = (
+        data[
+            "call_type"
+        ]
+        .astype(
+            "string"
+        )
+        .fillna(
+            ""
+        )
+        .str.strip()
+        .str.lower()
+    )
+
+    return call_type.isin(
+        {
+            "outgoing",
+            "outgoing_voice",
+            "voice_out",
+        }
+    )
 
 
-def _voice_in_mask(data: pd.DataFrame) -> pd.Series:
-    return data["call_type"].eq("incoming") | ((data["call_direction"].eq("INCOMING")) & ~data["call_type"].str.contains("sms", na=False))
+
+def _voice_in_mask(
+    data: pd.DataFrame,
+) -> pd.Series:
+    """Return only canonical incoming voice records."""
+
+    call_type = (
+        data[
+            "call_type"
+        ]
+        .astype(
+            "string"
+        )
+        .fillna(
+            ""
+        )
+        .str.strip()
+        .str.lower()
+    )
+
+    return call_type.isin(
+        {
+            "incoming",
+            "incoming_voice",
+            "voice_in",
+        }
+    )
 
 
-def _sms_out_mask(data: pd.DataFrame) -> pd.Series:
-    return data["call_type"].isin(["smsout", "outgoing_sms"]) | (data["call_type"].str.contains("sms", na=False) & data["call_direction"].eq("OUTGOING"))
+
+def _sms_out_mask(
+    data: pd.DataFrame,
+) -> pd.Series:
+    """Return only canonical outgoing SMS records."""
+
+    call_type = (
+        data[
+            "call_type"
+        ]
+        .astype(
+            "string"
+        )
+        .fillna(
+            ""
+        )
+        .str.strip()
+        .str.lower()
+    )
+
+    return call_type.isin(
+        {
+            "smsout",
+            "outgoing_sms",
+            "sms_out",
+        }
+    )
 
 
-def _sms_in_mask(data: pd.DataFrame) -> pd.Series:
-    return data["call_type"].isin(["smsin", "incoming_sms"]) | (data["call_type"].str.contains("sms", na=False) & data["call_direction"].eq("INCOMING"))
+
+def _sms_in_mask(
+    data: pd.DataFrame,
+) -> pd.Series:
+    """Return only canonical incoming SMS records."""
+
+    call_type = (
+        data[
+            "call_type"
+        ]
+        .astype(
+            "string"
+        )
+        .fillna(
+            ""
+        )
+        .str.strip()
+        .str.lower()
+    )
+
+    return call_type.isin(
+        {
+            "smsin",
+            "incoming_sms",
+            "sms_in",
+        }
+    )
+
 
 
 def _call_type_display(data: pd.DataFrame) -> pd.Series:
@@ -344,17 +543,166 @@ def _contact_summary(data: pd.DataFrame) -> pd.DataFrame:
     return result.sort_values(["Total Calls", "Total Duration"], ascending=False).reset_index(drop=True)
 
 
-def _cell_summary(data: pd.DataFrame) -> pd.DataFrame:
-    work = data[data["first_cell_id"].notna() & data["first_cell_id"].astype("string").str.strip().ne("")]
-    if work.empty:
-        return pd.DataFrame(columns=["Cell ID", "Total Calls", "Address"])
-    result = work.groupby("first_cell_id", dropna=False).agg(
-        **{
-            "Total Calls": ("first_cell_id", "size"),
-            "Address": ("tower_address", lambda x: x.dropna().astype(str).iloc[0] if not x.dropna().empty else ""),
+def _normalized_valid_cell_ids(
+    data: pd.DataFrame,
+) -> pd.Series:
+    """
+    Return only normalized Cell IDs that match a supported CGI shape.
+
+    Supported values include:
+    - Hyphenated CGI values such as 405-52-3347-232803094
+    - Compact numeric or hexadecimal CGI keys used by some operators
+
+    Blank values and descriptive text such as INVALID are rejected.
+    """
+
+    from modules.enrichment.telecom_master_enrichment import (
+        normalize_cgi,
+    )
+
+    if (
+        not isinstance(
+            data,
+            pd.DataFrame,
+        )
+        or "first_cell_id"
+        not in data.columns
+    ):
+        return pd.Series(
+            pd.NA,
+            index=(
+                data.index
+                if isinstance(
+                    data,
+                    pd.DataFrame,
+                )
+                else None
+            ),
+            dtype="string",
+        )
+
+    normalized = (
+        data[
+            "first_cell_id"
+        ]
+        .map(
+            normalize_cgi
+        )
+        .astype(
+            "string"
+        )
+        .str.strip()
+        .str.upper()
+    )
+
+    normalized = normalized.replace(
+        {
+            "": pd.NA,
+            "NONE": pd.NA,
+            "<NA>": pd.NA,
+            "NAN": pd.NA,
         }
-    ).reset_index().rename(columns={"first_cell_id": "Cell ID"})
-    return result.sort_values("Total Calls", ascending=False).reset_index(drop=True)
+    )
+
+    hyphenated_cgi = normalized.str.fullmatch(
+        r"\d{3}-\d{2,3}-[0-9A-F]+-[0-9A-F]+",
+        na=False,
+    )
+
+    compact_cgi = normalized.str.fullmatch(
+        r"[0-9A-F]{10,32}",
+        na=False,
+    )
+
+    valid_mask = (
+        hyphenated_cgi
+        | compact_cgi
+    )
+
+    return normalized.where(
+        valid_mask,
+        pd.NA,
+    )
+
+
+def _cell_summary(
+    data: pd.DataFrame,
+) -> pd.DataFrame:
+    """Build a summary of valid normalized Cell IDs only."""
+
+    work = data.copy()
+
+    work[
+        "_valid_cell_id"
+    ] = _normalized_valid_cell_ids(
+        work
+    )
+
+    work = work[
+        work[
+            "_valid_cell_id"
+        ].notna()
+    ].copy()
+
+    if work.empty:
+        return pd.DataFrame(
+            columns=[
+                "Cell ID",
+                "Total Calls",
+                "Address",
+            ]
+        )
+
+    if "tower_address" not in work.columns:
+        work[
+            "tower_address"
+        ] = ""
+
+    result = (
+        work.groupby(
+            "_valid_cell_id",
+            dropna=False,
+        )
+        .agg(
+            **{
+                "Total Calls": (
+                    "_valid_cell_id",
+                    "size",
+                ),
+                "Address": (
+                    "tower_address",
+                    lambda values: (
+                        values.dropna()
+                        .astype(
+                            str
+                        )
+                        .iloc[
+                            0
+                        ]
+                        if not values.dropna().empty
+                        else ""
+                    ),
+                ),
+            }
+        )
+        .reset_index()
+        .rename(
+            columns={
+                "_valid_cell_id": "Cell ID",
+            }
+        )
+    )
+
+    return (
+        result.sort_values(
+            "Total Calls",
+            ascending=False,
+        )
+        .reset_index(
+            drop=True
+        )
+    )
+
 
 
 def _imei_summary(data: pd.DataFrame) -> pd.DataFrame:
@@ -519,34 +867,182 @@ def _direction_sheet(data: pd.DataFrame, mask: pd.Series) -> pd.DataFrame:
     })
 
 
-def _extract_table(data: pd.DataFrame, bundle: dict[str, Any]) -> pd.DataFrame:
-    voice_out = int(_voice_out_mask(data).sum())
-    voice_in = int(_voice_in_mask(data).sum())
-    sms_out = int(_sms_out_mask(data).sum())
-    sms_in = int(_sms_in_mask(data).sum())
-    rows: list[tuple[str, Any]] = [
-        ("Total Records", len(data)),
-        ("Unique Contacts", data["other_party"].replace("", pd.NA).dropna().nunique()),
-        ("Outgoing Calls", voice_out),
-        ("Incoming Calls", voice_in),
-        ("Outgoing SMS", sms_out),
-        ("Incoming SMS", sms_in),
-        ("Total Call Duration (Sec)", int(data.loc[_voice_out_mask(data) | _voice_in_mask(data), "call_duration"].sum())),
-        ("Unique IMEIs", data["imei"].replace("", pd.NA).dropna().nunique()),
-        ("Unique IMSIs", data["imsi"].replace("", pd.NA).dropna().nunique()),
-        ("Unique Cell IDs", data["first_cell_id"].replace("", pd.NA).dropna().nunique()),
+def _extract_table(
+    data: pd.DataFrame,
+    bundle: dict[str, Any],
+) -> pd.DataFrame:
+    """Build the report-level canonical CDR summary."""
+
+    voice_out_mask = _voice_out_mask(
+        data
+    )
+
+    voice_in_mask = _voice_in_mask(
+        data
+    )
+
+    sms_out_mask = _sms_out_mask(
+        data
+    )
+
+    sms_in_mask = _sms_in_mask(
+        data
+    )
+
+    valid_cell_ids = (
+        _normalized_valid_cell_ids(
+            data
+        )
+    )
+
+    rows: list[
+        tuple[
+            str,
+            Any,
+        ]
+    ] = [
+        (
+            "Total Records",
+            len(
+                data
+            ),
+        ),
+        (
+            "Unique Contacts",
+            data[
+                "other_party"
+            ]
+            .replace(
+                "",
+                pd.NA,
+            )
+            .dropna()
+            .nunique(),
+        ),
+        (
+            "Outgoing Calls",
+            int(
+                voice_out_mask.sum()
+            ),
+        ),
+        (
+            "Incoming Calls",
+            int(
+                voice_in_mask.sum()
+            ),
+        ),
+        (
+            "Outgoing SMS",
+            int(
+                sms_out_mask.sum()
+            ),
+        ),
+        (
+            "Incoming SMS",
+            int(
+                sms_in_mask.sum()
+            ),
+        ),
+        (
+            "Total Call Duration (Sec)",
+            int(
+                pd.to_numeric(
+                    data.loc[
+                        (
+                            voice_out_mask
+                            | voice_in_mask
+                        ),
+                        "call_duration",
+                    ],
+                    errors="coerce",
+                )
+                .fillna(
+                    0
+                )
+                .sum()
+            ),
+        ),
+        (
+            "Unique IMEIs",
+            data[
+                "imei"
+            ]
+            .replace(
+                "",
+                pd.NA,
+            )
+            .dropna()
+            .nunique(),
+        ),
+        (
+            "Unique IMSIs",
+            data[
+                "imsi"
+            ]
+            .replace(
+                "",
+                pd.NA,
+            )
+            .dropna()
+            .nunique(),
+        ),
+        (
+            "Unique Cell IDs",
+            valid_cell_ids
+            .dropna()
+            .nunique(),
+        ),
     ]
 
-    contacts = _contact_summary(data).head(10)
-    for _, contact in contacts.iterrows():
-        rows.append(("High-Frequency Contact", f"{contact['Other Party']} => Total Events = {contact['Total Calls']}, Duration = {contact['Total Duration']} sec"))
+    contacts = _contact_summary(
+        data
+    ).head(
+        10
+    )
 
-    errors = bundle.get("errors", {}) if isinstance(bundle, dict) else {}
+    for _, contact in contacts.iterrows():
+        rows.append(
+            (
+                "High-Frequency Contact",
+                (
+                    f"{contact['Other Party']} => "
+                    f"Total Events = "
+                    f"{contact['Total Calls']}, "
+                    f"Duration = "
+                    f"{contact['Total Duration']} sec"
+                ),
+            )
+        )
+
+    errors = (
+        bundle.get(
+            "errors",
+            {},
+        )
+        if isinstance(
+            bundle,
+            dict,
+        )
+        else {}
+    )
+
     if errors:
         for name, message in errors.items():
-            rows.append(("Analysis Warning", f"{name}: {message}"))
+            rows.append(
+                (
+                    "Analysis Warning",
+                    f"{name}: {message}",
+                )
+            )
 
-    return pd.DataFrame(rows, columns=["Header", "Details"])
+    return pd.DataFrame(
+        rows,
+        columns=[
+            "Header",
+            "Details",
+        ],
+    )
+
 
 
 # FINAL_SDR_CONTACT_REPORT_HELPER
@@ -555,195 +1051,412 @@ def _enrich_contact_report_dataframe(
     frame: pd.DataFrame,
 ) -> pd.DataFrame:
     """
-    Top Human Contacts aur Contact Ranking sheets mein
-    SDR subscriber details add kare.
+    Reuse common SDR-enriched contact columns for Excel display.
+
+    This function does not perform a database lookup.
     """
-    if not isinstance(frame, pd.DataFrame):
-        return frame
 
-    if frame.empty:
-        return frame
-
-    normalized_sheet_name = str(sheet_name).strip().lower()
-
-    is_supported_sheet = (
-        "top human contacts" in normalized_sheet_name
-        or "contact ranking" in normalized_sheet_name
-    )
-
-    if not is_supported_sheet:
-        return frame
-
-    if "Contact" not in frame.columns:
-        print(
-            "[!] SDR enrichment skipped:",
-            sheet_name,
-            "| Contact column not found",
+    if (
+        not isinstance(
+            frame,
+            pd.DataFrame,
         )
+        or frame.empty
+    ):
         return frame
 
-    from modules.enrichment.sdr_subscriber_enrichment import (
-        lookup_sdr_subscribers,
-        normalize_mobile_number,
+    normalized_sheet_name = str(
+        sheet_name
+    ).strip().lower()
+
+    supported = (
+        "top human contacts"
+        in normalized_sheet_name
+        or "contact ranking"
+        in normalized_sheet_name
+        or "social network"
+        in normalized_sheet_name
     )
 
-    sdr_columns = [
-        "Name",
-        "Father Name",
-        "Address",
-        "Operator",
-        "Circle",
-        "Activation Date",
-        "SDR Found",
+    if (
+        not supported
+        or "Contact"
+        not in frame.columns
+    ):
+        return frame
+
+    source_to_display = {
+        "contact_sdr_subscriber_name": (
+            "Name"
+        ),
+        "contact_sdr_father_name": (
+            "Father Name"
+        ),
+        "contact_sdr_address": (
+            "Address"
+        ),
+        "contact_sdr_operator": (
+            "Operator"
+        ),
+        "contact_sdr_circle": (
+            "Circle"
+        ),
+        "contact_sdr_activation_date": (
+            "Activation Date"
+        ),
+        "contact_sdr_caf_number": (
+            "CAF Number"
+        ),
+        "contact_sdr_found": (
+            "SDR Found"
+        ),
+        "contact_sdr_lookup_status": (
+            "SDR Lookup Status"
+        ),
+        "contact_sdr_match_confidence": (
+            "Match Confidence"
+        ),
+    }
+
+    available_source_columns = [
+        column
+        for column in source_to_display
+        if column in frame.columns
     ]
+
+    if not available_source_columns:
+        return frame
 
     output = frame.copy()
 
-    output = output.drop(
-        columns=sdr_columns,
-        errors="ignore",
-    )
+    display_columns = []
 
-    output["_sdr_lookup_mobile"] = output[
-        "Contact"
-    ].map(normalize_mobile_number)
+    for (
+        source_column,
+        display_column,
+    ) in source_to_display.items():
+        if source_column not in output.columns:
+            continue
 
-    numbers = sorted(
-        {
-            number
-            for number in output[
-                "_sdr_lookup_mobile"
-            ].dropna().astype(str)
-            if number
-        }
-    )
-
-    if numbers:
-        lookup = lookup_sdr_subscribers(numbers)
-    else:
-        lookup = pd.DataFrame()
-
-    if lookup is not None and not lookup.empty:
-        lookup = lookup.rename(
-            columns={
-                "lookup_mobile": "_sdr_lookup_mobile",
-                "subscriber_name": "Name",
-                "father_name": "Father Name",
-                "subscriber_address": "Address",
-                "operator": "Operator",
-                "circle": "Circle",
-                "activation_date": "Activation Date",
-                "sdr_found": "SDR Found",
-            }
+        output[
+            display_column
+        ] = output[
+            source_column
+        ].fillna(
+            ""
         )
 
-        required_lookup_columns = [
-            "_sdr_lookup_mobile",
-            *sdr_columns,
-        ]
-
-        for column in required_lookup_columns:
-            if column not in lookup.columns:
-                if column == "SDR Found":
-                    lookup[column] = "No"
-                else:
-                    lookup[column] = ""
-
-        lookup = lookup[
-            required_lookup_columns
-        ].drop_duplicates(
-            subset=["_sdr_lookup_mobile"],
-            keep="first",
+        display_columns.append(
+            display_column
         )
 
-        output = output.merge(
-            lookup,
-            on="_sdr_lookup_mobile",
-            how="left",
-            validate="many_to_one",
+    internal_columns = [
+        column
+        for column in output.columns
+        if str(
+            column
+        ).startswith(
+            "contact_sdr_"
         )
-    else:
-        for column in sdr_columns:
-            output[column] = ""
-
-    output["SDR Found"] = output[
-        "SDR Found"
-    ].fillna("No")
-
-    for column in sdr_columns:
-        if column != "SDR Found":
-            output[column] = output[
-                column
-            ].fillna("")
+    ]
 
     output = output.drop(
-        columns=["_sdr_lookup_mobile"],
+        columns=internal_columns,
         errors="ignore",
     )
 
     metric_columns = [
         column
         for column in output.columns
-        if column not in sdr_columns
+        if column
+        not in display_columns
     ]
 
-    contact_position = metric_columns.index("Contact") + 1
-
-    final_columns = metric_columns.copy()
-
-    final_columns[
-        contact_position:contact_position
-    ] = sdr_columns
-
-    output = output[final_columns]
-
-    print(
-        "[+] SDR contact sheet enriched:",
-        sheet_name,
-        "| rows:",
-        len(output),
+    contact_position = (
+        metric_columns.index(
+            "Contact"
+        )
+        + 1
     )
+
+    final_columns = (
+        metric_columns[
+            :contact_position
+        ]
+        + display_columns
+        + metric_columns[
+            contact_position:
+        ]
+    )
+
+    return output.loc[
+        :,
+        final_columns,
+    ].copy()
+
+
+
+def _portable_report_path(
+    value: Any,
+) -> Any:
+    """Remove workstation-specific prefixes from report paths."""
+
+    if value is None:
+        return ""
+
+    try:
+        if pd.isna(
+            value
+        ):
+            return ""
+    except (
+        TypeError,
+        ValueError,
+    ):
+        pass
+
+    text = str(
+        value
+    ).strip()
+
+    if not text:
+        return ""
+
+    normalized = text.replace(
+        "\\",
+        "/",
+    )
+
+    for marker in (
+        "data/",
+        "cases/",
+        "database/",
+        "config/",
+        "logs/",
+    ):
+        position = normalized.find(
+            marker
+        )
+
+        if position >= 0:
+            return normalized[
+                position:
+            ]
+
+    path = Path(
+        normalized
+    )
+
+    if path.is_absolute():
+        return path.name
+
+    return normalized
+
+
+def _sanitize_report_paths(
+    frame: pd.DataFrame,
+) -> pd.DataFrame:
+    """Make path columns portable before writing them to Excel."""
+
+    if not isinstance(
+        frame,
+        pd.DataFrame,
+    ):
+        return frame
+
+    output = frame.copy()
+
+    path_columns = {
+        "file",
+        "source_file",
+        "source_path",
+        "input_file",
+        "input_folder",
+        "report_path",
+        "run_directory",
+        "pipeline_state_path",
+        "backend_run_directory",
+    }
+
+    for column in output.columns:
+        normalized_column = str(
+            column
+        ).strip().lower()
+
+        if (
+            normalized_column
+            in path_columns
+            or normalized_column.endswith(
+                "_path"
+            )
+        ):
+            output[
+                column
+            ] = output[
+                column
+            ].map(
+                _portable_report_path
+            )
 
     return output
 
+def _write_dataframe_sheet(
+    wb: Workbook,
+    sheet_name: str,
+    report_name: str,
+    meta: dict[str, Any],
+    frame: pd.DataFrame,
+) -> None:
+    """Write one clean and portable DataFrame worksheet."""
 
-def _write_dataframe_sheet(wb: Workbook, sheet_name: str, report_name: str, meta: dict[str, Any], frame: pd.DataFrame) -> None:
-    # FINAL_SDR_CONTACT_WRITE_HOOK
     frame = _enrich_contact_report_dataframe(
         sheet_name,
         frame,
     )
 
-    ws = wb.create_sheet(title=sheet_name)
-    headers = list(frame.columns)
-    max_column = max(1, len(headers))
-    header_row = style_metadata_block(ws, _metadata_rows(meta, report_name), max_column)
+    frame = _sanitize_report_paths(
+        frame
+    )
+
+    ws = wb.create_sheet(
+        title=sheet_name
+    )
+
+    headers = list(
+        frame.columns
+    )
+
+    max_column = max(
+        1,
+        len(
+            headers
+        ),
+    )
+
+    header_row = style_metadata_block(
+        ws,
+        _metadata_rows(
+            meta,
+            report_name,
+        ),
+        max_column,
+    )
 
     if not headers:
-        headers = ["Result"]
-        frame = pd.DataFrame(columns=headers)
+        headers = [
+            "Result",
+        ]
 
-    for col_idx, header in enumerate(headers, start=1):
-        ws.cell(row=header_row, column=col_idx, value=excel_safe_value(str(header)))
-    style_table_header(ws, header_row, len(headers))
+        frame = pd.DataFrame(
+            columns=headers
+        )
 
-    for row_idx, row in enumerate(frame.itertuples(index=False, name=None), start=header_row + 1):
-        for col_idx, value in enumerate(row, start=1):
-            value = _excel_safe_scalar(value)
-            ws.cell(row=row_idx, column=col_idx, value=value)
+    for column_index, header in enumerate(
+        headers,
+        start=1,
+    ):
+        ws.cell(
+            row=header_row,
+            column=column_index,
+            value=excel_safe_value(
+                str(
+                    header
+                )
+            ),
+        )
 
-    last_row = header_row + len(frame)
-    style_data_area(ws, header_row + 1, last_row, len(headers))
-    set_sensible_widths(ws, headers)
-    finish_sheet(ws, header_row, last_row, len(headers))
+    style_table_header(
+        ws,
+        header_row,
+        len(
+            headers
+        ),
+    )
 
-    # Date-time columns should remain readable.
-    for col_idx, header in enumerate(headers, start=1):
-        if "time" in str(header).lower() or str(header).lower() in {"date", "first call time", "last call time"}:
-            for row_idx in range(header_row + 1, last_row + 1):
-                cell = ws.cell(row=row_idx, column=col_idx)
-                if hasattr(cell.value, "year"):
-                    cell.number_format = "mmm dd, yyyy hh:mm:ss"
+    for row_index, row in enumerate(
+        frame.itertuples(
+            index=False,
+            name=None,
+        ),
+        start=header_row + 1,
+    ):
+        for column_index, value in enumerate(
+            row,
+            start=1,
+        ):
+            ws.cell(
+                row=row_index,
+                column=column_index,
+                value=_excel_safe_scalar(
+                    value
+                ),
+            )
+
+    last_row = (
+        header_row
+        + len(
+            frame
+        )
+    )
+
+    style_data_area(
+        ws,
+        header_row + 1,
+        last_row,
+        len(
+            headers
+        ),
+    )
+
+    set_sensible_widths(
+        ws,
+        headers,
+    )
+
+    finish_sheet(
+        ws,
+        header_row,
+        last_row,
+        len(
+            headers
+        ),
+    )
+
+    for column_index, header in enumerate(
+        headers,
+        start=1,
+    ):
+        normalized_header = str(
+            header
+        ).lower()
+
+        if (
+            "time"
+            in normalized_header
+            or normalized_header
+            in {
+                "date",
+                "first call time",
+                "last call time",
+            }
+        ):
+            for row_index in range(
+                header_row + 1,
+                last_row + 1,
+            ):
+                cell = ws.cell(
+                    row=row_index,
+                    column=column_index,
+                )
+
+                if hasattr(
+                    cell.value,
+                    "year",
+                ):
+                    cell.number_format = (
+                        "mmm dd, yyyy hh:mm:ss"
+                    )
+
 
 
 MODULE_RESULT_SHEETS = [
@@ -766,7 +1479,7 @@ MODULE_RESULT_SHEETS = [
     ("31. Work Tower", ["work_tower"]),
     ("32. Missing CGI Lookup", ["missing_cgi_lookup"]),
     (
-        "43A. Master Enrichment",
+        "32A. Master Enrichment",
         ["master_enrichment_summary"],
     ),
     ("33. IMEI Module Summary", ["imei_summary"]),
