@@ -397,4 +397,3 @@ def test_data_export_uses_generic_companion(
     assert result["rows_read"] == 2
     assert result["valid_rows"] == 2
     assert result["invalid_rows"] == 0
-
