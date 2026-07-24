@@ -207,6 +207,335 @@ TOWER_IPDR_COMPLETE_SPECS = {
 }
 
 
+
+CDR_TABLE_SPECS = {
+    "top_contacts": {
+        "sdr": (
+            "Contact",
+            "contact",
+            "b_party",
+            "other_party",
+            "Other Party",
+        ),
+    },
+    "contact_ranking": {
+        "sdr": (
+            "Contact",
+            "contact",
+            "b_party",
+            "other_party",
+            "Other Party",
+        ),
+    },
+    "top_contact_details": {
+        "sdr": (
+            "Contact",
+            "contact",
+            "b_party",
+            "other_party",
+            "Other Party",
+        ),
+    },
+    "social_network": {
+        "sdr": (
+            "Contact",
+            "contact",
+            "b_party",
+            "other_party",
+        ),
+    },
+    "analyze_location": {
+        "cgi": (
+            "first_cell_id",
+            "cell_id",
+            "cgi",
+            "Cell ID",
+        ),
+    },
+    "frequent_locations": {
+        "cgi": (
+            "first_cell_id",
+            "cell_id",
+            "cgi",
+            "Cell ID",
+        ),
+    },
+    "tower_movement": {
+        "cgi": (
+            "first_cell_id",
+            "last_cell_id",
+            "cell_id",
+            "cgi",
+            "Cell ID",
+            "Last Cell ID",
+        ),
+    },
+    "tower_transition": {
+        "cgi": (
+            "first_cell_id",
+            "last_cell_id",
+            "start_cell_id",
+            "end_cell_id",
+            "Cell ID",
+            "Last Cell ID",
+            "Start Cell ID",
+            "End Cell ID",
+        ),
+    },
+    "tower_intelligence": {
+        "cgi": (
+            "first_cell_id",
+            "cell_id",
+            "cgi",
+            "Cell ID",
+        ),
+    },
+    "home_tower": {
+        "cgi": (
+            "first_cell_id",
+            "cell_id",
+            "cgi",
+            "Cell ID",
+        ),
+    },
+    "work_tower": {
+        "cgi": (
+            "first_cell_id",
+            "cell_id",
+            "cgi",
+            "Cell ID",
+        ),
+    },
+}
+
+
+TOWER_CDR_TABLE_SPECS = {
+    "subscriber_summary": {
+        "sdr": (
+            "subscriber_number",
+        ),
+    },
+    "tower_cdr_common_numbers": {
+        "sdr": (
+            "subscriber_number",
+        ),
+        "cgi": (
+            "searched_cell_id",
+            "first_cell_id",
+            "last_cell_id",
+        ),
+    },
+    "tower_cdr_uncommon_numbers": {
+        "sdr": (
+            "subscriber_number",
+        ),
+        "cgi": (
+            "searched_cell_id",
+            "first_cell_id",
+            "last_cell_id",
+        ),
+    },
+    "tower_cdr_multi_cell_presence": {
+        "sdr": (
+            "subscriber_number",
+        ),
+        "cgi": (
+            "searched_cell_id",
+            "first_cell_id",
+            "last_cell_id",
+        ),
+    },
+    "tower_cdr_device_consistency": {
+        "sdr": (
+            "subscriber_number",
+        ),
+    },
+    "tower_cdr_suspicious_timing": {
+        "sdr": (
+            "subscriber_number",
+        ),
+    },
+    "tower_cdr_priority_leads": {
+        "sdr": (
+            "subscriber_number",
+        ),
+        "cgi": (
+            "searched_cell_id",
+            "first_cell_id",
+            "last_cell_id",
+        ),
+    },
+    "searched_cell_summary": {
+        "cgi": (
+            "searched_cell_id",
+            "cell_id",
+            "cgi",
+        ),
+    },
+    "cell_summary": {
+        "cgi": (
+            "searched_cell_id",
+            "first_cell_id",
+            "cell_id",
+            "cgi",
+        ),
+    },
+    "spot_summary": {
+        "cgi": (
+            "searched_cell_id",
+            "cell_id",
+            "cgi",
+        ),
+    },
+}
+
+
+TOWER_CDR_PARTITION_SPECS = {
+    "subscriber_presence": {
+        "sdr": (
+            "subscriber_number",
+        ),
+    },
+    "n_of_m_candidates": {
+        "sdr": (
+            "subscriber_number",
+        ),
+    },
+    "strict_common_candidates": {
+        "sdr": (
+            "subscriber_number",
+        ),
+    },
+    "partition_visitor_intelligence": {
+        "sdr": (
+            "subscriber_number",
+        ),
+    },
+    "new_visitors": {
+        "sdr": (
+            "subscriber_number",
+        ),
+    },
+    "rare_visitors": {
+        "sdr": (
+            "subscriber_number",
+        ),
+    },
+    "repeat_relevant_visitors": {
+        "sdr": (
+            "subscriber_number",
+        ),
+    },
+    "regular_local_presence": {
+        "sdr": (
+            "subscriber_number",
+        ),
+    },
+    "multi_cell_relevant": {
+        "sdr": (
+            "subscriber_number",
+        ),
+    },
+    "partition_priority_leads": {
+        "sdr": (
+            "subscriber_number",
+        ),
+    },
+}
+
+
+TOWER_GPRS_TABLE_SPECS = {
+    "subscriber_summary": {
+        "sdr": (
+            "subscriber_number",
+        ),
+    },
+    "gprs_common_numbers": {
+        "sdr": (
+            "subscriber_number",
+        ),
+        "cgi": (
+            "searched_cell_id",
+            "cgi",
+            "cell_id",
+        ),
+    },
+    "gprs_uncommon_numbers": {
+        "sdr": (
+            "subscriber_number",
+        ),
+        "cgi": (
+            "searched_cell_id",
+            "cgi",
+            "cell_id",
+        ),
+    },
+    "gprs_multi_cell_presence": {
+        "sdr": (
+            "subscriber_number",
+        ),
+        "cgi": (
+            "searched_cell_id",
+            "cgi",
+            "cell_id",
+        ),
+    },
+    "gprs_device_consistency": {
+        "sdr": (
+            "subscriber_number",
+        ),
+    },
+    "gprs_suspicious_timing": {
+        "sdr": (
+            "subscriber_number",
+        ),
+    },
+    "gprs_priority_leads": {
+        "sdr": (
+            "subscriber_number",
+        ),
+        "cgi": (
+            "searched_cell_id",
+            "cgi",
+            "cell_id",
+        ),
+    },
+    "cell_summary": {
+        "cgi": (
+            "searched_cell_id",
+            "cgi",
+            "cell_id",
+        ),
+    },
+    "spot_summary": {
+        "cgi": (
+            "searched_cell_id",
+            "cgi",
+            "cell_id",
+        ),
+    },
+}
+
+
+TOWER_GPRS_PARTITION_SPECS = {
+    "subscriber_presence": {
+        "sdr": (
+            "subscriber_number",
+        ),
+    },
+    "n_of_m_candidates": {
+        "sdr": (
+            "subscriber_number",
+        ),
+    },
+    "strict_common_candidates": {
+        "sdr": (
+            "subscriber_number",
+        ),
+    },
+}
+
+
 def _clean_text(
     value: object,
 ) -> str:
@@ -1265,3 +1594,137 @@ def enrich_analysis_bundle(
         "summary": summary,
         "warnings": warnings,
     }
+
+def build_missing_cgi_summary_from_bundle(
+    bundle: Mapping[str, Any],
+    *,
+    table_specs: Mapping[
+        str,
+        Mapping[str, Iterable[str]],
+    ],
+) -> pd.DataFrame:
+    """
+    Build a missing CGI summary from already-enriched tables.
+
+    No additional database lookup is performed.
+    """
+
+    rows = []
+
+    for table_key, specification in table_specs.items():
+        dataframe = bundle.get(
+            table_key
+        )
+
+        if (
+            not isinstance(
+                dataframe,
+                pd.DataFrame,
+            )
+            or dataframe.empty
+        ):
+            continue
+
+        cgi_columns = _existing_columns(
+            dataframe,
+            specification.get(
+                "cgi",
+                (),
+            ),
+        )
+
+        for cell_column in cgi_columns:
+            prefix = _cgi_prefix(
+                cell_column
+            )
+
+            status_column = (
+                f"{prefix}lookup_status"
+            )
+
+            if status_column not in dataframe.columns:
+                continue
+
+            missing = dataframe[
+                dataframe[
+                    status_column
+                ]
+                .fillna(
+                    ""
+                )
+                .astype(
+                    str
+                )
+                .str.upper()
+                .eq(
+                    "NOT_FOUND"
+                )
+            ]
+
+            if missing.empty:
+                continue
+
+            grouped = (
+                missing.groupby(
+                    cell_column,
+                    dropna=False,
+                )
+                .size()
+                .reset_index(
+                    name="records"
+                )
+                .rename(
+                    columns={
+                        cell_column: "cell_id",
+                    }
+                )
+            )
+
+            grouped[
+                "source_table"
+            ] = table_key
+
+            rows.append(
+                grouped
+            )
+
+    if not rows:
+        return pd.DataFrame(
+            columns=[
+                "cell_id",
+                "records",
+                "source_table",
+            ]
+        )
+
+    result = pd.concat(
+        rows,
+        ignore_index=True,
+    )
+
+    return (
+        result.groupby(
+            [
+                "cell_id",
+                "source_table",
+            ],
+            dropna=False,
+        )[
+            "records"
+        ]
+        .sum()
+        .reset_index()
+        .sort_values(
+            [
+                "records",
+                "cell_id",
+            ],
+            ascending=[
+                False,
+                True,
+            ],
+        )
+        .reset_index(
+            drop=True
+        )
+    )

@@ -11,6 +11,12 @@ from typing import Any
 
 import pandas as pd
 
+from modules.enrichment.telecom_master_enrichment import (
+    TOWER_CDR_PARTITION_SPECS,
+    TOWER_CDR_TABLE_SPECS,
+    enrich_analysis_bundle,
+)
+
 from modules.analysis.towerdump.window_partition import (
     create_sighting_partitions,
 )
@@ -716,6 +722,67 @@ def _run_complete_analysis(
                 (analysis["status"]["status"] == "FAILED").sum()
             )
 
+
+        analysis_results = analysis.get(
+            "results",
+            {},
+        )
+
+        if isinstance(
+            analysis_results,
+            dict,
+        ):
+            master_enrichment = enrich_analysis_bundle(
+                analysis_results,
+                table_specs=TOWER_CDR_TABLE_SPECS,
+            )
+
+            analysis[
+                "results"
+            ] = master_enrichment[
+                "bundle"
+            ]
+
+            analysis[
+                "master_enrichment_summary"
+            ] = master_enrichment[
+                "summary"
+            ]
+
+            analysis[
+                "master_enrichment_warnings"
+            ] = master_enrichment[
+                "warnings"
+            ]
+
+            analysis[
+                "results"
+            ][
+                "master_enrichment_summary"
+            ] = master_enrichment[
+                "summary"
+            ]
+
+            analysis[
+                "results"
+            ][
+                "master_enrichment_warnings"
+            ] = master_enrichment[
+                "warnings"
+            ]
+
+            if master_enrichment[
+                "warnings"
+            ]:
+                load_result.setdefault(
+                    "warnings",
+                    [],
+                ).extend(
+                    master_enrichment[
+                        "warnings"
+                    ]
+                )
+
         result = {
             **load_result,
             "df": dataframe,
@@ -866,6 +933,40 @@ def _run_partition_analysis(
     result["cell_ids"] = list(load_result.get("cell_ids", []) or [])
     result["rejected_rows"] = load_result.get("rejected_rows", pd.DataFrame())
     result["input_folder"] = str(input_folder)
+
+
+    master_enrichment = enrich_analysis_bundle(
+        result,
+        table_specs=TOWER_CDR_PARTITION_SPECS,
+    )
+
+    result = master_enrichment[
+        "bundle"
+    ]
+
+    result[
+        "master_enrichment_summary"
+    ] = master_enrichment[
+        "summary"
+    ]
+
+    result[
+        "master_enrichment_warnings"
+    ] = master_enrichment[
+        "warnings"
+    ]
+
+    if master_enrichment[
+        "warnings"
+    ]:
+        result.setdefault(
+            "warnings",
+            [],
+        ).extend(
+            master_enrichment[
+                "warnings"
+            ]
+        )
 
     summary = result["partition_summary"]
 

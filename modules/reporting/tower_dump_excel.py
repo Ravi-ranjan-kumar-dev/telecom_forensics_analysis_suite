@@ -1095,6 +1095,36 @@ def _compact_report_view(
         in dataframe.columns
     ]
 
+    enrichment_columns = [
+        "sdr_lookup_status",
+        "sdr_subscriber_name",
+        "sdr_father_name",
+        "sdr_address",
+        "sdr_operator",
+        "sdr_circle",
+        "sdr_activation_date",
+        "sdr_caf_number",
+        "searched_cell_lookup_status",
+        "searched_cell_address",
+        "searched_cell_district",
+        "searched_cell_police_station",
+        "first_cell_lookup_status",
+        "first_cell_address",
+        "last_cell_lookup_status",
+        "last_cell_address",
+        "cgi_lookup_status",
+        "cgi_address",
+    ]
+
+    for column in enrichment_columns:
+        if (
+            column in dataframe.columns
+            and column not in available
+        ):
+            available.append(
+                column
+            )
+
     if not available:
         return dataframe
 
@@ -2173,6 +2203,7 @@ def generate_tower_dump_excel_report(
         ),
     )
 
+
     # ----------------------------------------------------------
     # 2. Data Quality
     # ----------------------------------------------------------
@@ -2193,6 +2224,20 @@ def generate_tower_dump_excel_report(
         row,
         _compact_data_quality_overview(
             report_context
+        ),
+        max_rows=100,
+    )
+
+    row = _write_section(
+        ws,
+        "MASTER DATA ENRICHMENT",
+        row,
+        analysis.get(
+            "master_enrichment_summary",
+            results.get(
+                "master_enrichment_summary",
+                pd.DataFrame(),
+            ),
         ),
         max_rows=100,
     )

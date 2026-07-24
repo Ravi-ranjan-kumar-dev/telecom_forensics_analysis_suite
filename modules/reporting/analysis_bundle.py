@@ -13,6 +13,12 @@ from dataclasses import dataclass
 from typing import Any, Callable
 
 import pandas as pd
+
+from modules.enrichment.telecom_master_enrichment import (
+    CDR_TABLE_SPECS,
+    build_missing_cgi_summary_from_bundle,
+    enrich_analysis_bundle,
+)
 from modules.enrichment.cgi_address_enrichment import enrich_dataframe_with_cgi_address, build_missing_cgi_lookup_summary
 
 
@@ -241,83 +247,79 @@ def _find_analysis_result_container(bundle):
     return None
 
 
-def _apply_cgi_address_enrichment(bundle):
+def _apply_cgi_address_enrichment(
+    bundle,
+):
     """
-    Apply CGI address enrichment to CDR tower analysis outputs.
+    Apply one common batch SDR/CGI lookup to CDR summaries.
 
-    Simple professional output:
-    - tower_address_found
-    - tower_operator
-    - tower_circle
-    - tower_town
-    - tower_site_name
-    - tower_address
-    - tower_latitude
-    - tower_longitude
-
-    Also mirrors enriched tower sheets to top-level bundle keys so the Excel
-    writer can find them reliably.
+    Raw CDR records are not copied or enriched here.
+    Lookup failures preserve all original analysis results.
     """
-    if not isinstance(bundle, dict):
+
+    if not isinstance(
+        bundle,
+        dict,
+    ):
         return bundle
 
-    results = _find_analysis_result_container(bundle)
+    results = _find_analysis_result_container(
+        bundle
+    )
 
     if results is None:
         return bundle
 
-    direct_keys = [
-        "tower_movement",
-        "tower_intelligence",
-        "home_tower",
-        "work_tower",
+    enrichment = enrich_analysis_bundle(
+        results,
+        table_specs=CDR_TABLE_SPECS,
+    )
+
+    enriched_results = enrichment[
+        "bundle"
     ]
 
-    for key in direct_keys:
-        value = results.get(key)
-        try:
-            results[key] = enrich_dataframe_with_cgi_address(value)
-        except Exception:
-            results[key] = value
+    enriched_results[
+        "master_enrichment_summary"
+    ] = enrichment[
+        "summary"
+    ]
 
-    transition = results.get("tower_transition")
-    try:
-        if transition is not None:
-            transition = enrich_dataframe_with_cgi_address(
-                transition,
-                cell_id_column="From Tower",
-                prefix="from_tower_",
-            )
-            transition = enrich_dataframe_with_cgi_address(
-                transition,
-                cell_id_column="To Tower",
-                prefix="to_tower_",
-            )
-            results["tower_transition"] = transition
-    except Exception:
-        results["tower_transition"] = transition
+    enriched_results[
+        "master_enrichment_warnings"
+    ] = enrichment[
+        "warnings"
+    ]
 
-    try:
-        tower_movement = results.get("tower_movement")
-        if tower_movement is not None:
-            results["missing_cgi_lookup"] = build_missing_cgi_lookup_summary(tower_movement)
-    except Exception:
-        pass
+    enriched_results[
+        "missing_cgi_lookup"
+    ] = build_missing_cgi_summary_from_bundle(
+        enriched_results,
+        table_specs=CDR_TABLE_SPECS,
+    )
 
-    # Mirror important result sheets to top level.
-    # This makes bundle.get("tower_movement") work even if original data was nested.
-    for key in [
-        "tower_movement",
-        "tower_transition",
-        "tower_intelligence",
-        "home_tower",
-        "work_tower",
+    results.clear()
+    results.update(
+        enriched_results
+    )
+
+    mirror_keys = {
+        *CDR_TABLE_SPECS.keys(),
+        "master_enrichment_summary",
+        "master_enrichment_warnings",
         "missing_cgi_lookup",
-    ]:
+    }
+
+    for key in mirror_keys:
         if key in results:
-            bundle[key] = results[key]
+            bundle[
+                key
+            ] = results[
+                key
+            ]
 
     return bundle
+
 
 def build_single_analysis_bundle(
     df: pd.DataFrame,

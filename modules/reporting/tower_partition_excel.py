@@ -966,9 +966,66 @@ def generate_tower_partition_excel_report(
         result.get("partition_visitor_intelligence")
     )
 
-    visitor_sdr_lookup = _build_visitor_sdr_lookup(
-        raw_visitor_intelligence
-    )
+    if (
+        "sdr_lookup_mobile"
+        in raw_visitor_intelligence.columns
+    ):
+        visitor_sdr_lookup = (
+            raw_visitor_intelligence.rename(
+                columns={
+                    "sdr_lookup_mobile": (
+                        "_sdr_lookup_mobile"
+                    ),
+                }
+            )
+        )
+
+        available_lookup_columns = [
+            "_sdr_lookup_mobile",
+            *[
+                column
+                for column in VISITOR_SDR_COLUMNS
+                if column
+                in visitor_sdr_lookup.columns
+            ],
+        ]
+
+        visitor_sdr_lookup = (
+            visitor_sdr_lookup[
+                available_lookup_columns
+            ]
+            .drop_duplicates(
+                subset=[
+                    "_sdr_lookup_mobile",
+                ],
+                keep="last",
+            )
+            .copy()
+        )
+
+        for column in VISITOR_SDR_COLUMNS:
+            if column not in visitor_sdr_lookup.columns:
+                visitor_sdr_lookup[
+                    column
+                ] = (
+                    "No"
+                    if column == "sdr_found"
+                    else ""
+                )
+
+        visitor_sdr_lookup = visitor_sdr_lookup[
+            [
+                "_sdr_lookup_mobile",
+                *VISITOR_SDR_COLUMNS,
+            ]
+        ]
+
+    else:
+        visitor_sdr_lookup = (
+            _build_visitor_sdr_lookup(
+                raw_visitor_intelligence
+            )
+        )
 
     visitor_sdr_counts = _visitor_sdr_summary_counts(
         raw_visitor_intelligence,
@@ -1206,7 +1263,7 @@ def generate_tower_partition_excel_report(
                 "Visitor SDR Lookup Method",
                 (
                     "Single batch lookup across unique visitor numbers; "
-                    "large DuckDB SDR table first, primary SDR table fallback."
+                    "primary SDR override table first, historical SDR table fallback."
                 ),
             ),
             ("New Visitors", len(new_visitors)),

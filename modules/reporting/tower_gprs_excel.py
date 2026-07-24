@@ -1251,6 +1251,22 @@ def generate_tower_gprs_excel_report(
         else 30
     )
 
+
+    _write_table(
+        workbook,
+        "Master Enrichment",
+        _sanitize_gprs_report_frame(
+            analysis.get(
+                "master_enrichment_summary"
+            )
+        ),
+        subtitle=(
+            "Batch SDR and CGI lookup coverage, "
+            "non-standard identifier exclusions and "
+            "missing-master-data counts."
+        ),
+    )
+
     status = pd.DataFrame(
         [
             {

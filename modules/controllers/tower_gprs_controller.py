@@ -10,6 +10,12 @@ from typing import Any
 
 import pandas as pd
 
+from modules.enrichment.telecom_master_enrichment import (
+    TOWER_GPRS_PARTITION_SPECS,
+    TOWER_GPRS_TABLE_SPECS,
+    enrich_analysis_bundle,
+)
+
 from modules.analysis.gprsdump import (
     create_gprs_partitions,
     run_gprs_analysis,
@@ -989,6 +995,112 @@ def _execute(
             print_gprs_partition(
                 partition,
                 row_limit=50,
+            )
+
+
+        combined_tables: dict[str, Any] = {}
+        combined_specs: dict[
+            str,
+            dict[str, tuple[str, ...]],
+        ] = {}
+
+        for table_key, specification in (
+            TOWER_GPRS_TABLE_SPECS.items()
+        ):
+            if table_key in analysis:
+                combined_key = (
+                    f"analysis::{table_key}"
+                )
+
+                combined_tables[
+                    combined_key
+                ] = analysis[
+                    table_key
+                ]
+
+                combined_specs[
+                    combined_key
+                ] = dict(
+                    specification
+                )
+
+        if isinstance(
+            partition,
+            dict,
+        ):
+            for table_key, specification in (
+                TOWER_GPRS_PARTITION_SPECS.items()
+            ):
+                if table_key in partition:
+                    combined_key = (
+                        f"partition::{table_key}"
+                    )
+
+                    combined_tables[
+                        combined_key
+                    ] = partition[
+                        table_key
+                    ]
+
+                    combined_specs[
+                        combined_key
+                    ] = dict(
+                        specification
+                    )
+
+        master_enrichment = enrich_analysis_bundle(
+            combined_tables,
+            table_specs=combined_specs,
+        )
+
+        for combined_key, dataframe_value in (
+            master_enrichment[
+                "bundle"
+            ].items()
+        ):
+            scope, table_key = combined_key.split(
+                "::",
+                1,
+            )
+
+            if scope == "analysis":
+                analysis[
+                    table_key
+                ] = dataframe_value
+
+            elif (
+                scope == "partition"
+                and isinstance(
+                    partition,
+                    dict,
+                )
+            ):
+                partition[
+                    table_key
+                ] = dataframe_value
+
+        analysis[
+            "master_enrichment_summary"
+        ] = master_enrichment[
+            "summary"
+        ]
+
+        analysis[
+            "master_enrichment_warnings"
+        ] = master_enrichment[
+            "warnings"
+        ]
+
+        if master_enrichment[
+            "warnings"
+        ]:
+            load_result.setdefault(
+                "warnings",
+                [],
+            ).extend(
+                master_enrichment[
+                    "warnings"
+                ]
             )
 
         saved = save_gprs_run(

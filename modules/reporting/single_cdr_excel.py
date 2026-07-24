@@ -55,41 +55,9 @@ def _prepare_dataframe(df: pd.DataFrame, target: str) -> pd.DataFrame:
     data = df.copy()
 
     # CGI_LEGACY_EXPORT_ENRICHMENT
-    try:
-        data = enrich_dataframe_with_cgi_address(
-            data,
-            cell_id_column="first_cell_id",
-            prefix="tower_",
-        )
-
-        if "tower_address" in data.columns:
-            data["Address1"] = data["tower_address"]
-
-        if "tower_latitude" in data.columns:
-            data["Latitude"] = data["tower_latitude"]
-
-        if "tower_longitude" in data.columns:
-            data["Longitude"] = data["tower_longitude"]
-
-    except Exception:
-        pass
 
     # SDR_LEGACY_EXPORT_ENRICHMENT
-    try:
-        data = enrich_dataframe_with_sdr(
-            data,
-            number_column="b_party",
-            prefix="other_party_",
-        )
-
-        if "other_party_subscriber_name" in data.columns:
-            data["sdr_name"] = data["other_party_subscriber_name"]
-
-        if "other_party_subscriber_address" in data.columns:
-            data["sdr_address"] = data["other_party_subscriber_address"]
-
-    except Exception:
-        pass
+    # Raw CDR rows remain unchanged. Master data is added only to summary and lead tables.
 
 
     for column, default_value in CANONICAL_COLUMNS.items():
@@ -797,6 +765,10 @@ MODULE_RESULT_SHEETS = [
     ("30. Home Tower", ["home_tower"]),
     ("31. Work Tower", ["work_tower"]),
     ("32. Missing CGI Lookup", ["missing_cgi_lookup"]),
+    (
+        "43A. Master Enrichment",
+        ["master_enrichment_summary"],
+    ),
     ("33. IMEI Module Summary", ["imei_summary"]),
     ("34. IMEI Intelligence", ["imei_intelligence"]),
     ("35. SIM Changes", ["sim_change"]),
