@@ -7,6 +7,11 @@ from typing import Any
 
 import pandas as pd
 
+from modules.enrichment.telecom_master_enrichment import (
+    IPDR_TABLE_SPECS,
+    enrich_analysis_bundle,
+)
+
 
 def _empty() -> pd.DataFrame:
     return pd.DataFrame()
@@ -615,4 +620,17 @@ def run_ipdr_analysis(
         "data_quality": _data_quality(data, allocations, file_summary),
         "normalized_events": data,
     }
+    enrichment = enrich_analysis_bundle(
+        result,
+        table_specs=IPDR_TABLE_SPECS,
+    )
+
+    result = enrichment["bundle"]
+    result["master_enrichment_summary"] = enrichment[
+        "summary"
+    ]
+    result["master_enrichment_warnings"] = enrichment[
+        "warnings"
+    ]
+
     return result

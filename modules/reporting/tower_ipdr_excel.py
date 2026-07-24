@@ -16,6 +16,11 @@ from typing import Any
 
 import pandas as pd
 
+from modules.enrichment.telecom_master_enrichment import (
+    TOWER_IPDR_COMPLETE_SPECS,
+    enrich_analysis_bundle,
+)
+
 TOWER_IPDR_EXCEL_PREVIEW_ROWS = 5000
 
 
@@ -414,7 +419,8 @@ def generate_tower_ipdr_excel_report(
         ("3. Core Summary", analysis.get("summary"), "Core multi-cell Tower IPDR metrics."),
         ("4. Searched Cells", analysis.get("cell_summary"), "Cell-wise event and candidate distribution."),
         ("5. Allocation Records", analysis.get("allocation_records"), "Deduplicated observed allocation-volume records; not a billing total."),
-        ("6. Subscribers", analysis.get("subscriber_summary"), "Subscriber-wise IPDR intelligence."),
+        ("6. Subscribers", analysis.get("subscriber_summary"), "Subscriber-wise IPDR intelligence with valid-mobile SDR enrichment."),
+        ("6A. Master Enrichment", analysis.get("master_enrichment_summary"), "SDR and CGI lookup coverage, exclusions and missing-master-data counts."),
         ("7. Subscriber Cell Matrix", analysis.get("subscriber_cell_presence"), "Dynamic N-of-M searched-cell presence matrix."),
         ("8. Multi Cell Candidates", analysis.get("subscriber_multi_cell_candidates"), "Subscribers present in at least two searched cells."),
         ("9. All Cell Candidates", analysis.get("subscriber_all_cell_candidates"), "Subscribers present in every loaded searched cell."),
@@ -782,6 +788,44 @@ def generate_tower_ipdr_complete_excel_report(
     The workbook contains investigation summaries and
     controlled lead tables only.
     """
+
+    master_enrichment = enrich_analysis_bundle(
+        tables,
+        table_specs=TOWER_IPDR_COMPLETE_SPECS,
+    )
+
+    tables = master_enrichment["bundle"]
+
+    status_frame = _frame(
+        tables.get(
+            "analysis_status"
+        )
+    )
+
+    status_row = {
+        "Stage": "Master Data Enrichment",
+        "Status": (
+            "WARNING"
+            if master_enrichment["warnings"]
+            else "COMPLETED"
+        ),
+        "Details": (
+            "Batch SDR/CGI enrichment applied to configured "
+            "subscriber and cell intelligence tables."
+        ),
+    }
+
+    tables["analysis_status"] = pd.concat(
+        [
+            status_frame,
+            pd.DataFrame(
+                [
+                    status_row,
+                ]
+            ),
+        ],
+        ignore_index=True,
+    )
 
     case_id = str(
         case.get(

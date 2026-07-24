@@ -185,6 +185,23 @@ def _execute(
             search_requests=search_requests,
         )
         analysis["rejected_rows"] = load_result.get("rejected_rows", pd.DataFrame())
+
+        enrichment_warnings = list(
+            analysis.get(
+                "master_enrichment_warnings",
+                [],
+            )
+            or []
+        )
+
+        if enrichment_warnings:
+            load_result.setdefault(
+                "warnings",
+                [],
+            ).extend(
+                enrichment_warnings
+            )
+
         print_ipdr_analysis(
             analysis,
             row_limit=20,

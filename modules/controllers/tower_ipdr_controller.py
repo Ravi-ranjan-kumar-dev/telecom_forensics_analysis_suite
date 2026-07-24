@@ -7,6 +7,12 @@ from typing import Any
 
 import pandas as pd
 
+from modules.enrichment.telecom_master_enrichment import (
+    TOWER_IPDR_PARTITION_SPECS,
+    TOWER_IPDR_TABLE_SPECS,
+    enrich_analysis_bundle,
+)
+
 from modules.analysis.toweripdr import (
     create_tower_ipdr_partitions,
     run_tower_ipdr_analysis,
@@ -384,6 +390,107 @@ def _execute(
                 cgi_groups=list_cgi_groups(case_id),
             )
             print_tower_ipdr_partition(partition, row_limit=50)
+
+
+        combined_tables: dict[str, Any] = {}
+        combined_specs: dict[str, dict[str, tuple[str, ...]]] = {}
+
+        for table_key, specification in (
+            TOWER_IPDR_TABLE_SPECS.items()
+        ):
+            if table_key in analysis:
+                combined_key = (
+                    f"analysis::{table_key}"
+                )
+                combined_tables[
+                    combined_key
+                ] = analysis[
+                    table_key
+                ]
+                combined_specs[
+                    combined_key
+                ] = dict(
+                    specification
+                )
+
+        if isinstance(
+            partition,
+            dict,
+        ):
+            for table_key, specification in (
+                TOWER_IPDR_PARTITION_SPECS.items()
+            ):
+                if table_key in partition:
+                    combined_key = (
+                        f"partition::{table_key}"
+                    )
+                    combined_tables[
+                        combined_key
+                    ] = partition[
+                        table_key
+                    ]
+                    combined_specs[
+                        combined_key
+                    ] = dict(
+                        specification
+                    )
+
+        master_enrichment = enrich_analysis_bundle(
+            combined_tables,
+            table_specs=combined_specs,
+        )
+
+        enriched_tables = master_enrichment[
+            "bundle"
+        ]
+
+        for combined_key, dataframe_value in (
+            enriched_tables.items()
+        ):
+            scope, table_key = combined_key.split(
+                "::",
+                1,
+            )
+
+            if scope == "analysis":
+                analysis[
+                    table_key
+                ] = dataframe_value
+
+            elif (
+                scope == "partition"
+                and isinstance(
+                    partition,
+                    dict,
+                )
+            ):
+                partition[
+                    table_key
+                ] = dataframe_value
+
+        analysis[
+            "master_enrichment_summary"
+        ] = master_enrichment[
+            "summary"
+        ]
+
+        analysis[
+            "master_enrichment_warnings"
+        ] = master_enrichment[
+            "warnings"
+        ]
+
+        if master_enrichment[
+            "warnings"
+        ]:
+            load_result.setdefault(
+                "warnings",
+                [],
+            ).extend(
+                master_enrichment[
+                    "warnings"
+                ]
+            )
 
         saved = save_tower_ipdr_run(
             case_id,

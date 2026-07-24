@@ -398,7 +398,8 @@ def generate_ipdr_excel_report(
     tables = [
         ("2. Source Files", analysis.get("file_summary"), "Source classification, operator and load status."),
         ("3. Query Summary", analysis.get("query_summary"), "Target/reverse query and source-file metrics."),
-        ("4. Subscribers", analysis.get("subscriber_summary"), "Subscriber/user-ID level activity."),
+        ("4. Subscribers", analysis.get("subscriber_summary"), "Subscriber/user-ID level activity with valid-mobile SDR enrichment."),
+        ("4A. Master Enrichment", analysis.get("master_enrichment_summary"), "SDR and CGI lookup coverage, exclusions and missing-master-data counts."),
         ("5. Multi-File Subs", analysis.get("multi_file_subscribers"), "Subscribers observed in more than one source file."),
         ("6. Subscriber Matrix", analysis.get("subscriber_file_presence"), "Dynamic source-file presence matrix."),
         ("7. IMEI Summary", analysis.get("imei_summary"), "Device identity activity."),
