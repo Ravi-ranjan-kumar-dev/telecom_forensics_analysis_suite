@@ -426,6 +426,120 @@ def _run_cgi_lookup(
     )
 
 
+def _run_master_data_import(
+    case: dict[str, Any] | None = None,
+) -> None:
+    """Run the one-file SDR or CGI master-data import."""
+
+    del case
+
+    print("\n" + "=" * 86)
+    print("MASTER DATA IMPORT")
+    print("=" * 86)
+    print(
+        "Select one SDR or CGI master-data file. "
+        "The data type and columns are detected automatically."
+    )
+
+    entered_path = input(
+        "\nMaster data file path: "
+    ).strip()
+
+    entered_path = entered_path.strip(
+        "\"'"
+    )
+
+    if not entered_path:
+        print(
+            "[-] No master data file was selected."
+        )
+        return
+
+    from modules.database.master_import_service import (
+        import_master_data_file,
+    )
+
+    result = import_master_data_file(
+        entered_path,
+        create_backup=True,
+    )
+
+    print("\n" + "-" * 86)
+    print("MASTER DATA IMPORT RESULT")
+    print("-" * 86)
+
+    labels = (
+        ("Status", "status"),
+        ("Detected Type", "import_type"),
+        ("Target Table", "target_table"),
+        ("Source File", "source_file"),
+        ("Rows Read", "rows_read"),
+        ("Valid Rows", "valid_rows"),
+        ("Invalid Rows", "invalid_rows"),
+        ("Duplicate Rows", "duplicate_rows"),
+        ("Inserted Rows", "inserted_rows"),
+        ("Updated Rows", "updated_rows"),
+        ("Skipped Rows", "skipped_rows"),
+        ("Before Count", "before_count"),
+        ("After Count", "after_count"),
+        ("Historical Base Rows", "base_rows"),
+        ("Duration Seconds", "duration_seconds"),
+        ("Backup", "backup_path"),
+        ("Import Log", "log_path"),
+        ("Message", "message"),
+    )
+
+    for label, key in labels:
+        value = result.get(
+            key,
+            "",
+        )
+
+        if value in {
+            "",
+            None,
+        }:
+            continue
+
+        if isinstance(
+            value,
+            int,
+        ):
+            display_value = f"{value:,}"
+        else:
+            display_value = str(
+                value
+            )
+
+        print(
+            f"{label:<22}: "
+            f"{display_value}"
+        )
+
+    status = str(
+        result.get(
+            "status",
+            "",
+        )
+    )
+
+    if status == "SUCCESS":
+        print(
+            "\n[+] Master data import completed successfully."
+        )
+    elif status.startswith(
+        "SKIPPED"
+    ):
+        print(
+            "\n[=] Master data import was safely skipped."
+        )
+    else:
+        print(
+            "\n[-] Master data import failed. "
+            "Review the message and JSON import log."
+        )
+
+
 def run_lookup_services(
     case: dict[str, Any] | None = None,
 ) -> None:
@@ -438,6 +552,7 @@ def run_lookup_services(
             print("=" * 86)
             print("1. SDR Number Lookup")
             print("2. CGI / Cell Address Lookup")
+            print("3. Master Data Import")
             print("0. Back")
 
             choice = input(
@@ -454,12 +569,18 @@ def run_lookup_services(
                     case
                 )
 
+            elif choice == "3":
+                _run_master_data_import(
+                    case
+                )
+
             elif choice == "0":
                 return
 
             else:
                 print(
-                    "[-] Invalid choice. Select 0, 1 or 2."
+                    "[-] Invalid choice. "
+                    "Select 0, 1, 2 or 3."
                 )
 
         except KeyboardInterrupt:

@@ -161,45 +161,99 @@ def _lookup_from_primary_table(numbers: list[str]) -> pd.DataFrame:
     return pd.concat(frames, ignore_index=True)
 
 
-def lookup_sdr_subscribers(numbers: Iterable) -> pd.DataFrame:
+def lookup_sdr_subscribers(
+    numbers: Iterable,
+) -> pd.DataFrame:
+    """
+    Lookup SDR profiles with new delta records taking priority.
+
+    The small primary table stores verified updates and corrections.
+    The historical large table is used only for numbers not found in
+    the primary table.
+    """
+
     normalized_numbers = sorted(
         {
-            normalize_mobile_number(number)
+            normalize_mobile_number(
+                number
+            )
             for number in numbers
-            if normalize_mobile_number(number)
+            if normalize_mobile_number(
+                number
+            )
         }
     )
 
     if not normalized_numbers:
         return _empty_lookup_frame()
 
-    large_result = _lookup_from_large_table(normalized_numbers)
+    primary_result = (
+        _lookup_from_primary_table(
+            normalized_numbers
+        )
+    )
 
-    found_numbers = set()
-    if large_result is not None and not large_result.empty:
-        found_numbers = set(large_result["lookup_mobile"].astype(str))
+    primary_numbers: set[str] = set()
+
+    if (
+        primary_result is not None
+        and not primary_result.empty
+    ):
+        primary_numbers = set(
+            primary_result[
+                "lookup_mobile"
+            ].astype(
+                str
+            )
+        )
 
     missing_numbers = [
-        number for number in normalized_numbers
-        if number not in found_numbers
+        number
+        for number in normalized_numbers
+        if number not in primary_numbers
     ]
 
-    fallback_result = _lookup_from_primary_table(missing_numbers)
+    large_result = (
+        _lookup_from_large_table(
+            missing_numbers
+        )
+    )
 
     frames = []
 
-    if large_result is not None and not large_result.empty:
-        frames.append(large_result)
+    if (
+        primary_result is not None
+        and not primary_result.empty
+    ):
+        frames.append(
+            primary_result
+        )
 
-    if fallback_result is not None and not fallback_result.empty:
-        frames.append(fallback_result)
+    if (
+        large_result is not None
+        and not large_result.empty
+    ):
+        frames.append(
+            large_result
+        )
 
     if not frames:
-        output = pd.DataFrame({"lookup_mobile": normalized_numbers})
+        output = pd.DataFrame(
+            {
+                "lookup_mobile": (
+                    normalized_numbers
+                )
+            }
+        )
         output["sdr_found"] = "No"
         return output
 
-    return pd.concat(frames, ignore_index=True)
+    return pd.concat(
+        frames,
+        ignore_index=True,
+    )
+
+
 
 
 def enrich_dataframe_with_sdr(
