@@ -206,7 +206,7 @@ def _read_preview(path: Path, limit: int = 40) -> tuple[list[str], str]:
         except UnicodeError as error:
             last_error = error
 
-    raise ValueError(f"File encoding read nahi ho saka: {last_error}")
+    raise ValueError(f"File encoding could not be read: {last_error}")
 
 
 def _find_header_row(lines: list[str]) -> int | None:

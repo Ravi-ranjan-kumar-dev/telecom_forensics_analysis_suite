@@ -901,7 +901,7 @@ def create_sighting_partitions(
         }
 
         if not sighting_id:
-            status_rows.append({**base_status, "status": "INVALID_SIGHTING_ID", "included": False, "message": "Sighting ID missing hai."})
+            status_rows.append({**base_status, "status": "INVALID_SIGHTING_ID", "included": False, "message": "Part identifier is missing."})
             continue
 
         spot_scope = resolve_partition_spot_scope(
@@ -945,7 +945,7 @@ def create_sighting_partitions(
                     "included": False,
                     "message": spot_scope.get(
                         "message",
-                        "Selected Spot resolve नहीं हुआ।",
+                        "The selected Spot could not be resolved.",
                     ),
                 }
             )
@@ -975,7 +975,7 @@ def create_sighting_partitions(
         start_time = pd.to_datetime(sighting.get("window_start"), errors="coerce")
         end_time = pd.to_datetime(sighting.get("window_end"), errors="coerce")
         if pd.isna(start_time) or pd.isna(end_time) or start_time >= end_time:
-            status_rows.append({**base_status, "status": "INVALID_TIME_WINDOW", "included": False, "message": "Window start/end invalid hai."})
+            status_rows.append({**base_status, "status": "INVALID_TIME_WINDOW", "included": False, "message": "Part Start and End Date-Time are invalid."})
             continue
 
         if group_id in {

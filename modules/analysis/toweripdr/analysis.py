@@ -855,11 +855,11 @@ def create_tower_ipdr_partitions(
         }
 
         if not sighting_id:
-            status.update(status="INVALID_SIGHTING_ID", scope_mode="INVALID", message="Sighting ID missing hai.", included=False)
+            status.update(status="INVALID_SIGHTING_ID", scope_mode="INVALID", message="Part identifier is missing.", included=False)
             status_rows.append(status)
             continue
         if pd.isna(window_start) or pd.isna(window_end) or window_start > window_end:
-            status.update(status="INVALID_TIME_WINDOW", scope_mode="INVALID", message="Window start/end invalid hai.", included=False)
+            status.update(status="INVALID_TIME_WINDOW", scope_mode="INVALID", message="Part Start and End Date-Time are invalid.", included=False)
             status_rows.append(status)
             continue
 
