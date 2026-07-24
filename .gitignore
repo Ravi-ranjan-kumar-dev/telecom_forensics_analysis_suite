@@ -45,3 +45,17 @@ data/master/
 database/*.duckdb
 database/backups/
 modules/database/*.before_*
+
+# Runtime telecom evidence inputs
+# Raw investigation files remain on disk but are never committed.
+data/tower_dump/cdr/input/**
+data/tower_dump/gprs/input/**
+data/tower_dump/ipdr/input/**
+
+# Preserve the canonical empty input directories.
+!data/tower_dump/cdr/input/.gitkeep
+!data/tower_dump/gprs/input/.gitkeep
+!data/tower_dump/ipdr/input/.gitkeep
+
+# Temporary development audit bundle.
+gprs_finalization_source_bundle.txt
