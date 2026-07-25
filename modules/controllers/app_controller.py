@@ -230,8 +230,8 @@ def _reporting_functions() -> dict[str, Any]:
             "print_single_analysis_report",
         ),
         "single_excel": safe_import(
-            "modules.reporting",
-            "generate_single_cdr_report",
+            "modules.reporting.cdr_compact_excel",
+            "generate_single_cdr_compact_report",
         ),
         "completion": safe_import(
             "modules.reporting",
