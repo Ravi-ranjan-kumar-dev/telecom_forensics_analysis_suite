@@ -7,6 +7,8 @@ source-specific analysis logic.
 
 from __future__ import annotations
 
+import hashlib
+
 from pathlib import Path
 from typing import Any
 
@@ -15,6 +17,9 @@ import pandas as pd
 from modules.analysis.device import (
     build_unified_imei_investigation,
 )
+from modules.analysis.device.imei_common import (
+    build_common_imei_cdr_analysis,
+)
 from modules.cases import (
     case_report_dir,
     log_case_event,
@@ -22,10 +27,16 @@ from modules.cases import (
     register_report,
     register_target,
 )
+from modules.loader.imei_evidence_loader import (
+    SUPPORTED_SUFFIXES as IMEI_EVIDENCE_SUFFIXES,
+    inspect_imei_evidence_file,
+    normalize_imei_cdr_file,
+)
 from modules.loader.telecom_identifiers import (
     normalize_imei,
 )
 from modules.reporting import (
+    generate_imei_common_report,
     generate_imei_device_report,
 )
 
@@ -109,6 +120,1132 @@ def _folder_has_supported_files(
             for path in folder.rglob("*")
         )
     )
+
+
+
+PROJECT_ROOT = Path(
+    __file__
+).resolve().parents[
+    2
+]
+
+
+def resolve_imei_cdr_input_folder(
+    case_id: str,
+) -> Path:
+    """Return the canonical dedicated IMEI CDR input folder."""
+
+    del case_id
+
+    return (
+        PROJECT_ROOT
+        / "data"
+        / "device"
+        / "imei"
+        / "cdr"
+    )
+
+
+def _sha256_file(
+    path: Path,
+) -> str:
+    """Calculate an evidence hash without changing the file."""
+
+    digest = hashlib.sha256()
+
+    with path.open(
+        "rb"
+    ) as handle:
+        while True:
+            block = handle.read(
+                1024 * 1024
+            )
+
+            if not block:
+                break
+
+            digest.update(
+                block
+            )
+
+    return digest.hexdigest()
+
+
+def _load_dedicated_imei_cdr_inventory(
+    case_id: str,
+) -> dict[str, Any]:
+    """Inspect acquisitions and normalize each supported CDR content once."""
+
+    folder = resolve_imei_cdr_input_folder(
+        case_id
+    )
+
+    folder.mkdir(
+        parents=True,
+        exist_ok=True,
+    )
+
+    paths = sorted(
+        (
+            path
+            for path in folder.rglob(
+                "*"
+            )
+            if (
+                path.is_file()
+                and path.suffix.lower()
+                in IMEI_EVIDENCE_SUFFIXES
+            )
+        ),
+        key=lambda path: str(
+            path
+        ).lower(),
+    )
+
+    acquisition_rows = []
+
+    all_content_representatives: dict[
+        str,
+        Path,
+    ] = {}
+
+    cdr_content_representatives: dict[
+        str,
+        Path,
+    ] = {}
+
+    frames_by_identifier: dict[
+        str,
+        list[pd.DataFrame],
+    ] = {}
+
+    identifiers: set[
+        str
+    ] = set()
+
+    warnings: list[
+        str
+    ] = []
+
+    errors: list[
+        str
+    ] = []
+
+    for path in paths:
+        digest = _sha256_file(
+            path
+        )
+
+        inspection = inspect_imei_evidence_file(
+            path
+        )
+
+        query_identifier = str(
+            inspection.get(
+                "query_identifier_normalized",
+                "",
+            )
+            or ""
+        ).strip()
+
+        identifier_valid = (
+            query_identifier.isdigit()
+            and len(
+                query_identifier
+            )
+            in {
+                14,
+                15,
+                16,
+            }
+        )
+
+        source_type = str(
+            inspection.get(
+                "source_type",
+                "",
+            )
+        ).strip().upper()
+
+        acquisition_duplicate_of = (
+            all_content_representatives.get(
+                digest
+            )
+        )
+
+        if acquisition_duplicate_of is None:
+            all_content_representatives[
+                digest
+            ] = path
+
+        acquisition_role = (
+            "DUPLICATE_CONTENT"
+            if acquisition_duplicate_of is not None
+            else "PRIMARY_CONTENT"
+        )
+
+        row = {
+            "Relative Path": (
+                path.relative_to(
+                    folder
+                ).as_posix()
+            ),
+            "Source File": path.name,
+            "Source Path": str(
+                path.resolve()
+            ),
+            "SHA-256": digest,
+            "Acquisition Content Role": acquisition_role,
+            "Duplicate Of": (
+                str(
+                    acquisition_duplicate_of.resolve()
+                )
+                if acquisition_duplicate_of is not None
+                else ""
+            ),
+            "Analysis Content Role": "",
+            "Analysis Duplicate Of": "",
+            "Format": str(
+                inspection.get(
+                    "format_id",
+                    "",
+                )
+            ),
+            "Operator": str(
+                inspection.get(
+                    "operator",
+                    "",
+                )
+            ),
+            "Source Type": source_type,
+            "Query Identifier": query_identifier,
+            "Query Identifier Type": str(
+                inspection.get(
+                    "query_identifier_type",
+                    "",
+                )
+            ),
+            "Inspection Status": str(
+                inspection.get(
+                    "status",
+                    "",
+                )
+            ),
+            "Records Declared": int(
+                inspection.get(
+                    "record_count",
+                    0,
+                )
+                or 0
+            ),
+            "Records Normalized": 0,
+            "Rejected Lines": int(
+                inspection.get(
+                    "rejected_line_count",
+                    0,
+                )
+                or 0
+            ),
+            "Message": str(
+                inspection.get(
+                    "message",
+                    "",
+                )
+            ),
+        }
+
+        if not inspection.get(
+            "ok"
+        ):
+            row[
+                "Analysis Content Role"
+            ] = "EXCLUDED_UNSUPPORTED_OR_ERROR"
+
+            acquisition_rows.append(
+                row
+            )
+            continue
+
+        if source_type != "CDR":
+            row[
+                "Analysis Content Role"
+            ] = "EXCLUDED_NON_CDR"
+
+            acquisition_rows.append(
+                row
+            )
+            continue
+
+        if not identifier_valid:
+            row[
+                "Analysis Content Role"
+            ] = "EXCLUDED_INVALID_QUERY"
+
+            errors.append(
+                f"{path.name}: valid query IMEI/IMEISV "
+                "could not be detected."
+            )
+
+            acquisition_rows.append(
+                row
+            )
+            continue
+
+        identifiers.add(
+            query_identifier
+        )
+
+        frames_by_identifier.setdefault(
+            query_identifier,
+            [],
+        )
+
+        analysis_duplicate_of = (
+            cdr_content_representatives.get(
+                digest
+            )
+        )
+
+        if analysis_duplicate_of is not None:
+            row[
+                "Analysis Content Role"
+            ] = "DUPLICATE_CONTENT"
+
+            row[
+                "Analysis Duplicate Of"
+            ] = str(
+                analysis_duplicate_of.resolve()
+            )
+
+            acquisition_rows.append(
+                row
+            )
+            continue
+
+        cdr_content_representatives[
+            digest
+        ] = path
+
+        row[
+            "Analysis Content Role"
+        ] = "PRIMARY_CONTENT"
+
+        normalization = normalize_imei_cdr_file(
+            path,
+            inspection=inspection,
+        )
+
+        row[
+            "Records Normalized"
+        ] = int(
+            normalization.get(
+                "records_normalized",
+                0,
+            )
+            or 0
+        )
+
+        row[
+            "Rejected Lines"
+        ] = int(
+            normalization.get(
+                "rejected_line_count",
+                0,
+            )
+            or 0
+        )
+
+        row[
+            "Message"
+        ] = str(
+            normalization.get(
+                "message",
+                "",
+            )
+        )
+
+        for warning in normalization.get(
+            "warnings",
+            [],
+        ) or []:
+            warnings.append(
+                f"{path.name}: {warning}"
+            )
+
+        for error in normalization.get(
+            "errors",
+            [],
+        ) or []:
+            errors.append(
+                f"{path.name}: {error}"
+            )
+
+        dataframe = normalization.get(
+            "data"
+        )
+
+        if (
+            isinstance(
+                dataframe,
+                pd.DataFrame,
+            )
+            and not dataframe.empty
+        ):
+            frames_by_identifier[
+                query_identifier
+            ].append(
+                dataframe.copy(
+                    deep=True
+                )
+            )
+
+        acquisition_rows.append(
+            row
+        )
+
+    device_frames = {
+        identifier: (
+            pd.concat(
+                frames,
+                ignore_index=True,
+                sort=False,
+            )
+            if frames
+            else pd.DataFrame()
+        )
+        for identifier, frames in (
+            frames_by_identifier.items()
+        )
+    }
+
+    manifest = pd.DataFrame(
+        acquisition_rows
+    )
+
+    if manifest.empty:
+        non_cdr_acquisitions = 0
+        duplicate_cdr_acquisitions = 0
+
+    else:
+        non_cdr_acquisitions = int(
+            manifest[
+                "Source Type"
+            ]
+            .astype(
+                str
+            )
+            .str.upper()
+            .ne(
+                "CDR"
+            )
+            .sum()
+        )
+
+        duplicate_cdr_acquisitions = int(
+            manifest[
+                "Analysis Content Role"
+            ]
+            .astype(
+                str
+            )
+            .str.upper()
+            .eq(
+                "DUPLICATE_CONTENT"
+            )
+            .sum()
+        )
+
+    return {
+        "folder": folder,
+        "files_found": len(
+            paths
+        ),
+        "identifiers": sorted(
+            identifiers
+        ),
+        "device_frames": device_frames,
+        "acquisition_manifest": manifest,
+        "all_content_groups": len(
+            all_content_representatives
+        ),
+        "supported_cdr_content_groups": len(
+            cdr_content_representatives
+        ),
+        # Backward-compatible alias used by current tests.
+        "unique_content_groups": len(
+            cdr_content_representatives
+        ),
+        "non_cdr_acquisitions": non_cdr_acquisitions,
+        "duplicate_cdr_acquisitions": (
+            duplicate_cdr_acquisitions
+        ),
+        "analytical_records": int(
+            sum(
+                len(
+                    frame
+                )
+                for frame in device_frames.values()
+            )
+        ),
+        "warnings": warnings,
+        "errors": errors,
+    }
+
+
+def _dedicated_cdr_payload(
+    dataframe: pd.DataFrame,
+) -> dict[str, dict[str, Any]]:
+    """Convert canonical dedicated CDR rows to the CDR analysis contract."""
+
+    if (
+        not isinstance(
+            dataframe,
+            pd.DataFrame,
+        )
+        or dataframe.empty
+    ):
+        return {}
+
+    if "target" in dataframe.columns:
+        targets = (
+            dataframe[
+                "target"
+            ]
+            .astype(
+                "string"
+            )
+            .fillna(
+                ""
+            )
+            .str.strip()
+        )
+
+    else:
+        targets = pd.Series(
+            "",
+            index=dataframe.index,
+            dtype="string",
+        )
+
+    result: dict[
+        str,
+        dict[str, Any],
+    ] = {}
+
+    distinct_targets = sorted(
+        {
+            value
+            for value in targets
+            if value
+        }
+    )
+
+    for target in distinct_targets:
+        subset = dataframe.loc[
+            targets.eq(
+                target
+            )
+        ].copy(
+            deep=True
+        )
+
+        result[
+            target
+        ] = {
+            "df": subset,
+        }
+
+    missing_target = targets.eq(
+        ""
+    )
+
+    if missing_target.any():
+        result[
+            "UNKNOWN_TARGET"
+        ] = {
+            "df": dataframe.loc[
+                missing_target
+            ].copy(
+                deep=True
+            ),
+        }
+
+    return result
+
+
+def _build_empty_no_data_imei_analysis(
+    identifier: str,
+) -> dict[str, Any]:
+    """Build an investigator-facing result for a valid empty report."""
+
+    message = (
+        "A valid dedicated IMEI CDR report was received, "
+        "but the operator report contains no result records."
+    )
+
+    return {
+        "requested_imei": identifier,
+        "overall_status": "EMPTY_NO_DATA",
+        "message": message,
+        "source_summary": pd.DataFrame(
+            [
+                {
+                    "Evidence Source": "CDR",
+                    "Status": "EMPTY_NO_DATA",
+                    "Evidence Unit": "CDR records",
+                    "Matched Count": 0,
+                    "Message": message,
+                },
+                {
+                    "Evidence Source": "IPDR",
+                    "Status": "NO_INPUT",
+                    "Evidence Unit": "IPDR records",
+                    "Matched Count": 0,
+                    "Message": "No IPDR evidence selected.",
+                },
+                {
+                    "Evidence Source": "GPRS",
+                    "Status": "NO_INPUT",
+                    "Evidence Unit": "GPRS sessions",
+                    "Matched Count": 0,
+                    "Message": "No GPRS evidence selected.",
+                },
+            ]
+        ),
+        "associated_identities": pd.DataFrame(),
+        "cross_source_timeline": pd.DataFrame(),
+        "cdr": {
+            "status": "EMPTY_NO_DATA",
+            "message": message,
+            "timeline": pd.DataFrame(),
+            "towers": pd.DataFrame(),
+        },
+        "ipdr": {
+            "status": "NO_INPUT",
+            "timeline": pd.DataFrame(),
+        },
+        "gprs": {
+            "status": "NO_INPUT",
+            "timeline": pd.DataFrame(),
+        },
+        "review_indicators": pd.DataFrame(
+            [
+                {
+                    "Evidence Source": "CDR",
+                    "Indicator": "Valid empty operator report",
+                    "Observation": (
+                        "The report query was recognized, "
+                        "but no CDR event rows were supplied."
+                    ),
+                    "Caution": (
+                        "This is not the same as failing to find "
+                        "an identifier in loaded event data."
+                    ),
+                }
+            ]
+        ),
+        "data_quality": pd.DataFrame(
+            [
+                {
+                    "Evidence Source": "CDR",
+                    "Check": "Valid empty report",
+                    "Count": 1,
+                    "Meaning": (
+                        "Operator evidence contains no result records."
+                    ),
+                }
+            ]
+        ),
+    }
+
+def _run_auto_single_imei_cdr(
+    *,
+    case: dict[str, Any],
+    identifier: str,
+    dataframe: pd.DataFrame,
+    acquisition_manifest: pd.DataFrame,
+) -> dict[str, Any]:
+    """Run one automatically detected dedicated IMEI CDR analysis."""
+
+    case_id = str(
+        case.get(
+            "case_id",
+            "",
+        )
+    ).strip()
+
+    device_manifest = (
+        acquisition_manifest.loc[
+            acquisition_manifest[
+                "Query Identifier"
+            ]
+            .astype(
+                str
+            )
+            .eq(
+                identifier
+            )
+        ].reset_index(
+            drop=True
+        )
+        if (
+            isinstance(
+                acquisition_manifest,
+                pd.DataFrame,
+            )
+            and not acquisition_manifest.empty
+            and "Query Identifier"
+            in acquisition_manifest.columns
+        )
+        else pd.DataFrame()
+    )
+
+    register_target(
+        case_id,
+        target_type="IMEI",
+        target_value=identifier,
+        description=(
+            "Automatically detected dedicated "
+            "IMEI CDR query"
+        ),
+    )
+
+    log_case_event(
+        case_id,
+        action="IMEI_CDR_AUTO_SINGLE_STARTED",
+        details={
+            "requested_imei": identifier,
+            "input_records": len(
+                dataframe
+            ),
+        },
+    )
+
+    inspection_statuses = set()
+
+    if (
+        not device_manifest.empty
+        and "Inspection Status"
+        in device_manifest.columns
+    ):
+        inspection_statuses = {
+            value
+            for value in (
+                device_manifest[
+                    "Inspection Status"
+                ]
+                .astype(
+                    str
+                )
+                .str.upper()
+                .str.strip()
+            )
+            if value
+        }
+
+    valid_empty_report = (
+        (
+            not isinstance(
+                dataframe,
+                pd.DataFrame,
+            )
+            or dataframe.empty
+        )
+        and bool(
+            inspection_statuses
+        )
+        and inspection_statuses.issubset(
+            {
+                "EMPTY_NO_DATA",
+            }
+        )
+    )
+
+    if valid_empty_report:
+        analysis = _build_empty_no_data_imei_analysis(
+            identifier
+        )
+
+    else:
+        payload = _dedicated_cdr_payload(
+            dataframe
+        )
+
+        analysis = build_unified_imei_investigation(
+            identifier,
+            loaded_cdrs=payload,
+            ipdr_dataframe=None,
+            gprs_dataframe=None,
+        )
+
+    analysis[
+        "acquisition_manifest"
+    ] = device_manifest
+
+    _print_source_summary(
+        analysis
+    )
+
+    report_path = None
+
+    if str(
+        analysis.get(
+            "overall_status",
+            "",
+        )
+    ).upper() in {
+        "FOUND",
+        "PARTIAL",
+        "EMPTY_NO_DATA",
+    }:
+        report_path = generate_imei_device_report(
+            case=case,
+            analysis=analysis,
+            output_dir=case_report_dir(
+                case_id,
+                "imei_device",
+            ),
+        )
+
+    if report_path:
+        register_report(
+            case_id,
+            report_type="IMEI_CDR_ANALYSIS",
+            report_path=report_path,
+        )
+
+        if valid_empty_report:
+            print(
+                f"[+] Empty-report IMEI workbook: {report_path}"
+            )
+
+        else:
+            print(
+                f"[+] Single IMEI report: {report_path}"
+            )
+
+    else:
+        print(
+            f"[INFO] {identifier}: no investigator workbook "
+            "was created."
+        )
+
+    timeline = analysis.get(
+        "cross_source_timeline"
+    )
+
+    output_records = (
+        len(
+            timeline
+        )
+        if isinstance(
+            timeline,
+            pd.DataFrame,
+        )
+        else 0
+    )
+
+    overall_status = str(
+        analysis.get(
+            "overall_status",
+            "",
+        )
+    ).upper()
+
+    run_status = (
+        "FAILED"
+        if overall_status == "ERROR"
+        else "COMPLETED"
+    )
+
+    register_analysis_run(
+        case_id,
+        analysis_type="IMEI_CDR_ANALYSIS",
+        status=run_status,
+        input_records=len(
+            dataframe
+        ),
+        output_records=output_records,
+        report_path=str(
+            report_path or ""
+        ),
+        **(
+            {
+                "error_message": str(
+                    analysis.get(
+                        "message",
+                        "",
+                    )
+                )
+            }
+            if run_status == "FAILED"
+            else {}
+        ),
+    )
+
+    log_case_event(
+        case_id,
+        action=(
+            "IMEI_CDR_AUTO_SINGLE_"
+            + run_status
+        ),
+        details={
+            "requested_imei": identifier,
+            "input_records": len(
+                dataframe
+            ),
+            "output_records": output_records,
+            "overall_status": overall_status,
+            "report_created": bool(
+                report_path
+            ),
+        },
+    )
+
+    return {
+        "identifier": identifier,
+        "analysis": analysis,
+        "report": report_path,
+        "input_records": len(
+            dataframe
+        ),
+        "output_records": output_records,
+    }
+
+
+def _execute_auto_detected_imei_cdr(
+    case: dict[str, Any],
+) -> dict[str, Any]:
+    """Run all single analyses and common analysis when applicable."""
+
+    case_id = str(
+        case.get(
+            "case_id",
+            "",
+        )
+    ).strip()
+
+    inventory = _load_dedicated_imei_cdr_inventory(
+        case_id
+    )
+
+    identifiers = inventory[
+        "identifiers"
+    ]
+
+    print("\n" + "=" * 78)
+    print("DEDICATED IMEI CDR AUTO-DETECTION")
+    print("=" * 78)
+    print(
+        f"Input Folder             : {inventory['folder']}"
+    )
+    print(
+        f"Physical Acquisitions    : {inventory['files_found']}"
+    )
+    print(
+        "All Content Groups      : "
+        f"{inventory.get('all_content_groups', 0)}"
+    )
+    print(
+        "Supported CDR Groups    : "
+        f"{inventory.get('supported_cdr_content_groups', 0)}"
+    )
+    print(
+        "Non-CDR Acquisitions    : "
+        f"{inventory.get('non_cdr_acquisitions', 0)}"
+    )
+    print(
+        "Duplicate CDR Copies    : "
+        f"{inventory.get('duplicate_cdr_acquisitions', 0)}"
+    )
+    print(
+        f"Detected Identifiers     : {len(identifiers)}"
+    )
+    print(
+        "Analytical CDR Records  : "
+        f"{inventory['analytical_records']:,}"
+    )
+
+    for warning in inventory.get(
+        "warnings",
+        [],
+    ):
+        print(
+            f"[WARNING] {warning}"
+        )
+
+    for error in inventory.get(
+        "errors",
+        [],
+    ):
+        print(
+            f"[WARNING] {error}"
+        )
+
+    if not identifiers:
+        print(
+            "[-] No supported report-query IMEI/IMEISV "
+            "could be detected."
+        )
+        print(
+            "[INFO] Manual entry will be used only as fallback."
+        )
+
+        return _execute(
+            case,
+            mode="cdr",
+        )
+
+    if len(
+        identifiers
+    ) == 1:
+        print(
+            "[+] One unique identifier detected. "
+            "Starting automatic single analysis."
+        )
+
+    else:
+        print(
+            f"[+] {len(identifiers)} unique identifiers detected."
+        )
+        print(
+            "[+] Running one single analysis per identifier "
+            "and one common cross-device analysis."
+        )
+
+    single_results = []
+
+    for index, identifier in enumerate(
+        identifiers,
+        start=1,
+    ):
+        print("\n" + "-" * 78)
+        print(
+            f"SINGLE IMEI ANALYSIS "
+            f"{index}/{len(identifiers)}: {identifier}"
+        )
+        print("-" * 78)
+
+        result = _run_auto_single_imei_cdr(
+            case=case,
+            identifier=identifier,
+            dataframe=inventory[
+                "device_frames"
+            ].get(
+                identifier,
+                pd.DataFrame(),
+            ),
+            acquisition_manifest=inventory[
+                "acquisition_manifest"
+            ],
+        )
+
+        single_results.append(
+            result
+        )
+
+    common_result = None
+
+    if len(
+        identifiers
+    ) > 1:
+        print("\n" + "=" * 78)
+        print("COMMON / CROSS-DEVICE IMEI ANALYSIS")
+        print("=" * 78)
+
+        common_analysis = build_common_imei_cdr_analysis(
+            inventory[
+                "device_frames"
+            ],
+            inventory[
+                "acquisition_manifest"
+            ],
+        )
+
+        common_report = generate_imei_common_report(
+            case=case,
+            analysis=common_analysis,
+            output_dir=case_report_dir(
+                case_id,
+                "imei_device",
+            ),
+        )
+
+        if common_report:
+            register_report(
+                case_id,
+                report_type="IMEI_CDR_COMMON_ANALYSIS",
+                report_path=common_report,
+            )
+
+            print(
+                f"[+] Common IMEI report: {common_report}"
+            )
+
+        register_analysis_run(
+            case_id,
+            analysis_type="IMEI_CDR_COMMON_ANALYSIS",
+            status=(
+                "COMPLETED"
+                if common_analysis.get(
+                    "status"
+                )
+                == "FOUND"
+                else "FAILED"
+            ),
+            input_records=inventory[
+                "analytical_records"
+            ],
+            output_records=len(
+                common_analysis.get(
+                    "cross_device_timeline",
+                    pd.DataFrame(),
+                )
+            ),
+            report_path=str(
+                common_report or ""
+            ),
+        )
+
+        log_case_event(
+            case_id,
+            action="IMEI_CDR_COMMON_ANALYSIS_COMPLETED",
+            details={
+                "identifier_count": len(
+                    identifiers
+                ),
+                "device_family_count": int(
+                    common_analysis.get(
+                        "device_family_count",
+                        0,
+                    )
+                    or 0
+                ),
+                "input_records": inventory[
+                    "analytical_records"
+                ],
+                "report_created": bool(
+                    common_report
+                ),
+            },
+        )
+
+        common_result = {
+            "analysis": common_analysis,
+            "report": common_report,
+        }
+
+    return {
+        "mode": "cdr",
+        "automatic_detection": True,
+        "identifiers": identifiers,
+        "inventory": inventory,
+        "single_results": single_results,
+        "common_result": common_result,
+        "input_records": inventory[
+            "analytical_records"
+        ],
+    }
 
 
 def _load_cdr_evidence(
@@ -946,10 +2083,16 @@ def handle_imei_device_workspace(
                 )
                 continue
 
-            _execute(
-                case,
-                mode=mode,
-            )
+            if mode == "cdr":
+                _execute_auto_detected_imei_cdr(
+                    case
+                )
+
+            else:
+                _execute(
+                    case,
+                    mode=mode,
+                )
 
         except KeyboardInterrupt:
             print(

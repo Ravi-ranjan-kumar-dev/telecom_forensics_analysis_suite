@@ -6,6 +6,8 @@ CDR targets. It does not reload source files and does not modify raw evidence.
 
 from __future__ import annotations
 
+import re
+
 from collections.abc import Mapping
 from typing import Any
 
@@ -104,6 +106,34 @@ def _empty_frame(
 ) -> pd.DataFrame:
     return pd.DataFrame(
         columns=columns
+    )
+
+
+
+def _normalize_requested_device_identifier(
+    value: Any,
+) -> str:
+    """Normalize an explicit report-query or observed device identifier."""
+
+    digits = re.sub(
+        r"\D",
+        "",
+        str(
+            value or ""
+        ),
+    )
+
+    return (
+        digits
+        if len(
+            digits
+        )
+        in {
+            14,
+            15,
+            16,
+        }
+        else ""
     )
 
 
@@ -258,12 +288,115 @@ def _prepare_target_events(
         normalize_imei
     )
 
-    match_mask = normalized_imei.eq(
+    query_identifier = pd.Series(
+        "",
+        index=dataframe.index,
+        dtype="string",
+    )
+
+    for query_column in (
+        "query_identifier_normalized",
+        "query_identifier_raw",
+    ):
+        if query_column not in dataframe.columns:
+            continue
+
+        candidate = (
+            dataframe[
+                query_column
+            ]
+            .astype(
+                "string"
+            )
+            .fillna(
+                ""
+            )
+            .str.replace(
+                r"\D",
+                "",
+                regex=True,
+            )
+        )
+
+        query_identifier = query_identifier.where(
+            query_identifier.ne(
+                ""
+            ),
+            candidate,
+        )
+
+    exact_observed_match = normalized_imei.eq(
         requested_imei
+    )
+
+    exact_query_scope = query_identifier.eq(
+        requested_imei
+    )
+
+    match_mask = (
+        exact_observed_match
+        | exact_query_scope
     )
 
     if not match_mask.any():
         return pd.DataFrame()
+
+    match_basis = pd.Series(
+        "",
+        index=dataframe.index,
+        dtype="string",
+    )
+
+    match_basis.loc[
+        exact_query_scope
+    ] = "QUERY_SCOPE"
+
+    match_basis.loc[
+        exact_observed_match
+    ] = "EXACT_OBSERVED"
+
+    if "match_relation" in dataframe.columns:
+        match_relation = (
+            dataframe[
+                "match_relation"
+            ]
+            .astype(
+                "string"
+            )
+            .fillna(
+                ""
+            )
+            .str.strip()
+            .str.upper()
+        )
+
+    else:
+        match_relation = pd.Series(
+            "",
+            index=dataframe.index,
+            dtype="string",
+        )
+
+    fallback_relation = pd.Series(
+        "UNAVAILABLE",
+        index=dataframe.index,
+        dtype="string",
+    )
+
+    fallback_relation.loc[
+        exact_query_scope
+    ] = "REPORT_SCOPE"
+
+    fallback_relation.loc[
+        exact_observed_match
+    ] = "EXACT"
+
+    match_relation = match_relation.where(
+        match_relation.ne(
+            ""
+        ),
+        fallback_relation,
+    )
 
     data = dataframe.loc[
         match_mask
@@ -278,12 +411,38 @@ def _prepare_target_events(
         target
     ).strip()
 
-    data[
-        "_source_file"
-    ] = _source_label(
+    fallback_source = _source_label(
         value,
         target,
     )
+
+    if "source_file" in data.columns:
+        row_source = (
+            data[
+                "source_file"
+            ]
+            .astype(
+                "string"
+            )
+            .fillna(
+                ""
+            )
+            .str.strip()
+        )
+
+        data[
+            "_source_file"
+        ] = row_source.where(
+            row_source.ne(
+                ""
+            ),
+            fallback_source,
+        )
+
+    else:
+        data[
+            "_source_file"
+        ] = fallback_source
 
     data[
         "_imei_raw"
@@ -296,6 +455,30 @@ def _prepare_target_events(
     data[
         "_imei_normalized"
     ] = normalized_imei.loc[
+        match_mask
+    ].astype(
+        str
+    )
+
+    data[
+        "_query_identifier"
+    ] = query_identifier.loc[
+        match_mask
+    ].astype(
+        str
+    )
+
+    data[
+        "_match_basis"
+    ] = match_basis.loc[
+        match_mask
+    ].astype(
+        str
+    )
+
+    data[
+        "_match_relation"
+    ] = match_relation.loc[
         match_mask
     ].astype(
         str
@@ -1183,6 +1366,55 @@ def _build_review_indicators(
             }
         )
 
+    query_scope_count = int(
+        events[
+            "_match_basis"
+        ]
+        .eq(
+            "QUERY_SCOPE"
+        )
+        .sum()
+    )
+
+    if query_scope_count:
+        relations = ", ".join(
+            sorted(
+                {
+                    value
+                    for value in events[
+                        "_match_relation"
+                    ]
+                    .fillna(
+                        ""
+                    )
+                    .astype(
+                        str
+                    )
+                    .str.strip()
+                    if value
+                }
+            )
+        )
+
+        rows.append(
+            {
+                "Indicator": (
+                    "Dedicated IMEI report query matched"
+                ),
+                "Observation": (
+                    f"{query_scope_count} event(s) were included because "
+                    "the requested identifier exactly matched the report "
+                    f"query. Recorded relation(s): "
+                    f"{relations or 'UNAVAILABLE'}."
+                ),
+                "Caution": (
+                    "The report-query identifier and observed IMEI/IMEISV "
+                    "remain separate and must be verified against the "
+                    "original evidence."
+                ),
+            }
+        )
+
     if not rows:
         rows.append(
             {
@@ -1216,7 +1448,7 @@ def _build_data_quality(
                 events
             ),
             "Meaning": (
-                "Rows matching the exact canonical IMEI or IMEISV."
+                'Rows included by exact observed matching or dedicated report-query scope. The recorded match relation remains available for review.'
             ),
         },
         {
@@ -1305,8 +1537,10 @@ def build_imei_investigation(
         modified.
     """
 
-    normalized_requested = normalize_imei(
-        requested_imei
+    normalized_requested = (
+        _normalize_requested_device_identifier(
+            requested_imei
+        )
     )
 
     if not normalized_requested:
@@ -1314,7 +1548,7 @@ def build_imei_investigation(
             "",
             status="INVALID_IMEI",
             message=(
-                "Enter a valid 15- or 16-digit IMEI/IMEISV."
+                "Enter a valid 14-digit report query, 15-digit IMEI or 16-digit IMEISV."
             ),
         )
 

@@ -6,6 +6,8 @@ This module only coordinates results and builds common investigator views.
 
 from __future__ import annotations
 
+import re
+
 from collections.abc import Mapping
 from typing import Any, Callable
 
@@ -1011,6 +1013,34 @@ def _overall_status(
     return "NO_INPUT"
 
 
+
+def _normalize_requested_device_identifier(
+    value: Any,
+) -> str:
+    """Normalize an explicit dedicated-report device query."""
+
+    digits = re.sub(
+        r"\D",
+        "",
+        str(
+            value or ""
+        ),
+    )
+
+    return (
+        digits
+        if len(
+            digits
+        )
+        in {
+            14,
+            15,
+            16,
+        }
+        else ""
+    )
+
+
 def build_unified_imei_investigation(
     requested_imei: Any,
     *,
@@ -1020,8 +1050,10 @@ def build_unified_imei_investigation(
 ) -> dict[str, Any]:
     """Run exact IMEI investigation across available evidence sources."""
 
-    normalized_requested = normalize_imei(
-        requested_imei
+    normalized_requested = (
+        _normalize_requested_device_identifier(
+            requested_imei
+        )
     )
 
     if not normalized_requested:
@@ -1083,7 +1115,7 @@ def build_unified_imei_investigation(
 
     if found_sources:
         message = (
-            "Exact IMEI/IMEISV found in: "
+            "Requested device-query evidence found in: "
             + ", ".join(
                 found_sources
             )

@@ -26,3 +26,10 @@ try:
 except Exception:
     generate_tower_dump_excel_report = None
 
+
+from .imei_device_excel import generate_imei_common_report
+
+if "generate_imei_common_report" not in __all__:
+    __all__.append(
+        "generate_imei_common_report"
+    )

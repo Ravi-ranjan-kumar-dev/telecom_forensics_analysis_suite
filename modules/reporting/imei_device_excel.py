@@ -24,7 +24,10 @@ from openpyxl.utils import get_column_letter
 from modules.core.time_utils import utc_now_iso
 
 from .excel_security import excel_safe_value
-from .report_paths import get_imei_device_report_path
+from .report_paths import (
+    get_imei_common_report_path,
+    get_imei_device_report_path,
+)
 
 
 IMEI_DEVICE_SHEETS = (
@@ -349,23 +352,85 @@ def _safe_scalar(
 def _is_identifier_column(
     column: str,
 ) -> bool:
+    """Return True when Excel must preserve the value as exact text."""
+
     if column in TEXT_IDENTIFIER_COLUMNS:
         return True
 
-    upper = str(
-        column
-    ).upper()
-
-    return any(
-        token in upper
-        for token in (
-            "IMEI",
-            "IMSI",
-            "MSISDN",
-            "CELL ID",
-            "IP ADDRESS",
+    upper = (
+        str(
+            column
         )
+        .upper()
+        .replace(
+            "_",
+            " ",
+        )
+        .strip()
     )
+
+    if upper.endswith(
+        " COUNT"
+    ):
+        return False
+
+    if (
+        "QUERY IDENTIFIER" in upper
+        or "DEVICE FAMILY" in upper
+        or "SHA-256" in upper
+        or "SHA256" in upper
+        or upper.endswith(
+            " HASH"
+        )
+        or "IMEI" in upper
+        or "IMEISV" in upper
+        or "IMSI" in upper
+        or "MSISDN" in upper
+        or "CELL ID" in upper
+        or "IP ADDRESS" in upper
+        or "TARGET NUMBER" in upper
+        or "CONTACT NUMBER" in upper
+        or "OTHER PARTY" in upper
+        or "SUBSCRIBER / USER ID" in upper
+    ):
+        return True
+
+    return False
+
+
+def _is_identifier_value_cell(
+    dataframe: pd.DataFrame,
+    *,
+    row_position: int,
+    column_name: str,
+) -> bool:
+    """Detect identifiers stored inside a generic Value column."""
+
+    if _is_identifier_column(
+        column_name
+    ):
+        return True
+
+    if (
+        column_name == "Value"
+        and "Item" in dataframe.columns
+        and 0 <= row_position < len(
+            dataframe
+        )
+    ):
+        item_name = str(
+            dataframe.iloc[
+                row_position
+            ][
+                "Item"
+            ]
+        )
+
+        return _is_identifier_column(
+            item_name
+        )
+
+    return False
 
 
 def _write_title(
@@ -561,13 +626,18 @@ def _write_page(
         ).fill = NOTE_FILL
 
     else:
-        for row_index, values in enumerate(
+        for row_position, values in enumerate(
             dataframe.itertuples(
                 index=False,
                 name=None,
-            ),
-            start=header_row + 1,
+            )
         ):
+            row_index = (
+                header_row
+                + 1
+                + row_position
+            )
+
             for column_index, value in enumerate(
                 values,
                 start=1,
@@ -582,22 +652,36 @@ def _write_page(
                     value
                 )
 
-                if (
-                    safe_value is not None
-                    and _is_identifier_column(
-                        column_name
-                    )
-                ):
-                    safe_value = str(
+                force_text = _is_identifier_value_cell(
+                    dataframe,
+                    row_position=row_position,
+                    column_name=column_name,
+                )
+
+                if force_text:
+                    if safe_value is None:
+                        output_value = ""
+
+                    else:
+                        # Apply formula-injection protection first, then
+                        # keep the final OpenPyXL value as exact text.
+                        output_value = str(
+                            excel_safe_value(
+                                str(
+                                    safe_value
+                                )
+                            )
+                        )
+
+                else:
+                    output_value = excel_safe_value(
                         safe_value
                     )
 
                 cell = worksheet.cell(
                     row=row_index,
                     column=column_index,
-                    value=excel_safe_value(
-                        safe_value
-                    ),
+                    value=output_value,
                 )
 
                 cell.border = TABLE_BORDER
@@ -606,9 +690,7 @@ def _write_page(
                     wrap_text=True,
                 )
 
-                if _is_identifier_column(
-                    column_name
-                ):
+                if force_text:
                     cell.number_format = "@"
 
                 elif isinstance(
@@ -726,12 +808,11 @@ def _build_overview(
         },
         {
             "Section": "DEVICE",
-            "Item": "Requested IMEI / IMEISV",
+            "Item": "Requested Device Query Identifier",
             "Value": requested_imei,
             "Evidence Unit": "",
             "Note": (
-                "Exact canonical 15- or 16-digit "
-                "identifier matching."
+                'The report-query identifier is matched exactly. BASE14, IMEI15 and IMEISV16 remain separate.'
             ),
         },
         {
@@ -1077,8 +1158,7 @@ def _build_quality_and_guide(
                 "Check": "Exact identifier matching",
                 "Count": "",
                 "Meaning": (
-                    "15-digit IMEI and 16-digit IMEISV "
-                    "are searched as exact identifiers."
+                    'Dedicated BASE14 report queries, 15-digit IMEI and 16-digit IMEISV remain distinct and are not silently converted.'
                 ),
             },
             {
@@ -1186,6 +1266,116 @@ def _has_reportable_evidence(
     return False
 
 
+ACQUISITION_MANIFEST_REPORT_COLUMNS = [
+    "Relative Path",
+    "SHA-256",
+    "Acquisition Content Role",
+    "Analysis Content Role",
+    "Duplicate Reference",
+    "Format",
+    "Operator",
+    "Source Type",
+    "Query Identifier",
+    "Query Identifier Type",
+    "Inspection Status",
+    "Records Declared",
+    "Records Normalized",
+    "Rejected Lines",
+    "Message",
+]
+
+
+def _manifest_file_reference(
+    value: Any,
+) -> str:
+    """Return a shareable file reference without workstation paths."""
+
+    text = str(
+        value or ""
+    ).strip()
+
+    if not text:
+        return ""
+
+    return Path(
+        text
+    ).name
+
+
+def _build_acquisition_manifest(
+    value: Any,
+) -> pd.DataFrame:
+    """Build the compact investigator-facing acquisition manifest."""
+
+    manifest = _frame(
+        value
+    )
+
+    if manifest.empty:
+        return pd.DataFrame(
+            columns=ACQUISITION_MANIFEST_REPORT_COLUMNS
+        )
+
+    work = manifest.copy(
+        deep=True
+    )
+
+    acquisition_duplicate = (
+        work[
+            "Duplicate Of"
+        ]
+        .astype(
+            "string"
+        )
+        .fillna(
+            ""
+        )
+        .str.strip()
+        if "Duplicate Of" in work.columns
+        else pd.Series(
+            "",
+            index=work.index,
+            dtype="string",
+        )
+    )
+
+    analysis_duplicate = (
+        work[
+            "Analysis Duplicate Of"
+        ]
+        .astype(
+            "string"
+        )
+        .fillna(
+            ""
+        )
+        .str.strip()
+        if "Analysis Duplicate Of" in work.columns
+        else pd.Series(
+            "",
+            index=work.index,
+            dtype="string",
+        )
+    )
+
+    duplicate_reference = analysis_duplicate.where(
+        analysis_duplicate.ne(
+            ""
+        ),
+        acquisition_duplicate,
+    )
+
+    work[
+        "Duplicate Reference"
+    ] = duplicate_reference.map(
+        _manifest_file_reference
+    )
+
+    return _project(
+        work,
+        ACQUISITION_MANIFEST_REPORT_COLUMNS,
+    )
+
 def generate_imei_device_report(
     *,
     case: dict[str, Any] | None,
@@ -1218,16 +1408,39 @@ def generate_imei_device_report(
         )
     ).strip()
 
+    manifest = _build_acquisition_manifest(
+        analysis.get(
+            "acquisition_manifest"
+        )
+    )
+
+    has_reportable_evidence = _has_reportable_evidence(
+        analysis
+    )
+
+    if not requested_imei:
+        return None
+
     if (
-        status not in {
+        status in {
             "FOUND",
             "PARTIAL",
         }
-        or not requested_imei
-        or not _has_reportable_evidence(
-            analysis
-        )
+        and not has_reportable_evidence
     ):
+        return None
+
+    if (
+        status == "EMPTY_NO_DATA"
+        and manifest.empty
+    ):
+        return None
+
+    if status not in {
+        "FOUND",
+        "PARTIAL",
+        "EMPTY_NO_DATA",
+    }:
         return None
 
     case = (
@@ -1261,7 +1474,7 @@ def generate_imei_device_report(
     )
 
     subtitle = (
-        f"Exact IMEI / IMEISV: {requested_imei}"
+        f"Device Query Identifier: {requested_imei}"
     )
 
     sheets = [
@@ -1285,8 +1498,7 @@ def generate_imei_device_report(
                 IDENTITY_COLUMNS,
             ),
             (
-                "Numbers and IMSIs associated with "
-                "the exact identifier."
+                'Numbers and IMSIs associated with the requested device-query scope.'
             ),
         ),
         (
@@ -1349,8 +1561,7 @@ def generate_imei_device_report(
                 analysis
             ),
             (
-                "Cell IDs observed with the exact identifier. "
-                "Interpret with source and time context."
+                'Cell IDs observed within the requested device-query scope. Interpret with source and time context.'
             ),
         ),
         (
@@ -1377,6 +1588,227 @@ def generate_imei_device_report(
             ),
         ),
     ]
+
+    if not manifest.empty:
+        sheets.append(
+            (
+                "10. Acquisition Manifest",
+                manifest,
+                (
+                    "Physical acquisition paths, report status, "
+                    "SHA-256 and analytical content role."
+                ),
+            )
+        )
+
+    for sheet_name, dataframe, guidance in sheets:
+        worksheet = workbook.create_sheet(
+            sheet_name
+        )
+
+        _write_page(
+            worksheet,
+            dataframe,
+            title=sheet_name,
+            subtitle=(
+                f"{subtitle} | {guidance}"
+            ),
+        )
+
+    workbook.save(
+        report_path
+    )
+
+    return report_path
+
+
+def generate_imei_common_report(
+    *,
+    case: dict[str, Any] | None,
+    analysis: dict[str, Any],
+    output_dir: str | Path | None = None,
+) -> Path | None:
+    """Generate one cross-device IMEI CDR workbook."""
+
+    if not isinstance(
+        analysis,
+        dict,
+    ):
+        return None
+
+    if str(
+        analysis.get(
+            "status",
+            "",
+        )
+    ).strip().upper() != "FOUND":
+        return None
+
+    if int(
+        analysis.get(
+            "device_count",
+            0,
+        )
+        or 0
+    ) < 2:
+        return None
+
+    case_value = (
+        dict(
+            case
+        )
+        if isinstance(
+            case,
+            dict,
+        )
+        else {}
+    )
+
+    case_id = str(
+        case_value.get(
+            "case_id",
+            "",
+        )
+    ).strip()
+
+    report_path = get_imei_common_report_path(
+        case_id,
+        output_dir=output_dir,
+    )
+
+    workbook = Workbook()
+
+    workbook.remove(
+        workbook.active
+    )
+
+    sheets = [
+        (
+            "1. Device Overview",
+            _frame(
+                analysis.get(
+                    "device_overview"
+                )
+            ),
+            (
+                "Per-device acquisition and normalized "
+                "evidence summary."
+            ),
+        ),
+        (
+            "2. Common Targets",
+            _frame(
+                analysis.get(
+                    "common_targets"
+                )
+            ),
+            (
+                "Target numbers appearing with two or "
+                "more device families."
+            ),
+        ),
+        (
+            "3. Common IMSIs",
+            _frame(
+                analysis.get(
+                    "common_imsis"
+                )
+            ),
+            (
+                "SIM identities appearing with two or "
+                "more device families."
+            ),
+        ),
+        (
+            "4. Common Contacts",
+            _frame(
+                analysis.get(
+                    "common_contacts"
+                )
+            ),
+            (
+                "Human mobile contacts shared across "
+                "distinct device families."
+            ),
+        ),
+        (
+            "5. Shared Service IDs",
+            _frame(
+                analysis.get(
+                    "shared_service_identifiers"
+                )
+            ),
+            (
+                "Sender IDs, short codes and other non-human "
+                "identifiers shared across device families."
+            ),
+        ),
+        (
+            "6. Common Towers",
+            _frame(
+                analysis.get(
+                    "common_towers"
+                )
+            ),
+            (
+                "Canonically valid Cell IDs shared across "
+                "distinct device families."
+            ),
+        ),
+        (
+            "7. Cross Device Timeline",
+            _frame(
+                analysis.get(
+                    "cross_device_timeline"
+                )
+            ),
+            (
+                "Chronological CDR evidence retaining "
+                "query identifier and source provenance."
+            ),
+        ),
+        (
+            "8. Acquisition Manifest",
+            _build_acquisition_manifest(
+                analysis.get(
+                    "acquisition_manifest"
+                )
+            ),
+            (
+                "Every physical evidence path and SHA-256 "
+                "content role."
+            ),
+        ),
+        (
+            "9. Review Indicators",
+            _frame(
+                analysis.get(
+                    "review_indicators"
+                )
+            ),
+            (
+                "Shared conditions requiring investigator "
+                "verification; these are not conclusions."
+            ),
+        ),
+        (
+            "10. Data Quality",
+            _frame(
+                analysis.get(
+                    "data_quality"
+                )
+            ),
+            (
+                "Data limitations and content-deduplication "
+                "checks."
+            ),
+        ),
+    ]
+
+    subtitle = (
+        f"Case: {case_id or 'CASE'} | "
+        f"{analysis.get('message', '')}"
+    )
 
     for sheet_name, dataframe, guidance in sheets:
         worksheet = workbook.create_sheet(
