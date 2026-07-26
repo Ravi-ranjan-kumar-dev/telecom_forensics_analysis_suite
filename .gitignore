@@ -59,3 +59,5 @@ data/tower_dump/ipdr/input/**
 
 # Temporary development audit bundle.
 gprs_finalization_source_bundle.txt
+# Local telecom device evidence inputs
+/data/device/
