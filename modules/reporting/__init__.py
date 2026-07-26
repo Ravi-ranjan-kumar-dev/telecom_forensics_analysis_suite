@@ -8,6 +8,7 @@ from .analysis_bundle import (
 from .console_report import print_single_analysis_report
 from .multi_cdr_excel import generate_multi_cdr_report
 from .single_cdr_excel import generate_single_cdr_report
+from .imei_device_excel import generate_imei_device_report
 
 __all__ = [
     "ANALYSIS_REGISTRY",
@@ -16,6 +17,7 @@ __all__ = [
     "print_single_analysis_report",
     "generate_single_cdr_report",
     "generate_multi_cdr_report",
+    "generate_imei_device_report",
 ]
 
 # Tower Dump Excel report export

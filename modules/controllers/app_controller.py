@@ -178,26 +178,39 @@ def _main_menu() -> str:
     return input("\nChoose Action: ").strip()
 
 
-def _workspace_menu(case: dict[str, Any], *, direct_mode: bool = False) -> str:
-    """Top-level analysis menu; hide case selection during development mode."""
+def _workspace_menu(
+    case: dict[str, Any],
+    *,
+    direct_mode: bool = False,
+) -> str:
+    """Show the top-level investigator analysis workspace."""
 
     print("\n" + "=" * 72)
+
     if direct_mode:
-        print("       🛡️  TELECOM FORENSICS ANALYSIS SUITE")
+        print(
+            "       🛡️  TELECOM FORENSICS ANALYSIS SUITE"
+        )
     else:
         print(
-            f"ACTIVE CASE: {case.get('case_id')} | "
+            f"ACTIVE CASE: "
+            f"{case.get('case_id')} | "
             f"{case.get('case_name')}"
         )
+
     print("=" * 72)
     print("1. CDR Analysis")
     print("2. Tower Dump Analysis")
     print("3. IPDR Analysis")
-    print("4. Lookup Services")
-    print("5. View Case Details")
-    print("6. View Case Reports")
+    print("4. IMEI / Device Analysis")
+    print("5. Lookup Services")
+    print("6. View Case Details")
+    print("7. View Case Reports")
     print("0. Close Case")
-    return input("\nChoose Action: ").strip()
+
+    return input(
+        "\nChoose Action: "
+    ).strip()
 
 
 def _cdr_menu(case: dict[str, Any], *, direct_mode: bool = False) -> str:
@@ -640,13 +653,38 @@ def handle_tower_dump(case: dict[str, Any]) -> None:
     if callable(handler):
         handler(case)
 
+def handle_imei_device_analysis(
+    case: dict[str, Any],
+) -> None:
+    """Open the case-aware IMEI and device workspace."""
+
+    handler = safe_import(
+        "modules.controllers.imei_device_controller",
+        "handle_imei_device_workspace",
+    )
+
+    if callable(
+        handler
+    ):
+        handler(
+            case
+        )
+
+
 
 def case_workspace(
     case: dict[str, Any],
     *,
     direct_mode: bool = False,
 ) -> None:
-    case_id = str(case["case_id"])
+    """Run the selected analysis workspace."""
+
+    case_id = str(
+        case[
+            "case_id"
+        ]
+    )
+
     log_case_event(
         case_id,
         action="CASE_OPENED",
@@ -654,18 +692,33 @@ def case_workspace(
 
     while True:
         try:
-            choice = _workspace_menu(case, direct_mode=direct_mode)
+            choice = _workspace_menu(
+                case,
+                direct_mode=direct_mode,
+            )
 
             if choice == "1":
-                handle_cdr_analysis(case, direct_mode=direct_mode)
+                handle_cdr_analysis(
+                    case,
+                    direct_mode=direct_mode,
+                )
 
             elif choice == "2":
-                handle_tower_dump(case)
+                handle_tower_dump(
+                    case
+                )
 
             elif choice == "3":
-                handle_ipdr_analysis(case)
+                handle_ipdr_analysis(
+                    case
+                )
 
             elif choice == "4":
+                handle_imei_device_analysis(
+                    case
+                )
+
+            elif choice == "5":
                 from modules.controllers.lookup_controller import (
                     run_lookup_services,
                 )
@@ -674,11 +727,15 @@ def case_workspace(
                     case
                 )
 
-            elif choice == "5":
-                print_case_details(case)
-
             elif choice == "6":
-                show_case_reports(case_id)
+                print_case_details(
+                    case
+                )
+
+            elif choice == "7":
+                show_case_reports(
+                    case_id
+                )
 
             elif choice == "0":
                 log_case_event(
@@ -688,16 +745,25 @@ def case_workspace(
                 return
 
             else:
-                print("[-] Invalid choice. Select 0 to 6.")
+                print(
+                    "[-] Invalid choice. "
+                    "Select 0 to 7."
+                )
 
         except KeyboardInterrupt:
-            print("\n[-] Returning to Analysis Workspace.")
+            print(
+                "\n[-] Returning to "
+                "Analysis Workspace."
+            )
 
         except EOFError:
             return
 
         except Exception as error:
-            print_error("Unexpected case workspace error", error)
+            print_error(
+                "Unexpected case workspace error",
+                error,
+            )
 
 
 def run_application() -> None:

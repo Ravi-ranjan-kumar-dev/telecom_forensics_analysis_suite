@@ -35,3 +35,44 @@ def get_multi_report_path(
     base.mkdir(parents=True, exist_ok=True)
     case_component = safe_filename(case_name, "Multi_CDR")
     return base / f"{case_component}_{new_run_id('multi_cdr_report')}.xlsx"
+
+def get_imei_device_report_path(
+    imei: object,
+    *,
+    case_id: object | None = None,
+    output_dir: str | Path | None = None,
+) -> Path:
+    """Return the output path for one IMEI device workbook."""
+
+    base = (
+        Path(
+            output_dir
+        ).expanduser().resolve()
+        if output_dir
+        else (
+            DEFAULT_REPORT_ROOT
+            / "device"
+            / "imei"
+        )
+    )
+
+    base.mkdir(
+        parents=True,
+        exist_ok=True,
+    )
+
+    case_component = safe_filename(
+        case_id,
+        "CASE",
+    )
+
+    imei_component = safe_filename(
+        imei,
+        "unknown_imei",
+    )
+
+    return base / (
+        f"{case_component}_"
+        f"{imei_component}_"
+        f"{new_run_id('imei_device_report')}.xlsx"
+    )

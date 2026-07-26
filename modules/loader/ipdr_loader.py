@@ -727,6 +727,65 @@ def _airtel_non_data_mask(frame: pd.DataFrame) -> pd.Series:
             na=False,
         )
 
+    # Airtel may place the report-generation time on a standalone
+    # footer line. Internal provenance columns are not report content.
+    business_columns = [
+        column
+        for column in frame.columns
+        if not str(
+            column
+        ).startswith("_")
+    ]
+
+    if business_columns:
+        business_values = (
+            frame.loc[
+                :,
+                business_columns,
+            ]
+            .fillna("")
+            .astype(str)
+            .apply(
+                lambda column: column.str.strip()
+            )
+        )
+
+        non_empty_business_values = (
+            business_values.ne("")
+            .sum(
+                axis=1
+            )
+        )
+
+        first_business_value = (
+            business_values.iloc[
+                :,
+                0,
+            ]
+        )
+
+        standalone_generation_timestamp = (
+            non_empty_business_values.eq(
+                1
+            )
+            & first_business_value.str.fullmatch(
+                r"\d{1,2}-[A-Za-z]{3}-\d{4}\s+"
+                r"\d{2}:\d{2}:\d{2}",
+                na=False,
+            )
+        )
+
+    else:
+        standalone_generation_timestamp = pd.Series(
+            False,
+            index=frame.index,
+        )
+
+    mask = (
+        mask
+        | standalone_generation_timestamp
+    )
+
     return mask
 
 
@@ -1060,9 +1119,24 @@ def _load_airtel(
         )
         metadata.update(row_stats)
 
+        # Known Airtel report/footer rows are metadata, not malformed
+        # IPDR evidence. Only unknown invalid rows enter quarantine.
+        known_non_data = _airtel_non_data_mask(
+            raw
+        ).fillna(
+            False
+        )
+
+        invalid_data_row = ~(
+            data_row.fillna(
+                False
+            )
+            | known_non_data
+        )
+
         validation_rejects = quarantine_dataframe_rows(
             raw,
-            ~data_row,
+            invalid_data_row,
             source_file=path,
             reason="NON_DATA_OR_INVALID_AIRTEL_IPDR_ROW",
         )
@@ -2214,4 +2288,3 @@ def load_ipdr_file(path: str | Path) -> dict[str, Any]:
             return fallback_result
 
     return result
-

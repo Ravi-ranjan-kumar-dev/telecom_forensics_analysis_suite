@@ -123,6 +123,16 @@ def _input_folder(case_id: str) -> Path:
 
     return TOWER_GPRS_DUMP_DATA_DIR / "input"
 
+def resolve_gprs_input_folder(
+    case_id: str,
+) -> Path:
+    """Return the canonical Tower GPRS input folder."""
+
+    return _input_folder(
+        case_id
+    )
+
+
 
 def _parse_gprs_part_datetime(
     date_value: str,

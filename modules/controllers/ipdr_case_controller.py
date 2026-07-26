@@ -67,6 +67,18 @@ def _input_folder(case_id: str, mode: str) -> Path:
     fallback.mkdir(parents=True, exist_ok=True)
     return fallback
 
+def resolve_ipdr_input_folder(
+    case_id: str,
+    mode: str,
+) -> Path:
+    """Return the canonical Single/Multiple IPDR input folder."""
+
+    return _input_folder(
+        case_id,
+        mode,
+    )
+
+
 
 def _register_sources(
     case_id: str,

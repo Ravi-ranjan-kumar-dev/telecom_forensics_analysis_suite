@@ -44,6 +44,7 @@ REPORT_PATHS = {
     "ipdr_single": ("reports", "ipdr", "single"),
     "ipdr_multiple": ("reports", "ipdr", "multiple"),
     "ipdr": ("reports", "ipdr"),
+    "imei_device": ("reports", "device", "imei"),
     "tower_dump": ("reports", "tower_dump", "cdr"),
     "gprs_dump": ("reports", "tower_dump", "gprs"),
 }
