@@ -129,20 +129,19 @@ IPDR_EVIDENCE_COLUMNS = [
     "Event Time",
     "Allocation End",
     "Subscriber / User ID",
-    "Identifier Type",
     "IMSI",
     "Source IP",
     "Destination IP",
     "Destination Port",
     "Protocol",
     "Cell ID",
-    "First Cell ID",
     "Source File",
     "Source Row Number",
-    "Raw IMEI",
+    "Query Identifier",
     "Normalized IMEI",
+    "Match Basis",
+    "Match Relation",
 ]
-
 GPRS_EVIDENCE_COLUMNS = [
     "Session Start",
     "Session End",

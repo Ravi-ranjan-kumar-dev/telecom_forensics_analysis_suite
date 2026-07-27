@@ -303,67 +303,147 @@ def _dedicated_cdr_payload(
 
 def _build_empty_no_data_imei_analysis(
     identifier: str,
+    *,
+    source_key: str = "cdr",
 ) -> dict[str, Any]:
-    """Build an investigator-facing result for a valid empty report."""
+    """Build an investigator result for a valid empty operator report."""
+
+    source_key = str(
+        source_key
+    ).strip().lower()
+
+    source_config = {
+        "cdr": {
+            "name": "CDR",
+            "evidence_unit": "CDR records",
+            "record_label": "CDR event rows",
+        },
+        "ipdr": {
+            "name": "IPDR",
+            "evidence_unit": "IPDR records",
+            "record_label": "IPDR record rows",
+        },
+        "gprs": {
+            "name": "GPRS",
+            "evidence_unit": "GPRS sessions",
+            "record_label": "GPRS session rows",
+        },
+    }
+
+    if source_key not in source_config:
+        raise ValueError(
+            f"Unsupported empty-report source: {source_key}"
+        )
+
+    selected = source_config[
+        source_key
+    ]
 
     message = (
-        "A valid dedicated IMEI CDR report was received, "
-        "but the operator report contains no result records."
+        f"A valid dedicated IMEI {selected['name']} report "
+        "was received, but the operator report contains "
+        "no result records."
     )
+
+    source_results: dict[
+        str,
+        dict[str, Any],
+    ] = {}
+
+    summary_rows = []
+
+    for key in (
+        "cdr",
+        "ipdr",
+        "gprs",
+    ):
+        config = source_config[
+            key
+        ]
+
+        is_selected = (
+            key == source_key
+        )
+
+        status = (
+            "EMPTY_NO_DATA"
+            if is_selected
+            else "NO_INPUT"
+        )
+
+        source_message = (
+            message
+            if is_selected
+            else (
+                f"No {config['name']} evidence selected."
+            )
+        )
+
+        summary_rows.append(
+            {
+                "Evidence Source": config[
+                    "name"
+                ],
+                "Status": status,
+                "Evidence Unit": config[
+                    "evidence_unit"
+                ],
+                "Matched Count": 0,
+                "Message": source_message,
+            }
+        )
+
+        payload = {
+            "status": status,
+            "message": source_message,
+            "timeline": pd.DataFrame(),
+        }
+
+        if key == "cdr":
+            payload[
+                "towers"
+            ] = pd.DataFrame()
+
+        else:
+            payload[
+                "cells"
+            ] = pd.DataFrame()
+
+        source_results[
+            key
+        ] = payload
 
     return {
         "requested_imei": identifier,
         "overall_status": "EMPTY_NO_DATA",
         "message": message,
         "source_summary": pd.DataFrame(
-            [
-                {
-                    "Evidence Source": "CDR",
-                    "Status": "EMPTY_NO_DATA",
-                    "Evidence Unit": "CDR records",
-                    "Matched Count": 0,
-                    "Message": message,
-                },
-                {
-                    "Evidence Source": "IPDR",
-                    "Status": "NO_INPUT",
-                    "Evidence Unit": "IPDR records",
-                    "Matched Count": 0,
-                    "Message": "No IPDR evidence selected.",
-                },
-                {
-                    "Evidence Source": "GPRS",
-                    "Status": "NO_INPUT",
-                    "Evidence Unit": "GPRS sessions",
-                    "Matched Count": 0,
-                    "Message": "No GPRS evidence selected.",
-                },
-            ]
+            summary_rows
         ),
         "associated_identities": pd.DataFrame(),
         "cross_source_timeline": pd.DataFrame(),
-        "cdr": {
-            "status": "EMPTY_NO_DATA",
-            "message": message,
-            "timeline": pd.DataFrame(),
-            "towers": pd.DataFrame(),
-        },
-        "ipdr": {
-            "status": "NO_INPUT",
-            "timeline": pd.DataFrame(),
-        },
-        "gprs": {
-            "status": "NO_INPUT",
-            "timeline": pd.DataFrame(),
-        },
+        "cdr": source_results[
+            "cdr"
+        ],
+        "ipdr": source_results[
+            "ipdr"
+        ],
+        "gprs": source_results[
+            "gprs"
+        ],
         "review_indicators": pd.DataFrame(
             [
                 {
-                    "Evidence Source": "CDR",
-                    "Indicator": "Valid empty operator report",
+                    "Evidence Source": selected[
+                        "name"
+                    ],
+                    "Indicator": (
+                        "Valid empty operator report"
+                    ),
                     "Observation": (
                         "The report query was recognized, "
-                        "but no CDR event rows were supplied."
+                        f"but no {selected['record_label']} "
+                        "were supplied."
                     ),
                     "Caution": (
                         "This is not the same as failing to find "
@@ -375,7 +455,9 @@ def _build_empty_no_data_imei_analysis(
         "data_quality": pd.DataFrame(
             [
                 {
-                    "Evidence Source": "CDR",
+                    "Evidence Source": selected[
+                        "name"
+                    ],
                     "Check": "Valid empty report",
                     "Count": 1,
                     "Meaning": (
@@ -385,15 +467,49 @@ def _build_empty_no_data_imei_analysis(
             ]
         ),
     }
-
-def _run_auto_single_imei_cdr(
+def _run_auto_single_imei_source(
     *,
     case: dict[str, Any],
+    source_key: str,
     identifier: str,
     dataframe: pd.DataFrame,
     acquisition_manifest: pd.DataFrame,
 ) -> dict[str, Any]:
-    """Run one automatically detected dedicated IMEI CDR analysis."""
+    """Run one automatically detected dedicated IMEI source analysis."""
+
+    source_key = str(
+        source_key
+    ).strip().lower()
+
+    source_config = {
+        "cdr": {
+            "name": "CDR",
+            "analysis_type": "IMEI_CDR_ANALYSIS",
+            "report_type": "IMEI_CDR_ANALYSIS",
+            "event_prefix": "IMEI_CDR_AUTO_SINGLE",
+        },
+        "ipdr": {
+            "name": "IPDR",
+            "analysis_type": "IMEI_IPDR_ANALYSIS",
+            "report_type": "IMEI_IPDR_ANALYSIS",
+            "event_prefix": "IMEI_IPDR_AUTO_SINGLE",
+        },
+        "gprs": {
+            "name": "GPRS",
+            "analysis_type": "IMEI_GPRS_ANALYSIS",
+            "report_type": "IMEI_GPRS_ANALYSIS",
+            "event_prefix": "IMEI_GPRS_AUTO_SINGLE",
+        },
+    }
+
+    if source_key not in source_config:
+        raise ValueError(
+            f"Unsupported automatic IMEI source: {source_key}"
+        )
+
+    config = source_config[
+        source_key
+    ]
 
     case_id = str(
         case.get(
@@ -434,13 +550,18 @@ def _run_auto_single_imei_cdr(
         target_value=identifier,
         description=(
             "Automatically detected dedicated "
-            "IMEI CDR query"
+            f"IMEI {config['name']} query"
         ),
     )
 
     log_case_event(
         case_id,
-        action="IMEI_CDR_AUTO_SINGLE_STARTED",
+        action=(
+            config[
+                "event_prefix"
+            ]
+            + "_STARTED"
+        ),
         details={
             "requested_imei": identifier,
             "input_records": len(
@@ -491,19 +612,37 @@ def _run_auto_single_imei_cdr(
 
     if valid_empty_report:
         analysis = _build_empty_no_data_imei_analysis(
-            identifier
+            identifier,
+            source_key=source_key,
         )
 
     else:
-        payload = _dedicated_cdr_payload(
-            dataframe
-        )
+        source_arguments = {
+            "loaded_cdrs": None,
+            "ipdr_dataframe": None,
+            "gprs_dataframe": None,
+        }
+
+        if source_key == "cdr":
+            source_arguments[
+                "loaded_cdrs"
+            ] = _dedicated_cdr_payload(
+                dataframe
+            )
+
+        elif source_key == "ipdr":
+            source_arguments[
+                "ipdr_dataframe"
+            ] = dataframe
+
+        else:
+            source_arguments[
+                "gprs_dataframe"
+            ] = dataframe
 
         analysis = build_unified_imei_investigation(
             identifier,
-            loaded_cdrs=payload,
-            ipdr_dataframe=None,
-            gprs_dataframe=None,
+            **source_arguments,
         )
 
     analysis[
@@ -538,18 +677,22 @@ def _run_auto_single_imei_cdr(
     if report_path:
         register_report(
             case_id,
-            report_type="IMEI_CDR_ANALYSIS",
+            report_type=config[
+                "report_type"
+            ],
             report_path=report_path,
         )
 
         if valid_empty_report:
             print(
-                f"[+] Empty-report IMEI workbook: {report_path}"
+                "[+] Empty-report IMEI "
+                f"{config['name']} workbook: {report_path}"
             )
 
         else:
             print(
-                f"[+] Single IMEI report: {report_path}"
+                "[+] Single IMEI "
+                f"{config['name']} report: {report_path}"
             )
 
     else:
@@ -588,7 +731,9 @@ def _run_auto_single_imei_cdr(
 
     register_analysis_run(
         case_id,
-        analysis_type="IMEI_CDR_ANALYSIS",
+        analysis_type=config[
+            "analysis_type"
+        ],
         status=run_status,
         input_records=len(
             dataframe
@@ -614,7 +759,10 @@ def _run_auto_single_imei_cdr(
     log_case_event(
         case_id,
         action=(
-            "IMEI_CDR_AUTO_SINGLE_"
+            config[
+                "event_prefix"
+            ]
+            + "_"
             + run_status
         ),
         details={
@@ -641,6 +789,40 @@ def _run_auto_single_imei_cdr(
     }
 
 
+def _run_auto_single_imei_cdr(
+    *,
+    case: dict[str, Any],
+    identifier: str,
+    dataframe: pd.DataFrame,
+    acquisition_manifest: pd.DataFrame,
+) -> dict[str, Any]:
+    """Run one automatically detected dedicated IMEI CDR analysis."""
+
+    return _run_auto_single_imei_source(
+        case=case,
+        source_key="cdr",
+        identifier=identifier,
+        dataframe=dataframe,
+        acquisition_manifest=acquisition_manifest,
+    )
+
+
+def _run_auto_single_imei_ipdr(
+    *,
+    case: dict[str, Any],
+    identifier: str,
+    dataframe: pd.DataFrame,
+    acquisition_manifest: pd.DataFrame,
+) -> dict[str, Any]:
+    """Run one automatically detected dedicated IMEI IPDR analysis."""
+
+    return _run_auto_single_imei_source(
+        case=case,
+        source_key="ipdr",
+        identifier=identifier,
+        dataframe=dataframe,
+        acquisition_manifest=acquisition_manifest,
+    )
 def _execute_auto_detected_imei_cdr(
     case: dict[str, Any],
 ) -> dict[str, Any]:
@@ -876,6 +1058,148 @@ def _execute_auto_detected_imei_cdr(
     }
 
 
+def _execute_auto_detected_imei_ipdr(
+    case: dict[str, Any],
+) -> dict[str, Any]:
+    """Run one automatic single IPDR analysis per detected query identifier."""
+
+    case_id = str(
+        case.get(
+            "case_id",
+            "",
+        )
+    ).strip()
+
+    inventory = _load_dedicated_imei_ipdr_inventory(
+        case_id
+    )
+
+    identifiers = inventory[
+        "identifiers"
+    ]
+
+    print("\n" + "=" * 78)
+    print("DEDICATED IMEI IPDR AUTO-DETECTION")
+    print("=" * 78)
+    print(
+        f"Input Folder             : {inventory['folder']}"
+    )
+    print(
+        f"Physical Acquisitions    : {inventory['files_found']}"
+    )
+    print(
+        "All Content Groups      : "
+        f"{inventory.get('all_content_groups', 0)}"
+    )
+    print(
+        "Supported IPDR Groups   : "
+        f"{inventory.get('supported_ipdr_content_groups', 0)}"
+    )
+    print(
+        "Non-IPDR Acquisitions   : "
+        f"{inventory.get('non_ipdr_acquisitions', 0)}"
+    )
+    print(
+        "Duplicate IPDR Copies   : "
+        f"{inventory.get('duplicate_ipdr_acquisitions', 0)}"
+    )
+    print(
+        f"Detected Identifiers     : {len(identifiers)}"
+    )
+    print(
+        "Analytical IPDR Records : "
+        f"{inventory['analytical_records']:,}"
+    )
+
+    for warning in inventory.get(
+        "warnings",
+        [],
+    ):
+        print(
+            f"[WARNING] {warning}"
+        )
+
+    for error in inventory.get(
+        "errors",
+        [],
+    ):
+        print(
+            f"[WARNING] {error}"
+        )
+
+    if not identifiers:
+        print(
+            "[-] No supported IPDR report-query IMEI/IMEISV "
+            "could be detected."
+        )
+        print(
+            "[INFO] Manual entry will be used only as fallback."
+        )
+
+        return _execute(
+            case,
+            mode="ipdr",
+        )
+
+    if len(
+        identifiers
+    ) == 1:
+        print(
+            "[+] One unique IPDR identifier detected. "
+            "Starting automatic single analysis."
+        )
+
+    else:
+        print(
+            f"[+] {len(identifiers)} unique IPDR identifiers detected."
+        )
+        print(
+            "[+] Running one single IPDR analysis "
+            "per identifier."
+        )
+
+    single_results = []
+
+    for index, identifier in enumerate(
+        identifiers,
+        start=1,
+    ):
+        print("\n" + "-" * 78)
+        print(
+            f"SINGLE IMEI IPDR ANALYSIS "
+            f"{index}/{len(identifiers)}: {identifier}"
+        )
+        print("-" * 78)
+
+        result = _run_auto_single_imei_ipdr(
+            case=case,
+            identifier=identifier,
+            dataframe=inventory[
+                "device_frames"
+            ].get(
+                identifier,
+                pd.DataFrame(),
+            ),
+            acquisition_manifest=inventory[
+                "acquisition_manifest"
+            ],
+        )
+
+        single_results.append(
+            result
+        )
+
+    return {
+        "mode": "ipdr",
+        "automatic_detection": True,
+        "identifiers": identifiers,
+        "inventory": inventory,
+        "single_results": single_results,
+        "common_result": None,
+        "input_records": inventory[
+            "analytical_records"
+        ],
+    }
 def _load_cdr_evidence(
     case_id: str,
 ) -> dict[str, dict[str, Any]]:
@@ -1713,6 +2037,11 @@ def handle_imei_device_workspace(
 
             if mode == "cdr":
                 _execute_auto_detected_imei_cdr(
+                    case
+                )
+
+            elif mode == "ipdr":
+                _execute_auto_detected_imei_ipdr(
                     case
                 )
 

@@ -357,6 +357,35 @@ def _prepare_matches(
         pd.NA,
     )
 
+    destination_port_numeric = pd.to_numeric(
+        data["_destination_port"],
+        errors="coerce",
+    )
+
+    whole_port_mask = (
+        destination_port_numeric.notna()
+        & destination_port_numeric.mod(
+            1
+        ).eq(
+            0
+        )
+    )
+
+    data.loc[
+        whole_port_mask,
+        "_destination_port",
+    ] = (
+        destination_port_numeric.loc[
+            whole_port_mask
+        ]
+        .astype(
+            "Int64"
+        )
+        .astype(
+            "string"
+        )
+    )
+
     return data
 
 
