@@ -7,12 +7,15 @@ source-specific analysis logic.
 
 from __future__ import annotations
 
-import hashlib
 
 from pathlib import Path
 from typing import Any
 
 import pandas as pd
+
+from modules.controllers.device_evidence_batch import (
+    load_dedicated_evidence_inventory,
+)
 
 from modules.analysis.device import (
     build_unified_imei_investigation,
@@ -145,450 +148,32 @@ def resolve_imei_cdr_input_folder(
         / "cdr"
     )
 
-
-def _sha256_file(
-    path: Path,
-) -> str:
-    """Calculate an evidence hash without changing the file."""
-
-    digest = hashlib.sha256()
-
-    with path.open(
-        "rb"
-    ) as handle:
-        while True:
-            block = handle.read(
-                1024 * 1024
-            )
-
-            if not block:
-                break
-
-            digest.update(
-                block
-            )
-
-    return digest.hexdigest()
-
-
 def _load_dedicated_imei_cdr_inventory(
     case_id: str,
 ) -> dict[str, Any]:
-    """Inspect acquisitions and normalize each supported CDR content once."""
+    """Load dedicated CDR evidence through the reusable inventory layer."""
 
-    folder = resolve_imei_cdr_input_folder(
-        case_id
-    )
-
-    folder.mkdir(
-        parents=True,
-        exist_ok=True,
-    )
-
-    paths = sorted(
-        (
-            path
-            for path in folder.rglob(
-                "*"
-            )
-            if (
-                path.is_file()
-                and path.suffix.lower()
-                in IMEI_EVIDENCE_SUFFIXES
-            )
+    inventory = load_dedicated_evidence_inventory(
+        folder=resolve_imei_cdr_input_folder(
+            case_id
         ),
-        key=lambda path: str(
-            path
-        ).lower(),
+        expected_source_type="CDR",
+        supported_suffixes=IMEI_EVIDENCE_SUFFIXES,
+        inspect_file=inspect_imei_evidence_file,
+        normalize_file=normalize_imei_cdr_file,
     )
-
-    acquisition_rows = []
-
-    all_content_representatives: dict[
-        str,
-        Path,
-    ] = {}
-
-    cdr_content_representatives: dict[
-        str,
-        Path,
-    ] = {}
-
-    frames_by_identifier: dict[
-        str,
-        list[pd.DataFrame],
-    ] = {}
-
-    identifiers: set[
-        str
-    ] = set()
-
-    warnings: list[
-        str
-    ] = []
-
-    errors: list[
-        str
-    ] = []
-
-    for path in paths:
-        digest = _sha256_file(
-            path
-        )
-
-        inspection = inspect_imei_evidence_file(
-            path
-        )
-
-        query_identifier = str(
-            inspection.get(
-                "query_identifier_normalized",
-                "",
-            )
-            or ""
-        ).strip()
-
-        identifier_valid = (
-            query_identifier.isdigit()
-            and len(
-                query_identifier
-            )
-            in {
-                14,
-                15,
-                16,
-            }
-        )
-
-        source_type = str(
-            inspection.get(
-                "source_type",
-                "",
-            )
-        ).strip().upper()
-
-        acquisition_duplicate_of = (
-            all_content_representatives.get(
-                digest
-            )
-        )
-
-        if acquisition_duplicate_of is None:
-            all_content_representatives[
-                digest
-            ] = path
-
-        acquisition_role = (
-            "DUPLICATE_CONTENT"
-            if acquisition_duplicate_of is not None
-            else "PRIMARY_CONTENT"
-        )
-
-        row = {
-            "Relative Path": (
-                path.relative_to(
-                    folder
-                ).as_posix()
-            ),
-            "Source File": path.name,
-            "Source Path": str(
-                path.resolve()
-            ),
-            "SHA-256": digest,
-            "Acquisition Content Role": acquisition_role,
-            "Duplicate Of": (
-                str(
-                    acquisition_duplicate_of.resolve()
-                )
-                if acquisition_duplicate_of is not None
-                else ""
-            ),
-            "Analysis Content Role": "",
-            "Analysis Duplicate Of": "",
-            "Format": str(
-                inspection.get(
-                    "format_id",
-                    "",
-                )
-            ),
-            "Operator": str(
-                inspection.get(
-                    "operator",
-                    "",
-                )
-            ),
-            "Source Type": source_type,
-            "Query Identifier": query_identifier,
-            "Query Identifier Type": str(
-                inspection.get(
-                    "query_identifier_type",
-                    "",
-                )
-            ),
-            "Inspection Status": str(
-                inspection.get(
-                    "status",
-                    "",
-                )
-            ),
-            "Records Declared": int(
-                inspection.get(
-                    "record_count",
-                    0,
-                )
-                or 0
-            ),
-            "Records Normalized": 0,
-            "Rejected Lines": int(
-                inspection.get(
-                    "rejected_line_count",
-                    0,
-                )
-                or 0
-            ),
-            "Message": str(
-                inspection.get(
-                    "message",
-                    "",
-                )
-            ),
-        }
-
-        if not inspection.get(
-            "ok"
-        ):
-            row[
-                "Analysis Content Role"
-            ] = "EXCLUDED_UNSUPPORTED_OR_ERROR"
-
-            acquisition_rows.append(
-                row
-            )
-            continue
-
-        if source_type != "CDR":
-            row[
-                "Analysis Content Role"
-            ] = "EXCLUDED_NON_CDR"
-
-            acquisition_rows.append(
-                row
-            )
-            continue
-
-        if not identifier_valid:
-            row[
-                "Analysis Content Role"
-            ] = "EXCLUDED_INVALID_QUERY"
-
-            errors.append(
-                f"{path.name}: valid query IMEI/IMEISV "
-                "could not be detected."
-            )
-
-            acquisition_rows.append(
-                row
-            )
-            continue
-
-        identifiers.add(
-            query_identifier
-        )
-
-        frames_by_identifier.setdefault(
-            query_identifier,
-            [],
-        )
-
-        analysis_duplicate_of = (
-            cdr_content_representatives.get(
-                digest
-            )
-        )
-
-        if analysis_duplicate_of is not None:
-            row[
-                "Analysis Content Role"
-            ] = "DUPLICATE_CONTENT"
-
-            row[
-                "Analysis Duplicate Of"
-            ] = str(
-                analysis_duplicate_of.resolve()
-            )
-
-            acquisition_rows.append(
-                row
-            )
-            continue
-
-        cdr_content_representatives[
-            digest
-        ] = path
-
-        row[
-            "Analysis Content Role"
-        ] = "PRIMARY_CONTENT"
-
-        normalization = normalize_imei_cdr_file(
-            path,
-            inspection=inspection,
-        )
-
-        row[
-            "Records Normalized"
-        ] = int(
-            normalization.get(
-                "records_normalized",
-                0,
-            )
-            or 0
-        )
-
-        row[
-            "Rejected Lines"
-        ] = int(
-            normalization.get(
-                "rejected_line_count",
-                0,
-            )
-            or 0
-        )
-
-        row[
-            "Message"
-        ] = str(
-            normalization.get(
-                "message",
-                "",
-            )
-        )
-
-        for warning in normalization.get(
-            "warnings",
-            [],
-        ) or []:
-            warnings.append(
-                f"{path.name}: {warning}"
-            )
-
-        for error in normalization.get(
-            "errors",
-            [],
-        ) or []:
-            errors.append(
-                f"{path.name}: {error}"
-            )
-
-        dataframe = normalization.get(
-            "data"
-        )
-
-        if (
-            isinstance(
-                dataframe,
-                pd.DataFrame,
-            )
-            and not dataframe.empty
-        ):
-            frames_by_identifier[
-                query_identifier
-            ].append(
-                dataframe.copy(
-                    deep=True
-                )
-            )
-
-        acquisition_rows.append(
-            row
-        )
-
-    device_frames = {
-        identifier: (
-            pd.concat(
-                frames,
-                ignore_index=True,
-                sort=False,
-            )
-            if frames
-            else pd.DataFrame()
-        )
-        for identifier, frames in (
-            frames_by_identifier.items()
-        )
-    }
-
-    manifest = pd.DataFrame(
-        acquisition_rows
-    )
-
-    if manifest.empty:
-        non_cdr_acquisitions = 0
-        duplicate_cdr_acquisitions = 0
-
-    else:
-        non_cdr_acquisitions = int(
-            manifest[
-                "Source Type"
-            ]
-            .astype(
-                str
-            )
-            .str.upper()
-            .ne(
-                "CDR"
-            )
-            .sum()
-        )
-
-        duplicate_cdr_acquisitions = int(
-            manifest[
-                "Analysis Content Role"
-            ]
-            .astype(
-                str
-            )
-            .str.upper()
-            .eq(
-                "DUPLICATE_CONTENT"
-            )
-            .sum()
-        )
 
     return {
-        "folder": folder,
-        "files_found": len(
-            paths
-        ),
-        "identifiers": sorted(
-            identifiers
-        ),
-        "device_frames": device_frames,
-        "acquisition_manifest": manifest,
-        "all_content_groups": len(
-            all_content_representatives
-        ),
-        "supported_cdr_content_groups": len(
-            cdr_content_representatives
-        ),
-        # Backward-compatible alias used by current tests.
-        "unique_content_groups": len(
-            cdr_content_representatives
-        ),
-        "non_cdr_acquisitions": non_cdr_acquisitions,
-        "duplicate_cdr_acquisitions": (
-            duplicate_cdr_acquisitions
-        ),
-        "analytical_records": int(
-            sum(
-                len(
-                    frame
-                )
-                for frame in device_frames.values()
-            )
-        ),
-        "warnings": warnings,
-        "errors": errors,
+        **inventory,
+        "supported_cdr_content_groups": inventory[
+            "supported_content_groups"
+        ],
+        "non_cdr_acquisitions": inventory[
+            "non_source_acquisitions"
+        ],
+        "duplicate_cdr_acquisitions": inventory[
+            "duplicate_source_acquisitions"
+        ],
     }
 
 
