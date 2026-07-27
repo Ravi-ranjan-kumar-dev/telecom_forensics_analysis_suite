@@ -34,6 +34,7 @@ from modules.loader.imei_evidence_loader import (
     SUPPORTED_SUFFIXES as IMEI_EVIDENCE_SUFFIXES,
     inspect_imei_evidence_file,
     normalize_imei_cdr_file,
+    normalize_imei_ipdr_file,
 )
 from modules.loader.telecom_identifiers import (
     normalize_imei,
@@ -148,6 +149,21 @@ def resolve_imei_cdr_input_folder(
         / "cdr"
     )
 
+
+def resolve_imei_ipdr_input_folder(
+    case_id: str,
+) -> Path:
+    """Return the canonical dedicated IMEI IPDR input folder."""
+
+    del case_id
+
+    return (
+        PROJECT_ROOT
+        / "data"
+        / "device"
+        / "imei"
+        / "ipdr"
+    )
 def _load_dedicated_imei_cdr_inventory(
     case_id: str,
 ) -> dict[str, Any]:
@@ -177,6 +193,33 @@ def _load_dedicated_imei_cdr_inventory(
     }
 
 
+def _load_dedicated_imei_ipdr_inventory(
+    case_id: str,
+) -> dict[str, Any]:
+    """Load dedicated IPDR evidence through the reusable inventory layer."""
+
+    inventory = load_dedicated_evidence_inventory(
+        folder=resolve_imei_ipdr_input_folder(
+            case_id
+        ),
+        expected_source_type="IPDR",
+        supported_suffixes=IMEI_EVIDENCE_SUFFIXES,
+        inspect_file=inspect_imei_evidence_file,
+        normalize_file=normalize_imei_ipdr_file,
+    )
+
+    return {
+        **inventory,
+        "supported_ipdr_content_groups": inventory[
+            "supported_content_groups"
+        ],
+        "non_ipdr_acquisitions": inventory[
+            "non_source_acquisitions"
+        ],
+        "duplicate_ipdr_acquisitions": inventory[
+            "duplicate_source_acquisitions"
+        ],
+    }
 def _dedicated_cdr_payload(
     dataframe: pd.DataFrame,
 ) -> dict[str, dict[str, Any]]:
