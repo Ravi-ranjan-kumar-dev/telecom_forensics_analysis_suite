@@ -365,8 +365,92 @@ def _prepare_matches(
         normalize_imei
     )
 
-    match_mask = normalized_imei.eq(
+    observed_match_mask = normalized_imei.eq(
         requested_imei
+    )
+
+    query_identifier = (
+        dataframe[
+            "query_identifier_normalized"
+        ]
+        .astype(
+            "string"
+        )
+        .fillna(
+            ""
+        )
+        .str.replace(
+            r"\D",
+            "",
+            regex=True,
+        )
+        .str.strip()
+        if "query_identifier_normalized"
+        in dataframe.columns
+        else pd.Series(
+            "",
+            index=dataframe.index,
+            dtype="string",
+        )
+    )
+
+    relation = (
+        dataframe[
+            "match_relation"
+        ]
+        .astype(
+            "string"
+        )
+        .fillna(
+            ""
+        )
+        .str.strip()
+        .str.upper()
+        if "match_relation" in dataframe.columns
+        else pd.Series(
+            "",
+            index=dataframe.index,
+            dtype="string",
+        )
+    )
+
+    basis = (
+        dataframe[
+            "match_basis"
+        ]
+        .astype(
+            "string"
+        )
+        .fillna(
+            ""
+        )
+        .str.strip()
+        .str.upper()
+        if "match_basis" in dataframe.columns
+        else pd.Series(
+            "",
+            index=dataframe.index,
+            dtype="string",
+        )
+    )
+
+    report_scope_match_mask = (
+        query_identifier.eq(
+            requested_imei
+        )
+        & (
+            relation.eq(
+                "REPORT_SCOPE"
+            )
+            | basis.eq(
+                "REPORT_SCOPE"
+            )
+        )
+    )
+
+    match_mask = (
+        observed_match_mask
+        | report_scope_match_mask
     )
 
     if not match_mask.any():
