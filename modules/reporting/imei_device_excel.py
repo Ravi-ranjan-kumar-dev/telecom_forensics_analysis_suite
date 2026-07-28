@@ -27,6 +27,7 @@ from .excel_security import excel_safe_value
 from .report_paths import (
     get_imei_common_report_path,
     get_imei_device_report_path,
+    get_imei_ipdr_common_report_path,
 )
 
 
@@ -211,6 +212,12 @@ TEXT_IDENTIFIER_COLUMNS = {
     "Last Cell ID",
     "Raw IMEI",
     "Normalized IMEI",
+    "Observed IMEI / IMEISV",
+    "Query Identifier",
+    "Query Identifiers",
+    "Device Family",
+    "Destination Endpoint",
+    "SHA-256",
 }
 
 
@@ -1621,6 +1628,94 @@ def generate_imei_device_report(
     return report_path
 
 
+IMEI_IPDR_COMMON_SHEETS = (
+    "1. Device Overview",
+    "2. Common Subscribers",
+    "3. Common IMSIs",
+    "4. Common Destination Endpoints",
+    "5. Common Source IPs",
+    "6. Common Cells",
+    "7. Cross Device Timeline",
+    "8. Acquisition Manifest",
+    "9. Review Indicators",
+    "10. Data Quality",
+)
+
+
+IPDR_COMMON_DEVICE_OVERVIEW_COLUMNS = [
+    "Query Identifier",
+    "Identifier Type",
+    "Device Family",
+    "Analysis Status",
+    "IPDR Records",
+    "Observed IMEI / IMEISV",
+    "Subscribers",
+    "IMSIs",
+    "Source IPs",
+    "Destination Endpoints",
+    "Valid Cells",
+    "First Seen",
+    "Last Seen",
+    "Supported IPDR Acquisitions",
+    "All Acquisitions",
+]
+
+
+IPDR_COMMON_SHARED_DETAIL_COLUMNS = [
+    "Device Family Count",
+    "Query Identifiers",
+    "Total Records",
+    "First Seen",
+    "Last Seen",
+    "Source Files",
+]
+
+
+IPDR_COMMON_TIMELINE_COLUMNS = [
+    "Event Time",
+    "Allocation End",
+    "Query Identifier",
+    "Device Family",
+    "Observed IMEI / IMEISV",
+    "Subscriber / User ID",
+    "IMSI",
+    "Source IP",
+    "Destination Endpoint",
+    "Protocol",
+    "Cell ID",
+    "Source File",
+    "Source Row Number",
+    "Match Basis",
+    "Match Relation",
+]
+
+
+IPDR_COMMON_REVIEW_COLUMNS = [
+    "Indicator",
+    "Shared Values",
+    "Meaning",
+    "Verification",
+]
+
+
+IPDR_COMMON_QUALITY_COLUMNS = [
+    "Check",
+    "Count",
+    "Meaning",
+]
+
+
+def _ipdr_common_shared_columns(
+    value_column: str,
+) -> list[str]:
+    """Return the compact column contract for one shared-IPDR sheet."""
+
+    return [
+        value_column,
+        *IPDR_COMMON_SHARED_DETAIL_COLUMNS,
+    ]
+
+
 def generate_imei_common_report(
     *,
     case: dict[str, Any] | None,
@@ -1799,6 +1894,234 @@ def generate_imei_common_report(
             ),
             (
                 "Data limitations and content-deduplication "
+                "checks."
+            ),
+        ),
+    ]
+
+    subtitle = (
+        f"Case: {case_id or 'CASE'} | "
+        f"{analysis.get('message', '')}"
+    )
+
+    for sheet_name, dataframe, guidance in sheets:
+        worksheet = workbook.create_sheet(
+            sheet_name
+        )
+
+        _write_page(
+            worksheet,
+            dataframe,
+            title=sheet_name,
+            subtitle=(
+                f"{subtitle} | {guidance}"
+            ),
+        )
+
+    workbook.save(
+        report_path
+    )
+
+    return report_path
+
+
+def generate_imei_ipdr_common_report(
+    *,
+    case: dict[str, Any] | None,
+    analysis: dict[str, Any],
+    output_dir: str | Path | None = None,
+) -> Path | None:
+    """Generate one compact cross-device IMEI IPDR workbook."""
+
+    if not isinstance(
+        analysis,
+        dict,
+    ):
+        return None
+
+    if str(
+        analysis.get(
+            "status",
+            "",
+        )
+    ).strip().upper() != "FOUND":
+        return None
+
+    if int(
+        analysis.get(
+            "device_count",
+            0,
+        )
+        or 0
+    ) < 2:
+        return None
+
+    case_value = (
+        dict(
+            case
+        )
+        if isinstance(
+            case,
+            dict,
+        )
+        else {}
+    )
+
+    case_id = str(
+        case_value.get(
+            "case_id",
+            "",
+        )
+    ).strip()
+
+    report_path = get_imei_ipdr_common_report_path(
+        case_id,
+        output_dir=output_dir,
+    )
+
+    workbook = Workbook()
+
+    workbook.remove(
+        workbook.active
+    )
+
+    sheets = [
+        (
+            IMEI_IPDR_COMMON_SHEETS[0],
+            _project(
+                analysis.get(
+                    "device_overview"
+                ),
+                IPDR_COMMON_DEVICE_OVERVIEW_COLUMNS,
+            ),
+            (
+                "Per-query IPDR coverage, observed device values, "
+                "acquisition counts and data-bearing status."
+            ),
+        ),
+        (
+            IMEI_IPDR_COMMON_SHEETS[1],
+            _project(
+                analysis.get(
+                    "common_subscribers"
+                ),
+                _ipdr_common_shared_columns(
+                    "Subscriber / User ID"
+                ),
+            ),
+            (
+                "Subscriber identifiers appearing with at least "
+                "two distinct device families."
+            ),
+        ),
+        (
+            IMEI_IPDR_COMMON_SHEETS[2],
+            _project(
+                analysis.get(
+                    "common_imsis"
+                ),
+                _ipdr_common_shared_columns(
+                    "IMSI"
+                ),
+            ),
+            (
+                "IMSI values appearing with at least two "
+                "distinct device families."
+            ),
+        ),
+        (
+            IMEI_IPDR_COMMON_SHEETS[3],
+            _project(
+                analysis.get(
+                    "common_destination_endpoints"
+                ),
+                _ipdr_common_shared_columns(
+                    "Destination Endpoint"
+                ),
+            ),
+            (
+                "Destination IP and port combinations appearing "
+                "with at least two distinct device families."
+            ),
+        ),
+        (
+            IMEI_IPDR_COMMON_SHEETS[4],
+            _project(
+                analysis.get(
+                    "common_source_ips"
+                ),
+                _ipdr_common_shared_columns(
+                    "Source IP"
+                ),
+            ),
+            (
+                "Source IP values appearing with at least two "
+                "distinct device families."
+            ),
+        ),
+        (
+            IMEI_IPDR_COMMON_SHEETS[5],
+            _project(
+                analysis.get(
+                    "common_cells"
+                ),
+                _ipdr_common_shared_columns(
+                    "Cell ID"
+                ),
+            ),
+            (
+                "Canonically valid Cell IDs appearing with at least "
+                "two distinct device families."
+            ),
+        ),
+        (
+            IMEI_IPDR_COMMON_SHEETS[6],
+            _project(
+                analysis.get(
+                    "cross_device_timeline"
+                ),
+                IPDR_COMMON_TIMELINE_COLUMNS,
+            ),
+            (
+                "Chronological IPDR evidence retaining report-query, "
+                "observed device and source-row provenance."
+            ),
+        ),
+        (
+            IMEI_IPDR_COMMON_SHEETS[7],
+            _build_acquisition_manifest(
+                analysis.get(
+                    "acquisition_manifest"
+                )
+            ),
+            (
+                "Every physical acquisition, SHA-256 content role, "
+                "source type and report status."
+            ),
+        ),
+        (
+            IMEI_IPDR_COMMON_SHEETS[8],
+            _project(
+                analysis.get(
+                    "review_indicators"
+                ),
+                IPDR_COMMON_REVIEW_COLUMNS,
+            ),
+            (
+                "Shared conditions requiring investigator verification; "
+                "these are not conclusions."
+            ),
+        ),
+        (
+            IMEI_IPDR_COMMON_SHEETS[9],
+            _project(
+                analysis.get(
+                    "data_quality"
+                ),
+                IPDR_COMMON_QUALITY_COLUMNS,
+            ),
+            (
+                "Coverage, empty-report, Cell ID and content-deduplication "
                 "checks."
             ),
         ),

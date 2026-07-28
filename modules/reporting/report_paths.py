@@ -111,3 +111,38 @@ def get_imei_common_report_path(
         f"{case_component}_IMEI_Common_Analysis_"
         f"{new_run_id('imei_common')}.xlsx"
     )
+
+
+def get_imei_ipdr_common_report_path(
+    case_id: object = "",
+    *,
+    output_dir: str | Path | None = None,
+) -> Path:
+    """Return a unique path for one common IMEI IPDR workbook."""
+
+    base = (
+        Path(
+            output_dir
+        ).expanduser().resolve()
+        if output_dir
+        else (
+            DEFAULT_REPORT_ROOT
+            / "device"
+            / "imei"
+        )
+    )
+
+    base.mkdir(
+        parents=True,
+        exist_ok=True,
+    )
+
+    case_component = safe_filename(
+        case_id,
+        "CASE",
+    )
+
+    return base / (
+        f"{case_component}_IMEI_IPDR_Common_Analysis_"
+        f"{new_run_id('imei_ipdr_common')}.xlsx"
+    )

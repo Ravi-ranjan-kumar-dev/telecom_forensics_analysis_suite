@@ -27,9 +27,16 @@ except Exception:
     generate_tower_dump_excel_report = None
 
 
-from .imei_device_excel import generate_imei_common_report
+from .imei_device_excel import (
+    generate_imei_common_report,
+    generate_imei_ipdr_common_report,
+)
 
-if "generate_imei_common_report" not in __all__:
-    __all__.append(
-        "generate_imei_common_report"
-    )
+for report_export in (
+    "generate_imei_common_report",
+    "generate_imei_ipdr_common_report",
+):
+    if report_export not in __all__:
+        __all__.append(
+            report_export
+        )
