@@ -99,7 +99,10 @@ def _is_valid_empty_gprs_report(
     ).strip().casefold()
 
     has_report_identity = (
-        "gprs of cell id" in normalized
+        (
+            "gprs of cell id" in normalized
+            or "gprs of imei" in normalized
+        )
         and re.search(
             r"\bmobile\s+no\.?\b",
             normalized,
@@ -256,23 +259,65 @@ def _parse_preamble(lines: list[str]) -> dict[str, Any]:
 
 
 def detect_gprs_format(path: str | Path) -> dict[str, Any]:
-    file_path = Path(path).expanduser().resolve()
+    """Detect supported Airtel Cell-ID or dedicated IMEI GPRS reports."""
+
+    file_path = Path(
+        path
+    ).expanduser().resolve()
 
     if not file_path.is_file():
-        raise FileNotFoundError(file_path)
+        raise FileNotFoundError(
+            file_path
+        )
 
-    lines, encoding = _read_preview(file_path)
-    header_row = _find_header_row(lines)
-    metadata = _parse_preamble(lines)
+    lines, encoding = _read_preview(
+        file_path
+    )
+
+    header_row = _find_header_row(
+        lines
+    )
+
+    metadata = _parse_preamble(
+        lines
+    )
 
     source_format = ""
 
+    report_title = str(
+        metadata.get(
+            "report_title",
+            "",
+        )
+        or ""
+    ).casefold()
+
+    preview_text = " ".join(
+        str(
+            line
+        )
+        for line in lines
+    ).casefold()
+
+    is_supported_report_title = any(
+        marker in report_title
+        or marker in preview_text
+        for marker in (
+            "gprs of cell id",
+            "gprs of imei",
+        )
+    )
+
     if (
         header_row is not None
-        and metadata.get("operator") == "Airtel"
-        and "gprs of cell id" in metadata.get("report_title", "").lower()
+        and metadata.get(
+            "operator"
+        ) == "Airtel"
+        and is_supported_report_title
     ):
-        source_format = FORMAT_AIRTEL_GPRS_SESSION
+        source_format = (
+            FORMAT_AIRTEL_GPRS_SESSION
+        )
 
     return {
         "source_format": source_format,
@@ -280,7 +325,6 @@ def detect_gprs_format(path: str | Path) -> dict[str, Any]:
         "encoding": encoding,
         "metadata": metadata,
     }
-
 
 def _string_series(dataframe: pd.DataFrame, column: str) -> pd.Series:
     if column not in dataframe.columns:

@@ -37,6 +37,7 @@ from modules.loader.imei_evidence_loader import (
     SUPPORTED_SUFFIXES as IMEI_EVIDENCE_SUFFIXES,
     inspect_imei_evidence_file,
     normalize_imei_cdr_file,
+    normalize_imei_gprs_file,
     normalize_imei_ipdr_file,
 )
 from modules.loader.telecom_identifiers import (
@@ -168,6 +169,22 @@ def resolve_imei_ipdr_input_folder(
         / "imei"
         / "ipdr"
     )
+
+
+def resolve_imei_gprs_input_folder(
+    case_id: str,
+) -> Path:
+    """Return the canonical dedicated IMEI GPRS input folder."""
+
+    del case_id
+
+    return (
+        PROJECT_ROOT
+        / "data"
+        / "device"
+        / "imei"
+        / "gprs"
+    )
 def _load_dedicated_imei_cdr_inventory(
     case_id: str,
 ) -> dict[str, Any]:
@@ -221,6 +238,35 @@ def _load_dedicated_imei_ipdr_inventory(
             "non_source_acquisitions"
         ],
         "duplicate_ipdr_acquisitions": inventory[
+            "duplicate_source_acquisitions"
+        ],
+    }
+
+
+def _load_dedicated_imei_gprs_inventory(
+    case_id: str,
+) -> dict[str, Any]:
+    """Load dedicated GPRS evidence through the reusable inventory layer."""
+
+    inventory = load_dedicated_evidence_inventory(
+        folder=resolve_imei_gprs_input_folder(
+            case_id
+        ),
+        expected_source_type="GPRS",
+        supported_suffixes=IMEI_EVIDENCE_SUFFIXES,
+        inspect_file=inspect_imei_evidence_file,
+        normalize_file=normalize_imei_gprs_file,
+    )
+
+    return {
+        **inventory,
+        "supported_gprs_content_groups": inventory[
+            "supported_content_groups"
+        ],
+        "non_gprs_acquisitions": inventory[
+            "non_source_acquisitions"
+        ],
+        "duplicate_gprs_acquisitions": inventory[
             "duplicate_source_acquisitions"
         ],
     }

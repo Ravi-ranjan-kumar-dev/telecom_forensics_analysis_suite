@@ -15,8 +15,9 @@ from pathlib import Path
 from typing import Any
 
 import pandas as pd
-
-
+from modules.loader.telecom_identifiers import (
+    normalize_imei,
+)
 SUPPORTED_SUFFIXES = {
     ".csv",
     ".txt",
@@ -2366,3 +2367,1057 @@ def normalize_imei_ipdr_file(
 
         return result
 
+
+IMEI_GPRS_EXTRA_COLUMNS = (
+    "query_identifier_raw",
+    "query_identifier_normalized",
+    "query_identifier_type",
+    "observed_imei_raw",
+    "observed_imei_normalized",
+    "match_basis",
+    "match_relation",
+    "detected_operator",
+    "detected_format",
+    "source_path",
+    "access_point_name",
+    "pgw_ip",
+)
+
+
+def _empty_imei_gprs_dataframe() -> pd.DataFrame:
+    """Return the canonical dedicated IMEI GPRS frame contract."""
+
+    from modules.loader.gprs_dump_loader import (
+        NORMALIZED_COLUMNS,
+    )
+
+    columns = list(
+        NORMALIZED_COLUMNS
+    )
+
+    for column in IMEI_GPRS_EXTRA_COLUMNS:
+        if column not in columns:
+            columns.append(
+                column
+            )
+
+    return pd.DataFrame(
+        columns=columns
+    )
+
+
+def _imei_gprs_clean_text(
+    value: pd.Series,
+) -> pd.Series:
+    result = (
+        value.astype(
+            "string"
+        )
+        .fillna(
+            ""
+        )
+        .str.strip()
+    )
+
+    return result.mask(
+        result.str.casefold().isin(
+            {
+                "",
+                "-",
+                "na",
+                "n/a",
+                "nan",
+                "none",
+                "null",
+            }
+        ),
+        "",
+    )
+
+
+def _imei_gprs_header_key(
+    value: object,
+) -> str:
+    return re.sub(
+        r"[^a-z0-9]+",
+        " ",
+        str(
+            value
+        ).strip().casefold(),
+    ).strip()
+
+
+def _imei_gprs_column(
+    dataframe: pd.DataFrame,
+    candidates: tuple[str, ...],
+) -> pd.Series:
+    lookup = {
+        _imei_gprs_header_key(
+            column
+        ): column
+        for column in dataframe.columns
+    }
+
+    for candidate in candidates:
+        source_column = lookup.get(
+            _imei_gprs_header_key(
+                candidate
+            )
+        )
+
+        if source_column is not None:
+            return _imei_gprs_clean_text(
+                dataframe[
+                    source_column
+                ]
+            )
+
+    return pd.Series(
+        "",
+        index=dataframe.index,
+        dtype="string",
+    )
+
+
+def _read_dedicated_imei_gprs_rows(
+    path: Path,
+    *,
+    header_line: int,
+) -> pd.DataFrame:
+    last_error: Exception | None = None
+
+    for encoding in (
+        "utf-8-sig",
+        "utf-8",
+        "cp1252",
+        "latin1",
+    ):
+        try:
+            dataframe = pd.read_csv(
+                path,
+                skiprows=max(
+                    int(
+                        header_line
+                    )
+                    - 1,
+                    0,
+                ),
+                dtype=str,
+                keep_default_na=False,
+                encoding=encoding,
+                engine="python",
+                on_bad_lines="skip",
+            )
+
+            dataframe = dataframe.loc[
+                :,
+                [
+                    column
+                    for column in dataframe.columns
+                    if not str(
+                        column
+                    ).strip().casefold().startswith(
+                        "unnamed"
+                    )
+                ],
+            ]
+
+            dataframe = dataframe.dropna(
+                how="all"
+            ).reset_index(
+                drop=True
+            )
+
+            return dataframe
+
+        except Exception as error:
+            last_error = error
+
+    raise ValueError(
+        "Dedicated IMEI GPRS CSV could not be parsed."
+        + (
+            f" {type(last_error).__name__}: {last_error}"
+            if last_error is not None
+            else ""
+        )
+    )
+
+
+def _augment_imei_gprs_provenance(
+    dataframe: pd.DataFrame,
+    *,
+    path: Path,
+    inspection: dict[str, Any],
+) -> pd.DataFrame:
+    work = dataframe.copy(
+        deep=True
+    )
+
+    query_raw = str(
+        inspection.get(
+            "query_identifier_raw",
+            "",
+        )
+        or ""
+    ).strip()
+
+    query_normalized = str(
+        inspection.get(
+            "query_identifier_normalized",
+            "",
+        )
+        or ""
+    ).strip()
+
+    query_type = str(
+        inspection.get(
+            "query_identifier_type",
+            "",
+        )
+        or ""
+    ).strip()
+
+    if "imei_raw" not in work.columns:
+        work[
+            "imei_raw"
+        ] = ""
+
+    if "imei" not in work.columns:
+        work[
+            "imei"
+        ] = ""
+
+    observed_raw = _imei_gprs_clean_text(
+        work[
+            "imei_raw"
+        ]
+    )
+
+    observed_normalized = _imei_gprs_clean_text(
+        work[
+            "imei"
+        ]
+    ).map(
+        normalize_imei
+    ).fillna(
+        ""
+    )
+
+    work[
+        "imei"
+    ] = observed_normalized
+
+    work[
+        "query_identifier_raw"
+    ] = query_raw
+
+    work[
+        "query_identifier_normalized"
+    ] = query_normalized
+
+    work[
+        "query_identifier_type"
+    ] = query_type
+
+    work[
+        "observed_imei_raw"
+    ] = observed_raw
+
+    work[
+        "observed_imei_normalized"
+    ] = observed_normalized
+
+    work[
+        "match_basis"
+    ] = "QUERY_SCOPE"
+
+    work[
+        "match_relation"
+    ] = observed_normalized.map(
+        lambda observed: (
+            classify_match_relation(
+                query_normalized,
+                observed,
+            )
+            if observed
+            else "UNAVAILABLE"
+        )
+    )
+
+    work[
+        "detected_operator"
+    ] = str(
+        inspection.get(
+            "operator",
+            "",
+        )
+        or ""
+    )
+
+    work[
+        "detected_format"
+    ] = str(
+        inspection.get(
+            "format_id",
+            "",
+        )
+        or ""
+    )
+
+    work[
+        "source_path"
+    ] = str(
+        path.resolve()
+    )
+
+    if "source_file" not in work.columns:
+        work[
+            "source_file"
+        ] = path.name
+
+    else:
+        work[
+            "source_file"
+        ] = _imei_gprs_clean_text(
+            work[
+                "source_file"
+            ]
+        ).mask(
+            lambda values: values.eq(
+                ""
+            ),
+            path.name,
+        )
+
+    if "source_relative_path" not in work.columns:
+        work[
+            "source_relative_path"
+        ] = path.name
+
+    for column in (
+        "access_point_name",
+        "pgw_ip",
+    ):
+        if column not in work.columns:
+            work[
+                column
+            ] = ""
+
+    canonical = _empty_imei_gprs_dataframe()
+
+    ordered_columns = list(
+        canonical.columns
+    )
+
+    remaining_columns = [
+        column
+        for column in work.columns
+        if column not in ordered_columns
+    ]
+
+    for column in ordered_columns:
+        if column not in work.columns:
+            work[
+                column
+            ] = pd.NA
+
+    return work[
+        ordered_columns
+        + remaining_columns
+    ].reset_index(
+        drop=True
+    )
+
+
+def _normalize_vil_imei_gprs_rows(
+    path: Path,
+    *,
+    inspection: dict[str, Any],
+) -> tuple[pd.DataFrame, int]:
+    from modules.loader.telecom_identifiers import (
+        normalize_imsi,
+    )
+
+    header_line = int(
+        inspection.get(
+            "header_line",
+            0,
+        )
+        or 0
+    )
+
+    if header_line <= 0:
+        raise ValueError(
+            "VIL IMEI GPRS header line was not detected."
+        )
+
+    raw = _read_dedicated_imei_gprs_rows(
+        path,
+        header_line=header_line,
+    )
+
+    if raw.empty:
+        return (
+            _empty_imei_gprs_dataframe(),
+            0,
+        )
+
+    raw[
+        "_source_index"
+    ] = raw.index
+
+    subscriber_raw = _imei_gprs_column(
+        raw,
+        (
+            "Target /A PARTY NUMBER",
+            "A PARTY NUMBER",
+            "MSISDN",
+            "Mobile No.",
+        ),
+    )
+
+    imei_raw = _imei_gprs_column(
+        raw,
+        (
+            "IMEI",
+            "IMEISV",
+        ),
+    )
+
+    observed_imei = imei_raw.map(
+        normalize_imei
+    ).fillna(
+        ""
+    )
+
+    imsi_raw = _imei_gprs_column(
+        raw,
+        (
+            "IMSI",
+        ),
+    )
+
+    imsi = imsi_raw.map(
+        normalize_imsi
+    ).fillna(
+        ""
+    )
+
+    ip_raw = _imei_gprs_column(
+        raw,
+        (
+            "IP Address",
+            "PDP Address IPv4",
+        ),
+    )
+
+    ipv4 = ip_raw.where(
+        ip_raw.str.contains(
+            r"\.",
+            regex=True,
+            na=False,
+        ),
+        "",
+    )
+
+    ipv6 = ip_raw.where(
+        ip_raw.str.contains(
+            ":",
+            regex=False,
+            na=False,
+        ),
+        "",
+    )
+
+    date_value = _imei_gprs_column(
+        raw,
+        (
+            "Call date",
+            "Session Date",
+        ),
+    )
+
+    time_value = _imei_gprs_column(
+        raw,
+        (
+            "Call Initiation Time",
+            "Session Start Time",
+        ),
+    )
+
+    combined_time = (
+        date_value
+        + " "
+        + time_value
+    ).str.strip()
+
+    session_start = pd.to_datetime(
+        combined_time,
+        errors="coerce",
+        dayfirst=True,
+    )
+
+    duration = pd.to_numeric(
+        _imei_gprs_column(
+            raw,
+            (
+                "Call Duration",
+                "Session Duration",
+                "Duration in sec",
+            ),
+        ).str.replace(
+            ",",
+            "",
+            regex=False,
+        ),
+        errors="coerce",
+    )
+
+    session_end = (
+        session_start
+        + pd.to_timedelta(
+            duration.fillna(
+                0
+            ),
+            unit="s",
+        )
+    )
+
+    uplink = pd.to_numeric(
+        _imei_gprs_column(
+            raw,
+            (
+                "Data Uplink Volume",
+                "Uplink Vol",
+                "Data Volume Uplink",
+            ),
+        ).str.replace(
+            ",",
+            "",
+            regex=False,
+        ),
+        errors="coerce",
+    )
+
+    downlink = pd.to_numeric(
+        _imei_gprs_column(
+            raw,
+            (
+                "Data Downlink Volume",
+                "Downlink Vol",
+                "Data Volume Downlink",
+            ),
+        ).str.replace(
+            ",",
+            "",
+            regex=False,
+        ),
+        errors="coerce",
+    )
+
+    total = pd.to_numeric(
+        _imei_gprs_column(
+            raw,
+            (
+                "Data Volume",
+                "Total Vol",
+                "Total Volume",
+            ),
+        ).str.replace(
+            ",",
+            "",
+            regex=False,
+        ),
+        errors="coerce",
+    )
+
+    volume_expected = (
+        uplink
+        + downlink
+    )
+
+    volume_difference = (
+        total
+        - volume_expected
+    )
+
+    volume_tolerance = pd.Series(
+        1.0,
+        index=raw.index,
+        dtype="float64",
+    )
+
+    volume_present = (
+        uplink.notna()
+        & downlink.notna()
+        & total.notna()
+    )
+
+    volume_consistent = (
+        volume_present
+        & volume_difference.abs().le(
+            volume_tolerance
+        )
+    )
+
+    normalized = pd.DataFrame(
+        {
+            "record_type": "IMEI_GPRS_SESSION",
+            "source_format": str(
+                inspection.get(
+                    "format_id",
+                    "",
+                )
+                or ""
+            ),
+            "operator": str(
+                inspection.get(
+                    "operator",
+                    "",
+                )
+                or ""
+            ),
+            "subscriber_number_raw": subscriber_raw,
+            "subscriber_number": subscriber_raw,
+            "identifier_type": "MSISDN",
+            "ipv4_address_raw": ipv4,
+            "ipv4_address": ipv4,
+            "ipv6_address_raw": ipv6,
+            "ipv6_address": ipv6,
+            "imei_raw": imei_raw,
+            "imei": observed_imei,
+            "imsi_raw": imsi_raw,
+            "imsi": imsi,
+            "downlink_volume": downlink,
+            "uplink_volume": uplink,
+            "total_volume": total,
+            "session_start": session_start,
+            "session_end": session_end,
+            "session_duration_seconds": duration,
+            "session_time_valid": (
+                session_start.notna()
+                & session_end.notna()
+                & session_end.ge(
+                    session_start
+                )
+            ),
+            "pre_post": _imei_gprs_column(
+                raw,
+                (
+                    "Type of Connection",
+                    "Pre/Post",
+                ),
+            ),
+            "roaming_circle": _imei_gprs_column(
+                raw,
+                (
+                    "Roaming Network/Circle",
+                    "Roaming Circle",
+                ),
+            ),
+            "technology": _imei_gprs_column(
+                raw,
+                (
+                    "Service Type",
+                    "2g/4g/5g",
+                    "RAT",
+                ),
+            ),
+            "icr_operator": "",
+            "home_circle": "",
+            "searched_cell_id": _imei_gprs_column(
+                raw,
+                (
+                    "First Cell Global Id",
+                    "First Cell ID",
+                    "CGI",
+                ),
+            ),
+            "cgi_latitude": "",
+            "cgi_longitude": "",
+            "volume_fields_present": volume_present,
+            "volume_expected_total": volume_expected,
+            "volume_difference": volume_difference,
+            "volume_tolerance": volume_tolerance,
+            "volume_consistent": volume_consistent,
+            "volume_mismatch": (
+                volume_present
+                & ~volume_consistent
+            ),
+            "is_zero_volume": (
+                total.fillna(
+                    0
+                ).eq(
+                    0
+                )
+            ),
+            "source_file": path.name,
+            "source_relative_path": path.name,
+            "spot_id": "",
+            "spot_name": "",
+            "spot_folder": "",
+            "source_row_number": (
+                raw[
+                    "_source_index"
+                ].astype(
+                    "int64"
+                )
+                + header_line
+                + 1
+            ),
+            "access_point_name": _imei_gprs_column(
+                raw,
+                (
+                    "APN",
+                    "Access Point Name",
+                ),
+            ),
+            "pgw_ip": _imei_gprs_column(
+                raw,
+                (
+                    "PGW IP",
+                    "PGW IP address",
+                ),
+            ),
+        }
+    )
+
+    valid_mask = normalized[
+        "imei"
+    ].astype(
+        "string"
+    ).fillna(
+        ""
+    ).ne(
+        ""
+    )
+
+    rejected_count = int(
+        (
+            ~valid_mask
+        ).sum()
+    )
+
+    normalized = normalized.loc[
+        valid_mask
+    ].reset_index(
+        drop=True
+    )
+
+    normalized = _augment_imei_gprs_provenance(
+        normalized,
+        path=path,
+        inspection=inspection,
+    )
+
+    return (
+        normalized,
+        rejected_count,
+    )
+
+
+def normalize_imei_gprs_file(
+    path: str | Path,
+    *,
+    inspection: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Normalize one dedicated IMEI GPRS report.
+
+    Airtel session rows reuse the canonical GPRS loader. Vodafone
+    Idea dedicated GPRS rows use the source-specific mapping above.
+    Non-GPRS evidence is rejected without altering the source file.
+    """
+
+    from modules.loader.gprs_dump_loader import (
+        STATUS_EMPTY_NO_DATA as GPRS_EMPTY_NO_DATA,
+        load_gprs_dump_file,
+    )
+
+    file_path = Path(
+        path
+    ).expanduser().resolve()
+
+    inspection_value = dict(
+        inspection
+        if isinstance(
+            inspection,
+            dict,
+        )
+        else inspect_imei_evidence_file(
+            file_path
+        )
+    )
+
+    source_type = str(
+        inspection_value.get(
+            "source_type",
+            "",
+        )
+        or ""
+    ).strip().upper()
+
+    format_id = str(
+        inspection_value.get(
+            "format_id",
+            "",
+        )
+        or ""
+    ).strip()
+
+    query_identifier = str(
+        inspection_value.get(
+            "query_identifier_normalized",
+            "",
+        )
+        or ""
+    ).strip()
+
+    base_result = {
+        "source_type": source_type,
+        "format_id": format_id,
+        "operator": str(
+            inspection_value.get(
+                "operator",
+                "",
+            )
+            or ""
+        ),
+        "query_identifier_raw": str(
+            inspection_value.get(
+                "query_identifier_raw",
+                "",
+            )
+            or ""
+        ),
+        "query_identifier_normalized": query_identifier,
+        "query_identifier_type": str(
+            inspection_value.get(
+                "query_identifier_type",
+                "",
+            )
+            or ""
+        ),
+        "records_read": 0,
+        "records_normalized": 0,
+        "rejected_line_count": int(
+            inspection_value.get(
+                "rejected_line_count",
+                0,
+            )
+            or 0
+        ),
+        "warnings": [],
+        "errors": [],
+        "rejected_rows": pd.DataFrame(),
+        "data": _empty_imei_gprs_dataframe(),
+    }
+
+    if (
+        not inspection_value.get(
+            "ok"
+        )
+        or source_type != "GPRS"
+        or format_id not in {
+            FORMAT_AIRTEL_IMEI_GPRS,
+            FORMAT_VIL_IMEI_GPRS,
+        }
+    ):
+        return {
+            **base_result,
+            "ok": False,
+            "status": STATUS_UNSUPPORTED,
+            "message": (
+                "The selected evidence is not a supported "
+                "dedicated IMEI GPRS report."
+            ),
+        }
+
+    if not normalize_imei(
+        query_identifier
+    ):
+        return {
+            **base_result,
+            "ok": False,
+            "status": "ERROR",
+            "errors": [
+                "A valid report-query IMEI/IMEISV was not detected."
+            ],
+            "message": (
+                "A valid report-query IMEI/IMEISV was not detected."
+            ),
+        }
+
+    inspection_status = str(
+        inspection_value.get(
+            "status",
+            "",
+        )
+        or ""
+    ).strip().upper()
+
+    if inspection_status == STATUS_EMPTY_NO_DATA:
+        return {
+            **base_result,
+            "ok": True,
+            "status": STATUS_EMPTY_NO_DATA,
+            "message": (
+                "Valid dedicated IMEI GPRS report loaded "
+                "with no session rows."
+            ),
+        }
+
+    try:
+        if format_id == FORMAT_AIRTEL_IMEI_GPRS:
+            loaded = load_gprs_dump_file(
+                file_path
+            )
+
+            if not loaded.get(
+                "ok"
+            ):
+                return {
+                    **base_result,
+                    "ok": False,
+                    "status": "ERROR",
+                    "warnings": list(
+                        loaded.get(
+                            "warnings",
+                            [],
+                        )
+                        or []
+                    ),
+                    "errors": list(
+                        loaded.get(
+                            "errors",
+                            [],
+                        )
+                        or []
+                    ),
+                    "message": (
+                        "; ".join(
+                            str(error)
+                            for error in loaded.get(
+                                "errors",
+                                [],
+                            )
+                            or []
+                        )
+                        or "Airtel IMEI GPRS normalization failed."
+                    ),
+                }
+
+            dataframe = loaded.get(
+                "df"
+            )
+
+            if not isinstance(
+                dataframe,
+                pd.DataFrame,
+            ):
+                dataframe = _empty_imei_gprs_dataframe()
+
+            dataframe = _augment_imei_gprs_provenance(
+                dataframe,
+                path=file_path,
+                inspection=inspection_value,
+            )
+
+            rejected_rows = loaded.get(
+                "rejected_rows"
+            )
+
+            if not isinstance(
+                rejected_rows,
+                pd.DataFrame,
+            ):
+                rejected_rows = pd.DataFrame()
+
+            rejected_count = len(
+                rejected_rows
+            )
+
+            warnings = list(
+                loaded.get(
+                    "warnings",
+                    [],
+                )
+                or []
+            )
+
+            data_status = str(
+                loaded.get(
+                    "data_status",
+                    "",
+                )
+                or ""
+            ).strip().upper()
+
+            status = (
+                STATUS_EMPTY_NO_DATA
+                if data_status == GPRS_EMPTY_NO_DATA
+                else STATUS_HAS_DATA
+            )
+
+        else:
+            (
+                dataframe,
+                rejected_count,
+            ) = _normalize_vil_imei_gprs_rows(
+                file_path,
+                inspection=inspection_value,
+            )
+
+            rejected_rows = pd.DataFrame()
+            warnings = []
+            status = (
+                STATUS_HAS_DATA
+                if not dataframe.empty
+                else STATUS_EMPTY_NO_DATA
+            )
+
+    except Exception as error:
+        return {
+            **base_result,
+            "ok": False,
+            "status": "ERROR",
+            "errors": [
+                f"{type(error).__name__}: {error}"
+            ],
+            "message": (
+                f"{type(error).__name__}: {error}"
+            ),
+        }
+
+    records_normalized = len(
+        dataframe
+    )
+
+    return {
+        **base_result,
+        "ok": True,
+        "status": status,
+        "records_read": int(
+            inspection_value.get(
+                "record_count",
+                records_normalized,
+            )
+            or records_normalized
+        ),
+        "records_normalized": records_normalized,
+        "rejected_line_count": int(
+            rejected_count
+        ),
+        "warnings": warnings,
+        "errors": [],
+        "rejected_rows": rejected_rows,
+        "data": dataframe,
+        "message": (
+            f"Normalized {records_normalized:,} dedicated "
+            "IMEI GPRS session row(s)."
+            if records_normalized
+            else (
+                "Valid dedicated IMEI GPRS report loaded "
+                "with no session rows."
+            )
+        ),
+    }
