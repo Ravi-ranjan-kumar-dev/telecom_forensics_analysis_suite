@@ -305,6 +305,10 @@ def test_one_ipdr_identifier_runs_without_manual_prompt(
         ]
     ) == 1
 
+    assert result[
+        "common_result"
+    ] is None
+
     assert captured[
         "requested_imei"
     ] == FIRST_IMEI
@@ -433,11 +437,11 @@ def test_valid_empty_ipdr_report_creates_empty_workbook(
     ] == "IMEI_IPDR_ANALYSIS"
 
 
-def test_multiple_ipdr_identifiers_run_one_single_each(
+def test_multiple_ipdr_identifiers_run_single_and_common_analysis(
     monkeypatch,
     tmp_path: Path,
 ):
-    _patch_services(
+    service_calls = _patch_services(
         monkeypatch,
         tmp_path,
     )
@@ -481,12 +485,12 @@ def test_multiple_ipdr_identifiers_run_one_single_each(
         lambda case_id: inventory,
     )
 
-    calls = []
+    single_calls = []
 
     def fake_single(
         **kwargs,
     ):
-        calls.append(
+        single_calls.append(
             kwargs[
                 "identifier"
             ]
@@ -512,6 +516,65 @@ def test_multiple_ipdr_identifiers_run_one_single_each(
         fake_single,
     )
 
+    common_analysis = {
+        "status": "FOUND",
+        "device_count": 2,
+        "query_identifier_count": 2,
+        "device_family_count": 2,
+        "data_bearing_device_count": 1,
+        "empty_report_count": 1,
+        "message": "Common IMEI IPDR analysis.",
+        "cross_device_timeline": pd.DataFrame(
+            [
+                {
+                    "Query Identifier": FIRST_IMEI,
+                }
+            ]
+        ),
+    }
+
+    common_calls = {}
+
+    def fake_common_builder(
+        frames,
+        acquisition_manifest,
+    ):
+        common_calls[
+            "frames"
+        ] = frames
+
+        common_calls[
+            "manifest"
+        ] = acquisition_manifest
+
+        return common_analysis
+
+    monkeypatch.setattr(
+        imei_device_controller,
+        "build_common_imei_ipdr_analysis",
+        fake_common_builder,
+    )
+
+    common_report = (
+        tmp_path
+        / "common-ipdr.xlsx"
+    )
+
+    def fake_common_report(
+        **kwargs,
+    ):
+        common_calls[
+            "report_kwargs"
+        ] = kwargs
+
+        return common_report
+
+    monkeypatch.setattr(
+        imei_device_controller,
+        "generate_imei_ipdr_common_report",
+        fake_common_report,
+    )
+
     result = (
         imei_device_controller
         ._execute_auto_detected_imei_ipdr(
@@ -521,7 +584,7 @@ def test_multiple_ipdr_identifiers_run_one_single_each(
         )
     )
 
-    assert calls == [
+    assert single_calls == [
         FIRST_IMEI,
         SECOND_IMEI,
     ]
@@ -534,9 +597,77 @@ def test_multiple_ipdr_identifiers_run_one_single_each(
 
     assert result[
         "common_result"
-    ] is None
+    ] is not None
 
+    assert result[
+        "common_result"
+    ][
+        "analysis"
+    ] is common_analysis
 
+    assert result[
+        "common_result"
+    ][
+        "report"
+    ] == common_report
+
+    assert result[
+        "common_result"
+    ][
+        "output_records"
+    ] == 1
+
+    assert common_calls[
+        "frames"
+    ] is inventory[
+        "device_frames"
+    ]
+
+    assert common_calls[
+        "manifest"
+    ] is inventory[
+        "acquisition_manifest"
+    ]
+
+    assert common_calls[
+        "report_kwargs"
+    ][
+        "analysis"
+    ] is common_analysis
+
+    assert any(
+        kwargs.get(
+            "report_type"
+        )
+        == "IMEI_IPDR_COMMON_ANALYSIS"
+        for _, kwargs in service_calls[
+            "reports"
+        ]
+    )
+
+    assert any(
+        kwargs.get(
+            "analysis_type"
+        )
+        == "IMEI_IPDR_COMMON_ANALYSIS"
+        and kwargs.get(
+            "status"
+        )
+        == "COMPLETED"
+        for _, kwargs in service_calls[
+            "runs"
+        ]
+    )
+
+    assert any(
+        kwargs.get(
+            "action"
+        )
+        == "IMEI_IPDR_COMMON_ANALYSIS_COMPLETED"
+        for _, kwargs in service_calls[
+            "events"
+        ]
+    )
 def test_missing_ipdr_identifier_uses_manual_fallback(
     monkeypatch,
     tmp_path: Path,

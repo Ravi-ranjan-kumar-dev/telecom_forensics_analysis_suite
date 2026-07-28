@@ -23,6 +23,9 @@ from modules.analysis.device import (
 from modules.analysis.device.imei_common import (
     build_common_imei_cdr_analysis,
 )
+from modules.analysis.device.imei_ipdr_common import (
+    build_common_imei_ipdr_analysis,
+)
 from modules.cases import (
     case_report_dir,
     log_case_event,
@@ -43,8 +46,9 @@ from modules.reporting import (
     generate_imei_common_report,
     generate_imei_device_report,
 )
-
-
+from modules.reporting import (
+    generate_imei_ipdr_common_report,
+)
 SUPPORTED_EVIDENCE_SUFFIXES = {
     ".csv",
     ".txt",
@@ -1061,7 +1065,7 @@ def _execute_auto_detected_imei_cdr(
 def _execute_auto_detected_imei_ipdr(
     case: dict[str, Any],
 ) -> dict[str, Any]:
-    """Run one automatic single IPDR analysis per detected query identifier."""
+    """Run automatic single and common IMEI IPDR analyses."""
 
     case_id = str(
         case.get(
@@ -1154,8 +1158,8 @@ def _execute_auto_detected_imei_ipdr(
             f"[+] {len(identifiers)} unique IPDR identifiers detected."
         )
         print(
-            "[+] Running one single IPDR analysis "
-            "per identifier."
+            "[+] Running one single IPDR analysis per identifier "
+            "and one common cross-device IPDR analysis."
         )
 
     single_results = []
@@ -1189,13 +1193,161 @@ def _execute_auto_detected_imei_ipdr(
             result
         )
 
+    common_result = None
+
+    if len(
+        identifiers
+    ) > 1:
+        print("\n" + "=" * 78)
+        print("COMMON / CROSS-DEVICE IMEI IPDR ANALYSIS")
+        print("=" * 78)
+
+        common_analysis = build_common_imei_ipdr_analysis(
+            inventory[
+                "device_frames"
+            ],
+            inventory[
+                "acquisition_manifest"
+            ],
+        )
+
+        common_report = generate_imei_ipdr_common_report(
+            case=case,
+            analysis=common_analysis,
+            output_dir=case_report_dir(
+                case_id,
+                "imei_device",
+            ),
+        )
+
+        if common_report:
+            register_report(
+                case_id,
+                report_type="IMEI_IPDR_COMMON_ANALYSIS",
+                report_path=common_report,
+            )
+
+            print(
+                "[+] Common IMEI IPDR report: "
+                f"{common_report}"
+            )
+
+        else:
+            print(
+                "[INFO] Common IMEI IPDR workbook "
+                "was not created."
+            )
+
+        common_status = str(
+            common_analysis.get(
+                "status",
+                "",
+            )
+        ).upper()
+
+        run_status = (
+            "COMPLETED"
+            if common_status == "FOUND"
+            else "FAILED"
+        )
+
+        cross_device_timeline = common_analysis.get(
+            "cross_device_timeline"
+        )
+
+        common_output_records = (
+            len(
+                cross_device_timeline
+            )
+            if isinstance(
+                cross_device_timeline,
+                pd.DataFrame,
+            )
+            else 0
+        )
+
+        register_analysis_run(
+            case_id,
+            analysis_type="IMEI_IPDR_COMMON_ANALYSIS",
+            status=run_status,
+            input_records=inventory[
+                "analytical_records"
+            ],
+            output_records=common_output_records,
+            report_path=str(
+                common_report or ""
+            ),
+            **(
+                {
+                    "error_message": str(
+                        common_analysis.get(
+                            "message",
+                            "",
+                        )
+                    )
+                }
+                if run_status == "FAILED"
+                else {}
+            ),
+        )
+
+        log_case_event(
+            case_id,
+            action=(
+                "IMEI_IPDR_COMMON_ANALYSIS_"
+                + run_status
+            ),
+            details={
+                "identifier_count": len(
+                    identifiers
+                ),
+                "device_family_count": int(
+                    common_analysis.get(
+                        "device_family_count",
+                        0,
+                    )
+                    or 0
+                ),
+                "data_bearing_identifier_count": int(
+                    common_analysis.get(
+                        "data_bearing_device_count",
+                        0,
+                    )
+                    or 0
+                ),
+                "empty_report_count": int(
+                    common_analysis.get(
+                        "empty_report_count",
+                        0,
+                    )
+                    or 0
+                ),
+                "input_records": inventory[
+                    "analytical_records"
+                ],
+                "output_records": common_output_records,
+                "report_created": bool(
+                    common_report
+                ),
+            },
+        )
+
+        common_result = {
+            "analysis": common_analysis,
+            "report": common_report,
+            "input_records": inventory[
+                "analytical_records"
+            ],
+            "output_records": common_output_records,
+        }
+
     return {
         "mode": "ipdr",
         "automatic_detection": True,
         "identifiers": identifiers,
         "inventory": inventory,
         "single_results": single_results,
-        "common_result": None,
+        "common_result": common_result,
         "input_records": inventory[
             "analytical_records"
         ],
