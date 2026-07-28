@@ -16,6 +16,10 @@ import pandas as pd
 from modules.controllers.device_evidence_batch import (
     load_dedicated_evidence_inventory,
 )
+from modules.controllers.device_unified_inventory import (
+    build_unified_identifier_scope,
+    load_unified_device_inventory,
+)
 
 from modules.analysis.device import (
     build_unified_imei_investigation,
@@ -185,6 +189,22 @@ def resolve_imei_gprs_input_folder(
         / "imei"
         / "gprs"
     )
+
+
+def resolve_imei_unified_input_folder(
+    case_id: str,
+) -> Path:
+    """Return the canonical root folder for dedicated IMEI evidence."""
+
+    del case_id
+
+    return (
+        PROJECT_ROOT
+        / "data"
+        / "device"
+        / "imei"
+    )
+
 def _load_dedicated_imei_cdr_inventory(
     case_id: str,
 ) -> dict[str, Any]:
@@ -270,6 +290,26 @@ def _load_dedicated_imei_gprs_inventory(
             "duplicate_source_acquisitions"
         ],
     }
+
+
+def _load_unified_imei_inventory(
+    case_id: str,
+) -> dict[str, Any]:
+    """Load CDR, IPDR and GPRS evidence from the IMEI root folder."""
+
+    return load_unified_device_inventory(
+        folder=resolve_imei_unified_input_folder(
+            case_id
+        ),
+        supported_suffixes=IMEI_EVIDENCE_SUFFIXES,
+        inspect_file=inspect_imei_evidence_file,
+        normalizers={
+            "CDR": normalize_imei_cdr_file,
+            "IPDR": normalize_imei_ipdr_file,
+            "GPRS": normalize_imei_gprs_file,
+        },
+    )
+
 def _dedicated_cdr_payload(
     dataframe: pd.DataFrame,
 ) -> dict[str, dict[str, Any]]:
@@ -917,6 +957,611 @@ def _run_auto_single_imei_gprs(
         dataframe=dataframe,
         acquisition_manifest=acquisition_manifest,
     )
+
+
+def _apply_unified_empty_sources(
+    analysis: dict[str, Any],
+    empty_sources: set[str],
+) -> dict[str, Any]:
+    """Apply valid-empty operator report status to unified results."""
+
+    result = (
+        dict(
+            analysis
+        )
+        if isinstance(
+            analysis,
+            dict,
+        )
+        else {}
+    )
+
+    normalized_empty_sources = {
+        str(
+            source
+        ).strip().upper()
+        for source in empty_sources
+        if str(
+            source
+        ).strip().upper()
+        in {
+            "CDR",
+            "IPDR",
+            "GPRS",
+        }
+    }
+
+    source_config = {
+        "CDR": {
+            "key": "cdr",
+            "unit": "CDR records",
+            "row_label": "CDR event rows",
+        },
+        "IPDR": {
+            "key": "ipdr",
+            "unit": "IPDR records",
+            "row_label": "IPDR record rows",
+        },
+        "GPRS": {
+            "key": "gprs",
+            "unit": "GPRS sessions",
+            "row_label": "GPRS session rows",
+        },
+    }
+
+    review_rows = []
+
+    quality_rows = []
+
+    for source_name in sorted(
+        normalized_empty_sources
+    ):
+        config = source_config[
+            source_name
+        ]
+
+        source_key = config[
+            "key"
+        ]
+
+        current = result.get(
+            source_key
+        )
+
+        source_result = (
+            dict(
+                current
+            )
+            if isinstance(
+                current,
+                dict,
+            )
+            else {}
+        )
+
+        current_status = str(
+            source_result.get(
+                "status",
+                "",
+            )
+        ).strip().upper()
+
+        if current_status in {
+            "FOUND",
+            "ERROR",
+        }:
+            continue
+
+        message = (
+            f"A valid dedicated IMEI {source_name} report "
+            "was received, but the operator report contains "
+            "no result records."
+        )
+
+        source_result[
+            "status"
+        ] = "EMPTY_NO_DATA"
+
+        source_result[
+            "message"
+        ] = message
+
+        source_result[
+            "timeline"
+        ] = pd.DataFrame()
+
+        if source_name == "CDR":
+            source_result.setdefault(
+                "towers",
+                pd.DataFrame(),
+            )
+
+        else:
+            source_result.setdefault(
+                "cells",
+                pd.DataFrame(),
+            )
+
+        result[
+            source_key
+        ] = source_result
+
+        review_rows.append(
+            {
+                "Evidence Source": source_name,
+                "Indicator": "Valid empty operator report",
+                "Observation": (
+                    "The report query was recognized, but no "
+                    f"{config['row_label']} were supplied."
+                ),
+                "Caution": (
+                    "This is not the same as failing to find "
+                    "an identifier in loaded event data."
+                ),
+            }
+        )
+
+        quality_rows.append(
+            {
+                "Evidence Source": source_name,
+                "Check": "Valid empty report",
+                "Count": 1,
+                "Meaning": (
+                    "Operator evidence contains no result records."
+                ),
+            }
+        )
+
+    summary_rows = []
+
+    for source_name in (
+        "CDR",
+        "IPDR",
+        "GPRS",
+    ):
+        config = source_config[
+            source_name
+        ]
+
+        source_result = result.get(
+            config[
+                "key"
+            ],
+            {},
+        )
+
+        status = str(
+            source_result.get(
+                "status",
+                "NO_INPUT",
+            )
+        ).strip().upper()
+
+        timeline = source_result.get(
+            "timeline"
+        )
+
+        matched_count = (
+            len(
+                timeline
+            )
+            if isinstance(
+                timeline,
+                pd.DataFrame,
+            )
+            else 0
+        )
+
+        summary_rows.append(
+            {
+                "Evidence Source": source_name,
+                "Status": status,
+                "Evidence Unit": config[
+                    "unit"
+                ],
+                "Matched Count": matched_count,
+                "Message": str(
+                    source_result.get(
+                        "message",
+                        "",
+                    )
+                ),
+            }
+        )
+
+    result[
+        "source_summary"
+    ] = pd.DataFrame(
+        summary_rows
+    )
+
+    existing_review = result.get(
+        "review_indicators"
+    )
+
+    review_frames = []
+
+    if (
+        isinstance(
+            existing_review,
+            pd.DataFrame,
+        )
+        and not existing_review.empty
+    ):
+        review_frames.append(
+            existing_review.copy(
+                deep=True
+            )
+        )
+
+    if review_rows:
+        review_frames.append(
+            pd.DataFrame(
+                review_rows
+            )
+        )
+
+    result[
+        "review_indicators"
+    ] = (
+        pd.concat(
+            review_frames,
+            ignore_index=True,
+            sort=False,
+        ).drop_duplicates(
+            ignore_index=True
+        )
+        if review_frames
+        else pd.DataFrame()
+    )
+
+    existing_quality = result.get(
+        "data_quality"
+    )
+
+    quality_frames = []
+
+    if (
+        isinstance(
+            existing_quality,
+            pd.DataFrame,
+        )
+        and not existing_quality.empty
+    ):
+        quality_frames.append(
+            existing_quality.copy(
+                deep=True
+            )
+        )
+
+    if quality_rows:
+        quality_frames.append(
+            pd.DataFrame(
+                quality_rows
+            )
+        )
+
+    result[
+        "data_quality"
+    ] = (
+        pd.concat(
+            quality_frames,
+            ignore_index=True,
+            sort=False,
+        ).drop_duplicates(
+            ignore_index=True
+        )
+        if quality_frames
+        else pd.DataFrame()
+    )
+
+    statuses = {
+        row[
+            "Status"
+        ]
+        for row in summary_rows
+    }
+
+    found_sources = [
+        row[
+            "Evidence Source"
+        ]
+        for row in summary_rows
+        if row[
+            "Status"
+        ]
+        == "FOUND"
+    ]
+
+    empty_source_names = [
+        row[
+            "Evidence Source"
+        ]
+        for row in summary_rows
+        if row[
+            "Status"
+        ]
+        == "EMPTY_NO_DATA"
+    ]
+
+    if (
+        "FOUND" in statuses
+        and "ERROR" in statuses
+    ):
+        overall_status = "PARTIAL"
+
+    elif "FOUND" in statuses:
+        overall_status = "FOUND"
+
+    elif "ERROR" in statuses:
+        overall_status = "ERROR"
+
+    elif "EMPTY_NO_DATA" in statuses:
+        overall_status = "EMPTY_NO_DATA"
+
+    elif "NOT_FOUND" in statuses:
+        overall_status = "NOT_FOUND"
+
+    else:
+        overall_status = "NO_INPUT"
+
+    result[
+        "overall_status"
+    ] = overall_status
+
+    if found_sources:
+        result[
+            "message"
+        ] = (
+            "Requested device-query evidence found in: "
+            + ", ".join(
+                found_sources
+            )
+            + "."
+        )
+
+    elif empty_source_names:
+        result[
+            "message"
+        ] = (
+            "Valid operator reports were received, but "
+            "no result records were supplied for: "
+            + ", ".join(
+                empty_source_names
+            )
+            + "."
+        )
+
+    return result
+
+
+def _run_auto_single_imei_unified(
+    *,
+    case: dict[str, Any],
+    identifier: str,
+    inventory: dict[str, Any],
+) -> dict[str, Any]:
+    """Run one automatic cross-source IMEI investigation."""
+
+    case_id = str(
+        case.get(
+            "case_id",
+            "",
+        )
+    ).strip()
+
+    scope = build_unified_identifier_scope(
+        inventory,
+        identifier,
+    )
+
+    source_frames = scope[
+        "source_frames"
+    ]
+
+    cdr_dataframe = source_frames[
+        "cdr"
+    ]
+
+    ipdr_dataframe = source_frames[
+        "ipdr"
+    ]
+
+    gprs_dataframe = source_frames[
+        "gprs"
+    ]
+
+    source_input_records = {
+        "cdr_records": len(
+            cdr_dataframe
+        ),
+        "ipdr_records": len(
+            ipdr_dataframe
+        ),
+        "gprs_sessions": len(
+            gprs_dataframe
+        ),
+    }
+
+    register_target(
+        case_id,
+        target_type="IMEI",
+        target_value=identifier,
+        description=(
+            "Automatically detected unified IMEI query"
+        ),
+    )
+
+    log_case_event(
+        case_id,
+        action="UNIFIED_IMEI_AUTO_SINGLE_STARTED",
+        details={
+            "requested_imei": identifier,
+            "device_family": scope[
+                "device_family"
+            ],
+            **source_input_records,
+        },
+    )
+
+    analysis = build_unified_imei_investigation(
+        identifier,
+        loaded_cdrs=(
+            _dedicated_cdr_payload(
+                cdr_dataframe
+            )
+            if not cdr_dataframe.empty
+            else None
+        ),
+        ipdr_dataframe=(
+            ipdr_dataframe
+            if not ipdr_dataframe.empty
+            else None
+        ),
+        gprs_dataframe=(
+            gprs_dataframe
+            if not gprs_dataframe.empty
+            else None
+        ),
+    )
+
+    analysis = _apply_unified_empty_sources(
+        analysis,
+        scope[
+            "empty_sources"
+        ],
+    )
+
+    analysis[
+        "acquisition_manifest"
+    ] = scope[
+        "acquisition_manifest"
+    ]
+
+    _print_source_summary(
+        analysis
+    )
+
+    report_path = None
+
+    overall_status = str(
+        analysis.get(
+            "overall_status",
+            "",
+        )
+    ).strip().upper()
+
+    if overall_status in {
+        "FOUND",
+        "PARTIAL",
+        "EMPTY_NO_DATA",
+    }:
+        report_path = generate_imei_device_report(
+            case=case,
+            analysis=analysis,
+            output_dir=case_report_dir(
+                case_id,
+                "imei_device",
+            ),
+        )
+
+    if report_path:
+        register_report(
+            case_id,
+            report_type="UNIFIED_IMEI_ANALYSIS",
+            report_path=report_path,
+        )
+
+        print(
+            f"[+] Unified IMEI report: {report_path}"
+        )
+
+    else:
+        print(
+            f"[INFO] {identifier}: no unified workbook "
+            "was created."
+        )
+
+    timeline = analysis.get(
+        "cross_source_timeline"
+    )
+
+    output_records = (
+        len(
+            timeline
+        )
+        if isinstance(
+            timeline,
+            pd.DataFrame,
+        )
+        else 0
+    )
+
+    run_status = (
+        "FAILED"
+        if overall_status == "ERROR"
+        else "COMPLETED"
+    )
+
+    technical_input_records = sum(
+        source_input_records.values()
+    )
+
+    register_analysis_run(
+        case_id,
+        analysis_type="UNIFIED_IMEI_ANALYSIS",
+        status=run_status,
+        input_records=technical_input_records,
+        output_records=output_records,
+        report_path=str(
+            report_path or ""
+        ),
+        **(
+            {
+                "error_message": str(
+                    analysis.get(
+                        "message",
+                        "",
+                    )
+                )
+            }
+            if run_status == "FAILED"
+            else {}
+        ),
+    )
+
+    log_case_event(
+        case_id,
+        action=(
+            "UNIFIED_IMEI_AUTO_SINGLE_"
+            + run_status
+        ),
+        details={
+            "requested_imei": identifier,
+            "device_family": scope[
+                "device_family"
+            ],
+            "overall_status": overall_status,
+            "output_records": output_records,
+            "report_created": bool(
+                report_path
+            ),
+            **source_input_records,
+        },
+    )
+
+    return {
+        "identifier": identifier,
+        "device_family": scope[
+            "device_family"
+        ],
+        "analysis": analysis,
+        "report": report_path,
+        "source_input_records": (
+            source_input_records
+        ),
+        "output_records": output_records,
+    }
 
 def _execute_auto_detected_imei_cdr(
     case: dict[str, Any],
@@ -1592,6 +2237,144 @@ def _execute_auto_detected_imei_gprs(
         "input_records": inventory[
             "analytical_records"
         ],
+    }
+
+
+def _execute_auto_detected_imei_unified(
+    case: dict[str, Any],
+) -> dict[str, Any]:
+    """Run one unified analysis per detected report-query identifier."""
+
+    case_id = str(
+        case.get(
+            "case_id",
+            "",
+        )
+    ).strip()
+
+    inventory = _load_unified_imei_inventory(
+        case_id
+    )
+
+    identifiers = inventory[
+        "identifiers"
+    ]
+
+    source_counts = inventory[
+        "source_record_counts"
+    ]
+
+    print("\n" + "=" * 78)
+    print("UNIFIED IMEI ROOT AUTO-DETECTION")
+    print("=" * 78)
+
+    print(
+        f"Input Root               : {inventory['folder']}"
+    )
+    print(
+        f"Physical Acquisitions    : {inventory['files_found']}"
+    )
+    print(
+        f"Unique Content Groups    : "
+        f"{inventory['all_content_groups']}"
+    )
+    print(
+        f"Repeated Content Groups  : "
+        f"{inventory['repeated_content_groups']}"
+    )
+    print(
+        f"Cross-Folder Groups      : "
+        f"{inventory['cross_folder_content_groups']}"
+    )
+    print(
+        f"Detected Identifiers     : {len(identifiers)}"
+    )
+    print(
+        "CDR Records             : "
+        f"{source_counts.get('CDR', 0):,}"
+    )
+    print(
+        "IPDR Records            : "
+        f"{source_counts.get('IPDR', 0):,}"
+    )
+    print(
+        "GPRS Sessions           : "
+        f"{source_counts.get('GPRS', 0):,}"
+    )
+
+    for warning in inventory.get(
+        "warnings",
+        [],
+    ):
+        print(
+            f"[WARNING] {warning}"
+        )
+
+    for error in inventory.get(
+        "errors",
+        [],
+    ):
+        print(
+            f"[WARNING] {error}"
+        )
+
+    if not identifiers:
+        print(
+            "[-] No supported unified IMEI query "
+            "identifier was detected."
+        )
+        print(
+            "[INFO] Manual unified entry will be used "
+            "only as fallback."
+        )
+
+        return _execute(
+            case,
+            mode="unified",
+        )
+
+    print(
+        f"[+] {len(identifiers)} report-query "
+        "identifiers detected."
+    )
+    print(
+        "[+] Running one source-separated unified "
+        "analysis per identifier."
+    )
+    print(
+        "[INFO] CDR records, IPDR records and GPRS "
+        "sessions remain separate."
+    )
+
+    single_results = []
+
+    for index, identifier in enumerate(
+        identifiers,
+        start=1,
+    ):
+        print("\n" + "-" * 78)
+        print(
+            f"UNIFIED IMEI ANALYSIS "
+            f"{index}/{len(identifiers)}: {identifier}"
+        )
+        print("-" * 78)
+
+        single_results.append(
+            _run_auto_single_imei_unified(
+                case=case,
+                identifier=identifier,
+                inventory=inventory,
+            )
+        )
+
+    return {
+        "mode": "unified",
+        "automatic_detection": True,
+        "identifiers": identifiers,
+        "inventory": inventory,
+        "single_results": single_results,
+        "common_result": None,
+        "source_record_counts": source_counts,
     }
 
 def _load_cdr_evidence(
@@ -2441,6 +3224,11 @@ def handle_imei_device_workspace(
 
             elif mode == "gprs":
                 _execute_auto_detected_imei_gprs(
+                    case
+                )
+
+            elif mode == "unified":
+                _execute_auto_detected_imei_unified(
                     case
                 )
 
