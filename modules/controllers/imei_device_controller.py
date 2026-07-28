@@ -568,31 +568,57 @@ def _run_auto_single_imei_source(
         )
     ).strip()
 
-    device_manifest = (
-        acquisition_manifest.loc[
+    device_manifest = pd.DataFrame()
+
+    if (
+        isinstance(
+            acquisition_manifest,
+            pd.DataFrame,
+        )
+        and not acquisition_manifest.empty
+        and "Query Identifier"
+        in acquisition_manifest.columns
+    ):
+        manifest_mask = (
             acquisition_manifest[
                 "Query Identifier"
             ]
             .astype(
                 str
             )
+            .str.strip()
             .eq(
                 identifier
             )
-        ].reset_index(
-            drop=True
         )
-        if (
-            isinstance(
-                acquisition_manifest,
-                pd.DataFrame,
+
+        if "Source Type" in acquisition_manifest.columns:
+            manifest_mask = (
+                manifest_mask
+                & acquisition_manifest[
+                    "Source Type"
+                ]
+                .astype(
+                    str
+                )
+                .str.strip()
+                .str.upper()
+                .eq(
+                    source_key.upper()
+                )
             )
-            and not acquisition_manifest.empty
-            and "Query Identifier"
-            in acquisition_manifest.columns
+
+        device_manifest = (
+            acquisition_manifest.loc[
+                manifest_mask
+            ]
+            .reset_index(
+                drop=True
+            )
+            .copy(
+                deep=True
+            )
         )
-        else pd.DataFrame()
-    )
 
     register_target(
         case_id,
@@ -873,6 +899,25 @@ def _run_auto_single_imei_ipdr(
         dataframe=dataframe,
         acquisition_manifest=acquisition_manifest,
     )
+
+
+def _run_auto_single_imei_gprs(
+    *,
+    case: dict[str, Any],
+    identifier: str,
+    dataframe: pd.DataFrame,
+    acquisition_manifest: pd.DataFrame,
+) -> dict[str, Any]:
+    """Run one automatically detected dedicated IMEI GPRS analysis."""
+
+    return _run_auto_single_imei_source(
+        case=case,
+        source_key="gprs",
+        identifier=identifier,
+        dataframe=dataframe,
+        acquisition_manifest=acquisition_manifest,
+    )
+
 def _execute_auto_detected_imei_cdr(
     case: dict[str, Any],
 ) -> dict[str, Any]:
@@ -1398,6 +1443,157 @@ def _execute_auto_detected_imei_ipdr(
             "analytical_records"
         ],
     }
+
+
+def _execute_auto_detected_imei_gprs(
+    case: dict[str, Any],
+) -> dict[str, Any]:
+    """Run automatic single IMEI GPRS analyses."""
+
+    case_id = str(
+        case.get(
+            "case_id",
+            "",
+        )
+    ).strip()
+
+    inventory = _load_dedicated_imei_gprs_inventory(
+        case_id
+    )
+
+    identifiers = inventory[
+        "identifiers"
+    ]
+
+    print("\n" + "=" * 78)
+    print("DEDICATED IMEI GPRS AUTO-DETECTION")
+    print("=" * 78)
+
+    print(
+        f"Input Folder             : {inventory['folder']}"
+    )
+    print(
+        f"Physical Acquisitions    : {inventory['files_found']}"
+    )
+    print(
+        "All Content Groups      : "
+        f"{inventory.get('all_content_groups', 0)}"
+    )
+    print(
+        "Supported GPRS Groups   : "
+        f"{inventory.get('supported_gprs_content_groups', 0)}"
+    )
+    print(
+        "Non-GPRS Acquisitions   : "
+        f"{inventory.get('non_gprs_acquisitions', 0)}"
+    )
+    print(
+        "Duplicate GPRS Copies   : "
+        f"{inventory.get('duplicate_gprs_acquisitions', 0)}"
+    )
+    print(
+        f"Detected Identifiers     : {len(identifiers)}"
+    )
+    print(
+        "Analytical GPRS Sessions: "
+        f"{inventory['analytical_records']:,}"
+    )
+
+    for warning in inventory.get(
+        "warnings",
+        [],
+    ):
+        print(
+            f"[WARNING] {warning}"
+        )
+
+    for error in inventory.get(
+        "errors",
+        [],
+    ):
+        print(
+            f"[WARNING] {error}"
+        )
+
+    if not identifiers:
+        print(
+            "[-] No supported GPRS report-query "
+            "IMEI/IMEISV could be detected."
+        )
+        print(
+            "[INFO] Manual entry will be used only as fallback."
+        )
+
+        return _execute(
+            case,
+            mode="gprs",
+        )
+
+    if len(
+        identifiers
+    ) == 1:
+        print(
+            "[+] One unique GPRS identifier detected. "
+            "Starting automatic single analysis."
+        )
+
+    else:
+        print(
+            f"[+] {len(identifiers)} unique GPRS "
+            "identifiers detected."
+        )
+        print(
+            "[+] Running one single GPRS analysis "
+            "per identifier."
+        )
+        print(
+            "[INFO] Common GPRS analysis is not run "
+            "in this phase."
+        )
+
+    single_results = []
+
+    for index, identifier in enumerate(
+        identifiers,
+        start=1,
+    ):
+        print("\n" + "-" * 78)
+        print(
+            f"SINGLE IMEI GPRS ANALYSIS "
+            f"{index}/{len(identifiers)}: {identifier}"
+        )
+        print("-" * 78)
+
+        result = _run_auto_single_imei_gprs(
+            case=case,
+            identifier=identifier,
+            dataframe=inventory[
+                "device_frames"
+            ].get(
+                identifier,
+                pd.DataFrame(),
+            ),
+            acquisition_manifest=inventory[
+                "acquisition_manifest"
+            ],
+        )
+
+        single_results.append(
+            result
+        )
+
+    return {
+        "mode": "gprs",
+        "automatic_detection": True,
+        "identifiers": identifiers,
+        "inventory": inventory,
+        "single_results": single_results,
+        "common_result": None,
+        "input_records": inventory[
+            "analytical_records"
+        ],
+    }
+
 def _load_cdr_evidence(
     case_id: str,
 ) -> dict[str, dict[str, Any]]:
@@ -2240,6 +2436,11 @@ def handle_imei_device_workspace(
 
             elif mode == "ipdr":
                 _execute_auto_detected_imei_ipdr(
+                    case
+                )
+
+            elif mode == "gprs":
+                _execute_auto_detected_imei_gprs(
                     case
                 )
 
