@@ -683,6 +683,341 @@ def _read_text_cgi_file(path: Path) -> List[pd.DataFrame]:
 
 
 def read_cgi_master_file(file_path) -> List[pd.DataFrame]:
+
+    # Normal multi-sheet CGI workbook fallback.
+    from pathlib import Path as _NormalWorkbookPath
+    import re as _normal_re
+    import pandas as _normal_pd
+
+    _normal_path = _NormalWorkbookPath(
+        file_path
+    ).expanduser().resolve()
+
+    if _normal_path.suffix.lower() in {
+        ".xlsx",
+        ".xls",
+        ".xlsm",
+    }:
+        from .master_importer import (
+            _prepare_cgi_dataframe
+            as _prepare_normal_cgi_dataframe,
+        )
+
+        def _normal_header(value: object) -> str:
+            return _normal_re.sub(
+                r"[^a-z0-9]+",
+                "_",
+                str(value).strip().lower(),
+            ).strip(
+                "_"
+            )
+
+        _normal_frames = []
+
+        try:
+            _normal_workbook = _normal_pd.ExcelFile(
+                _normal_path
+            )
+        except Exception:
+            _normal_workbook = None
+
+        if _normal_workbook is not None:
+            _full_key_headers = {
+                "cgi",
+                "cgi_format",
+                "cgi_dec",
+                "ipdr_format",
+                "ecgi",
+                "cell_global_id",
+                "cell_global_identity",
+            }
+
+            _supporting_headers = {
+                "cid",
+                "ci",
+                "lac",
+                "tac",
+                "latitude",
+                "longitude",
+                "sitename",
+                "site_name",
+                "site_id_additional",
+                "address",
+                "site_address_additional",
+            }
+
+            for _sheet_name in (
+                _normal_workbook.sheet_names
+            ):
+                try:
+                    _preview = _normal_pd.read_excel(
+                        _normal_path,
+                        sheet_name=_sheet_name,
+                        header=None,
+                        dtype=str,
+                        nrows=50,
+                    )
+                except Exception:
+                    continue
+
+                _best_header_row = None
+                _best_header_score = -1
+
+                for (
+                    _row_index,
+                    _row,
+                ) in _preview.iterrows():
+                    _headers = {
+                        _normal_header(
+                            value
+                        )
+                        for value in _row.tolist()
+                        if (
+                            _normal_pd.notna(
+                                value
+                            )
+                            and str(
+                                value
+                            ).strip()
+                        )
+                    }
+
+                    _key_count = len(
+                        _headers.intersection(
+                            _full_key_headers
+                        )
+                    )
+
+                    if _key_count == 0:
+                        continue
+
+                    _support_count = len(
+                        _headers.intersection(
+                            _supporting_headers
+                        )
+                    )
+
+                    _score = (
+                        _key_count * 20
+                        + _support_count
+                    )
+
+                    if _score > _best_header_score:
+                        _best_header_score = _score
+                        _best_header_row = int(
+                            _row_index
+                        )
+
+                if _best_header_row is None:
+                    continue
+
+                try:
+                    _raw_sheet = _normal_pd.read_excel(
+                        _normal_path,
+                        sheet_name=_sheet_name,
+                        header=_best_header_row,
+                        dtype=str,
+                    )
+                except Exception:
+                    continue
+
+                if _raw_sheet.empty:
+                    continue
+
+                _column_lookup = {
+                    _normal_header(
+                        column
+                    ): column
+                    for column in _raw_sheet.columns
+                }
+
+                # CGI_DEC normal workbook aliases.
+                _normal_alias_targets = {
+                    "cgi_dec": "CGI FORMAT",
+                    "bts_name": "Site Name",
+                    "lat_pd": "latitude",
+                    "long_pd": "longitude",
+                    "circle_name": "circle",
+                    "site_address": "Address",
+                    "enodeb_id": "Site ID",
+                }
+
+                _normal_renames = {}
+
+                for (
+                    _source_alias,
+                    _target_column,
+                ) in _normal_alias_targets.items():
+                    if (
+                        _source_alias in _column_lookup
+                        and _target_column
+                        not in _raw_sheet.columns
+                    ):
+                        _normal_renames[
+                            _column_lookup[
+                                _source_alias
+                            ]
+                        ] = _target_column
+
+                if _normal_renames:
+                    _raw_sheet = _raw_sheet.rename(
+                        columns=_normal_renames
+                    )
+
+                    _column_lookup = {
+                        _normal_header(
+                            column
+                        ): column
+                        for column in _raw_sheet.columns
+                    }
+
+                if (
+                    "cgi_format"
+                    not in _column_lookup
+                    and "ipdr_format"
+                    in _column_lookup
+                ):
+                    _raw_sheet = _raw_sheet.rename(
+                        columns={
+                            _column_lookup[
+                                "ipdr_format"
+                            ]: "CGI FORMAT",
+                        }
+                    )
+
+                _source_name = (
+                    f"{_normal_path.name}:"
+                    f"{str(_sheet_name).strip()}"
+                )
+
+                _column_lookup = {
+                    _normal_header(
+                        column
+                    ): column
+                    for column in _raw_sheet.columns
+                }
+
+                _explicit_key_column = next(
+                    (
+                        _column_lookup[
+                            key_name
+                        ]
+                        for key_name in (
+                            "cgi_format",
+                            "ipdr_format",
+                            "cgi",
+                            "ecgi",
+                            "cell_global_id",
+                            "cell_global_identity",
+                        )
+                        if key_name in _column_lookup
+                    ),
+                    None,
+                )
+
+                try:
+                    _prepared_sheet = (
+                        _prepare_normal_cgi_dataframe(
+                            _raw_sheet,
+                            _source_name,
+                        )
+                    )
+                except Exception:
+                    continue
+
+                if (
+                    _prepared_sheet is None
+                    or _prepared_sheet.empty
+                ):
+                    continue
+
+                # Filter rows using the explicit full CGI key column.
+                if (
+                    _explicit_key_column is not None
+                    and "cgi" in _prepared_sheet.columns
+                ):
+                    _explicit_key_series = (
+                        _raw_sheet[
+                            _explicit_key_column
+                        ]
+                        .astype(
+                            "string"
+                        )
+                        .fillna(
+                            ""
+                        )
+                        .str.strip()
+                        .str.replace(
+                            r"\.0$",
+                            "",
+                            regex=True,
+                        )
+                        .str.replace(
+                            r"[^0-9A-Za-z]+",
+                            "-",
+                            regex=True,
+                        )
+                        .str.strip(
+                            "-"
+                        )
+                        .str.upper()
+                    )
+
+                    _explicit_keys = set(
+                        _explicit_key_series.loc[
+                            _explicit_key_series.ne(
+                                ""
+                            )
+                        ].tolist()
+                    )
+
+                    _prepared_key_series = (
+                        _prepared_sheet[
+                            "cgi"
+                        ]
+                        .astype(
+                            "string"
+                        )
+                        .fillna(
+                            ""
+                        )
+                        .str.strip()
+                        .str.replace(
+                            r"\.0$",
+                            "",
+                            regex=True,
+                        )
+                        .str.replace(
+                            r"[^0-9A-Za-z]+",
+                            "-",
+                            regex=True,
+                        )
+                        .str.strip(
+                            "-"
+                        )
+                        .str.upper()
+                    )
+
+                    _prepared_sheet = (
+                        _prepared_sheet.loc[
+                            _prepared_key_series.isin(
+                                _explicit_keys
+                            )
+                        ]
+                        .copy()
+                        .reset_index(
+                            drop=True
+                        )
+                    )
+
+                if not _prepared_sheet.empty:
+                    _normal_frames.append(
+                        _prepared_sheet
+                    )
+
+            if _normal_frames:
+                return _normal_frames
+
     path = Path(file_path)
     suffix = path.suffix.lower()
 

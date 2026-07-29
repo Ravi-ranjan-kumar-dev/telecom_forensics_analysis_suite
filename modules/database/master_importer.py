@@ -129,6 +129,7 @@ def _has_known_master_columns(dataframe: pd.DataFrame) -> bool:
         "cell_global_id",
         "cell_global_identity",
         "ecgi",
+        "cgi_format",
 
         # Your CGI master headers
         "cgi_code_in_order_of_cmcc_mnc_lac_ci",
@@ -361,6 +362,9 @@ def _prepare_cgi_dataframe(raw: pd.DataFrame, source_file: str) -> pd.DataFrame:
         [
             "cgi",
             "CGI",
+            "CGI FORMAT",
+            "cgi format",
+            "cgi_format",
             "CGI (Code in Order of CMCC/MNC/LAC/CI)",
             "CGI with GCI (MCC-MNC-TAC-GCI)",
             "CGI (MCC-MNC-CID)",
@@ -426,6 +430,8 @@ def _prepare_cgi_dataframe(raw: pd.DataFrame, source_file: str) -> pd.DataFrame:
         "site_name": [
             "site_name",
             "Site Name",
+            "sitename",
+            "SiteName",
             "seg_name",
             "Seg Name",
         ],
@@ -505,6 +511,8 @@ def _prepare_cgi_dataframe(raw: pd.DataFrame, source_file: str) -> pd.DataFrame:
         "site_id": [
             "site_id",
             "Site ID",
+            "Site ID(Additional)",
+            "Site ID (Additional)",
         ],
         "gnb_id": [
             "gnb_id",
