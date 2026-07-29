@@ -20,6 +20,8 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from gui.pages.cdr_page import CdrPage
+
 
 @dataclass(frozen=True)
 class NavigationItem:
@@ -564,10 +566,15 @@ class MainWindow(QMainWindow):
         )
 
         for item in NAVIGATION_ITEMS:
-            self._page_stack.addWidget(
-                ModulePage(
+            page = (
+                CdrPage()
+                if item.key == "cdr"
+                else ModulePage(
                     item
                 )
+            )
+            self._page_stack.addWidget(
+                page
             )
 
         layout.addLayout(

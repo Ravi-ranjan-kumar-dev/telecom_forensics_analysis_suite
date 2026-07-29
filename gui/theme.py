@@ -152,4 +152,96 @@ QToolTip {
     color: #f8fafc;
     border: 1px solid #475569;
 }
+QLabel#fieldLabel {
+    color: #cbd5e1;
+    font-size: 11px;
+    font-weight: 700;
+}
+
+QLabel#statusText {
+    color: #93c5fd;
+    font-size: 12px;
+}
+
+QLineEdit#inputControl,
+QComboBox#inputControl {
+    background-color: #0b1220;
+    color: #f8fafc;
+    border: 1px solid #334155;
+    border-radius: 8px;
+    padding: 10px 12px;
+    min-height: 20px;
+}
+
+QLineEdit#inputControl:focus,
+QComboBox#inputControl:focus {
+    border-color: #3b82f6;
+}
+
+QComboBox#inputControl QAbstractItemView {
+    background-color: #111827;
+    color: #f8fafc;
+    selection-background-color: #1d4ed8;
+}
+
+QPushButton#primaryButton {
+    background-color: #2563eb;
+    color: #ffffff;
+    border: 0;
+    border-radius: 8px;
+    padding: 11px 18px;
+    font-weight: 700;
+}
+
+QPushButton#primaryButton:hover {
+    background-color: #1d4ed8;
+}
+
+QPushButton#primaryButton:disabled {
+    background-color: #334155;
+    color: #94a3b8;
+}
+
+QPushButton#secondaryButton {
+    background-color: #172033;
+    color: #dbeafe;
+    border: 1px solid #334155;
+    border-radius: 8px;
+    padding: 10px 16px;
+    font-weight: 600;
+}
+
+QPushButton#secondaryButton:hover {
+    background-color: #1e293b;
+    border-color: #475569;
+}
+
+QPushButton#secondaryButton:disabled {
+    color: #64748b;
+    background-color: #111827;
+}
+
+QPlainTextEdit#analysisLog {
+    background-color: #08101d;
+    color: #cbd5e1;
+    border: 1px solid #263449;
+    border-radius: 8px;
+    padding: 10px;
+    font-family: "DejaVu Sans Mono";
+    font-size: 11px;
+}
+
+QProgressBar#analysisProgress {
+    background-color: #0b1220;
+    border: 1px solid #334155;
+    border-radius: 6px;
+    min-height: 10px;
+    max-height: 10px;
+    text-align: center;
+}
+
+QProgressBar#analysisProgress::chunk {
+    background-color: #2563eb;
+    border-radius: 5px;
+}
 """

@@ -34,16 +34,25 @@ def auto_detect_single_target(folder: str | Path, df: pd.DataFrame) -> str | Non
     return result.target
 
 
-def run_single():
-    folder = get_data_path("cdr", "single")
-    print(f"\n[+] Loading Single CDR from: {folder}")
-    df = get_single_file(folder)
+def run_single(
+    folder: str | Path | None = None,
+):
+    input_folder = (
+        Path(folder).expanduser().resolve()
+        if folder is not None
+        else Path(get_data_path("cdr", "single"))
+    )
+    print(f"\n[+] Loading Single CDR from: {input_folder}")
+    df = get_single_file(input_folder)
 
     if df is None or not isinstance(df, pd.DataFrame) or df.empty:
         print("[-] Controller received Empty or None DataFrame.")
         return None, None
 
-    target = auto_detect_single_target(folder, df)
+    target = auto_detect_single_target(
+        input_folder,
+        df,
+    )
     if not target:
         print("[-] Target number could not be auto-detected.")
         return df, None
@@ -69,10 +78,16 @@ def _normalise_loaded_items(raw_result: Any) -> list[dict[str, Any]]:
     return []
 
 
-def run_multiple() -> dict[str, dict[str, Any]]:
-    folder = get_data_path("cdr", "multiple")
-    print(f"\n[+] Loading Multiple CDRs from: {folder}")
-    raw_result = load_multiple_cdr(folder)
+def run_multiple(
+    folder: str | Path | None = None,
+) -> dict[str, dict[str, Any]]:
+    input_folder = (
+        Path(folder).expanduser().resolve()
+        if folder is not None
+        else Path(get_data_path("cdr", "multiple"))
+    )
+    print(f"\n[+] Loading Multiple CDRs from: {input_folder}")
+    raw_result = load_multiple_cdr(input_folder)
     items = _normalise_loaded_items(raw_result)
 
     grouped: dict[str, dict[str, Any]] = {}

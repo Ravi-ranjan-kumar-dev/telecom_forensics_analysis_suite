@@ -75,6 +75,12 @@ def _direct_analysis_workspace() -> dict[str, Any]:
     return case
 
 
+def get_direct_analysis_workspace() -> dict[str, Any]:
+    """Return the active direct-analysis workspace."""
+
+    return _direct_analysis_workspace()
+
+
 def print_error(title: str, error: Exception, trace: str | None = None) -> None:
     print(f"\n[-] {title}")
     print(f"    Error Type : {type(error).__name__}")
@@ -317,7 +323,11 @@ def _normalise_single_result(
     return None, None
 
 
-def handle_single_cdr(case: dict[str, Any]) -> dict[str, Any] | None:
+def handle_single_cdr(
+    case: dict[str, Any],
+    *,
+    input_folder: str | Path | None = None,
+) -> dict[str, Any] | None:
     run_single = safe_import(
         "modules.controllers.cdr_controller",
         "run_single",
@@ -333,7 +343,14 @@ def handle_single_cdr(case: dict[str, Any]) -> dict[str, Any] | None:
     )
 
     try:
-        df, target = _normalise_single_result(run_single())
+        controller_result = (
+            run_single(input_folder)
+            if input_folder is not None
+            else run_single()
+        )
+        df, target = _normalise_single_result(
+            controller_result
+        )
 
         if not validate_dataframe(df, "Single CDR") or not target:
             raise ValueError("Valid Single CDR target/dataframe nahi mila.")
@@ -422,7 +439,11 @@ def _normalise_multiple(value: Any) -> dict[str, dict[str, Any]]:
     return output
 
 
-def handle_multiple_cdr(case: dict[str, Any]) -> dict[str, Any] | None:
+def handle_multiple_cdr(
+    case: dict[str, Any],
+    *,
+    input_folder: str | Path | None = None,
+) -> dict[str, Any] | None:
     run_multiple = safe_import(
         "modules.controllers.cdr_controller",
         "run_multiple",
@@ -438,7 +459,14 @@ def handle_multiple_cdr(case: dict[str, Any]) -> dict[str, Any] | None:
     )
 
     try:
-        loaded_cdrs = _normalise_multiple(run_multiple())
+        controller_result = (
+            run_multiple(input_folder)
+            if input_folder is not None
+            else run_multiple()
+        )
+        loaded_cdrs = _normalise_multiple(
+            controller_result
+        )
 
         if not loaded_cdrs:
             raise ValueError("Koi valid Multiple CDR target load nahi hua.")
