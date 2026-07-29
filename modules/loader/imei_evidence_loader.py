@@ -85,6 +85,26 @@ IMEI_CDR_CANONICAL_COLUMNS = (
 )
 
 
+def _parse_imei_gprs_session_start(
+    date_value: pd.Series,
+    time_value: pd.Series,
+) -> pd.Series:
+    """Parse mixed operator GPRS date-time values safely."""
+
+    combined_time = (
+        date_value.astype("string").fillna("")
+        + " "
+        + time_value.astype("string").fillna("")
+    ).str.strip()
+
+    return pd.to_datetime(
+        combined_time,
+        format="mixed",
+        errors="coerce",
+        dayfirst=True,
+    )
+
+
 def _read_text(
     path: Path,
 ) -> str:
@@ -2845,16 +2865,9 @@ def _normalize_vil_imei_gprs_rows(
         ),
     )
 
-    combined_time = (
-        date_value
-        + " "
-        + time_value
-    ).str.strip()
-
-    session_start = pd.to_datetime(
-        combined_time,
-        errors="coerce",
-        dayfirst=True,
+    session_start = _parse_imei_gprs_session_start(
+        date_value,
+        time_value,
     )
 
     duration = pd.to_numeric(
