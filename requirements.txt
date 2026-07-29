@@ -5,3 +5,4 @@ openpyxl>=3.1,<4
 duckdb
 pyarrow
 pyxlsb>=1.0.10
+pytz>=2024.1

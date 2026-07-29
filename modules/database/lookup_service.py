@@ -110,6 +110,80 @@ def clean_display_address(
     )
 
 
+_VERIFIED_SDR_OPERATOR_NAMES = {
+    "AIRTEL",
+    "BHARTI AIRTEL",
+    "JIO",
+    "RELIANCE JIO",
+    "VODAFONE",
+    "VODAFONE IDEA",
+    "IDEA",
+    "VI",
+    "BSNL",
+    "MTNL",
+    "AIRCEL",
+    "TATA DOCOMO",
+    "TATA TELESERVICES",
+    "RELIANCE COMMUNICATIONS",
+    "UNINOR",
+    "TELENOR",
+}
+
+
+def _verified_sdr_operator(
+    value: object,
+) -> str:
+    """Return a verified telecom operator name."""
+
+    text = _clean_text(
+        value
+    )
+
+    if not text:
+        return ""
+
+    cleaned = text.replace(
+        " - Copy",
+        "",
+    ).strip()
+
+    normalized = " ".join(
+        cleaned.upper()
+        .replace(
+            "_",
+            " ",
+        )
+        .replace(
+            "-",
+            " ",
+        )
+        .split()
+    )
+
+    if normalized in _VERIFIED_SDR_OPERATOR_NAMES:
+        return cleaned
+
+    strong_operator_tokens = (
+        "AIRTEL",
+        "JIO",
+        "VODAFONE",
+        "BSNL",
+        "MTNL",
+        "AIRCEL",
+        "DOCOMO",
+        "TELENOR",
+        "UNINOR",
+    )
+
+    if any(
+        token in normalized
+        for token in strong_operator_tokens
+    ):
+        return cleaned
+
+    return ""
+
+
 def lookup_sdr_profile(
     number: object,
 ) -> dict[str, Any]:
@@ -272,6 +346,12 @@ def lookup_sdr_profile(
                 ),
                 # Some SDR sources contain a dataset/source category
                 # in this field instead of a verified telecom operator.
+                "operator": _verified_sdr_operator(_clean_text(
+                    row.get(
+                        "operator",
+                        "",
+                    )
+                )),
                 "operator_or_source_category": _clean_text(
                     row.get(
                         "operator",
