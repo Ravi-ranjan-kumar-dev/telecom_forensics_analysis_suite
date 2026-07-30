@@ -142,6 +142,82 @@ def collect_cdr_report_paths(
     )
 
 
+def collect_cdr_map_paths(
+    report_paths: list[str] | tuple[str, ...],
+) -> list[str]:
+    """Collect existing contact map sidecars for generated reports."""
+
+    from modules.reporting.cdr_contact_map import (
+        contact_map_path,
+    )
+
+    paths = []
+
+    for report_path in report_paths:
+        text = str(
+            report_path
+            or ""
+        ).strip()
+
+        if not text:
+            continue
+
+        candidate = contact_map_path(
+            text
+        )
+
+        if candidate.is_file():
+            paths.append(
+                str(
+                    candidate
+                )
+            )
+
+    return list(
+        dict.fromkeys(
+            paths
+        )
+    )
+
+
+def collect_cdr_route_paths(
+    report_paths: list[str] | tuple[str, ...],
+) -> list[str]:
+    """Collect existing movement-route sidecars for generated reports."""
+
+    from modules.reporting.cdr_movement_route import (
+        movement_route_path,
+    )
+
+    paths = []
+
+    for report_path in report_paths:
+        text = str(
+            report_path
+            or ""
+        ).strip()
+
+        if not text:
+            continue
+
+        candidate = movement_route_path(
+            text
+        )
+
+        if candidate.is_file():
+            paths.append(
+                str(
+                    candidate
+                )
+            )
+
+    return list(
+        dict.fromkeys(
+            paths
+        )
+    )
+
+
 class CdrWorker(QObject):
     """Run one CDR workflow outside the GUI thread."""
 
@@ -230,6 +306,12 @@ class CdrWorker(QObject):
                 self.mode,
                 result,
             )
+            map_paths = collect_cdr_map_paths(
+                report_paths
+            )
+            route_paths = collect_cdr_route_paths(
+                report_paths
+            )
 
             self.completed.emit(
                 {
@@ -238,6 +320,8 @@ class CdrWorker(QObject):
                         self.input_folder
                     ),
                     "report_paths": report_paths,
+                    "map_paths": map_paths,
+                    "route_paths": route_paths,
                     "result": result,
                 }
             )

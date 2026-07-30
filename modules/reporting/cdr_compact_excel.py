@@ -17,6 +17,8 @@ from openpyxl.utils import get_column_letter
 
 from . import single_cdr_excel as detailed
 from .excel_security import excel_safe_value
+from .cdr_contact_map import generate_cdr_contact_map
+from .cdr_movement_route import generate_cdr_movement_route
 from .report_paths import get_single_report_path
 
 from modules.analysis.cdr.contact_report import (
@@ -2562,6 +2564,16 @@ def generate_single_cdr_compact_report(
             cgi_index=cgi_location_index,
         )
 
+        movement_route = _enrich_event_table(
+            _as_frame(
+                results.get(
+                    "tower_movement"
+                )
+            ),
+            sdr_index=sdr_contact_index,
+            cgi_index=cgi_location_index,
+        )
+
         workbook = Workbook()
         workbook.remove(
             workbook.active
@@ -3170,10 +3182,65 @@ def generate_single_cdr_compact_report(
             report_path
         )
 
+        map_path = None
+        route_path = None
+
+        try:
+            map_path = generate_cdr_contact_map(
+                full_contact_summary,
+                target=str(
+                    target
+                ),
+                report_path=report_path,
+            )
+        except Exception as map_error:
+            print(
+                "[!] Contact tower map generation skipped:",
+                type(
+                    map_error
+                ).__name__,
+                "|",
+                str(
+                    map_error
+                ),
+            )
+
+        try:
+            route_path = generate_cdr_movement_route(
+                movement_route,
+                target=str(
+                    target
+                ),
+                report_path=report_path,
+            )
+        except Exception as route_error:
+            print(
+                "[!] Movement route map generation skipped:",
+                type(
+                    route_error
+                ).__name__,
+                "|",
+                str(
+                    route_error
+                ),
+            )
+
         print(
             "[+] Compact Single CDR report generated:",
             report_path,
         )
+
+        if map_path is not None:
+            print(
+                "[+] CDR contact tower map generated:",
+                map_path,
+            )
+
+        if route_path is not None:
+            print(
+                "[+] CDR movement route map generated:",
+                route_path,
+            )
         print(
             "[+] Investigator workbook sheets:",
             len(

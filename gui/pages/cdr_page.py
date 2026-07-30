@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import re
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -13,6 +15,7 @@ from PySide6.QtWidgets import (
     QFrame,
     QHBoxLayout,
     QLabel,
+    QInputDialog,
     QLineEdit,
     QMessageBox,
     QPlainTextEdit,
@@ -22,8 +25,102 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from gui.widgets.contact_map_dialog import ContactMapDialog
 from gui.workers.cdr_worker import CdrWorker
 from modules.core.paths import PROJECT_ROOT
+
+
+_CONTACT_MAP_NAME_PATTERN = re.compile(
+    r"^(?P<target>\d{10,15})_cdr_report_"
+    r"(?P<created>\d{8}T\d{6})(?:_|$)"
+)
+
+
+def contact_map_choices(
+    map_paths: list[str] | tuple[str, ...],
+) -> list[tuple[str, str]]:
+    """Return unique investigator-friendly labels and map paths."""
+
+    choices: list[tuple[str, str]] = []
+    label_counts: dict[str, int] = {}
+
+    for value in map_paths:
+        path_text = str(
+            value or ""
+        ).strip()
+
+        if not path_text:
+            continue
+
+        stem = Path(
+            path_text
+        ).stem
+
+        if stem.endswith(
+            "_contact_map"
+        ):
+            stem = stem[
+                : -len(
+                    "_contact_map"
+                )
+            ]
+
+        match = _CONTACT_MAP_NAME_PATTERN.match(
+            stem
+        )
+
+        if match:
+            target = match.group(
+                "target"
+            )
+            created_text = match.group(
+                "created"
+            )
+
+            try:
+                created = datetime.strptime(
+                    created_text,
+                    "%Y%m%dT%H%M%S",
+                )
+                label = (
+                    f"Target {target} — "
+                    f"{created:%d-%m-%Y %H:%M:%S}"
+                )
+            except ValueError:
+                label = f"Target {target}"
+        else:
+            clean_name = stem.replace(
+                "_",
+                " ",
+            ).strip()
+            label = clean_name or "Contact Map"
+
+        label_counts[
+            label
+        ] = (
+            label_counts.get(
+                label,
+                0,
+            )
+            + 1
+        )
+        count = label_counts[
+            label
+        ]
+
+        if count > 1:
+            label = (
+                f"{label} ({count})"
+            )
+
+        choices.append(
+            (
+                label,
+                path_text,
+            )
+        )
+
+    return choices
 
 
 class CdrPage(QFrame):
@@ -46,6 +143,8 @@ class CdrPage(QFrame):
             "multiple": "",
         }
         self._report_paths: list[str] = []
+        self._map_paths: list[str] = []
+        self._route_paths: list[str] = []
         self._thread: QThread | None = None
         self._worker: CdrWorker | None = None
 
@@ -105,6 +204,26 @@ class CdrPage(QFrame):
             False
         )
 
+        self._open_map_button = QPushButton(
+            "Open Contact Map"
+        )
+        self._open_map_button.setObjectName(
+            "secondaryButton"
+        )
+        self._open_map_button.setEnabled(
+            False
+        )
+
+        self._open_route_button = QPushButton(
+            "Open Movement Route"
+        )
+        self._open_route_button.setObjectName(
+            "secondaryButton"
+        )
+        self._open_route_button.setEnabled(
+            False
+        )
+
         self._progress = QProgressBar()
         self._progress.setObjectName(
             "analysisProgress"
@@ -155,6 +274,12 @@ class CdrPage(QFrame):
         self._open_report_button.clicked.connect(
             self._open_latest_report
         )
+        self._open_map_button.clicked.connect(
+            self._open_contact_map
+        )
+        self._open_route_button.clicked.connect(
+            self._open_movement_route
+        )
 
         self._mode_changed()
 
@@ -196,6 +321,26 @@ class CdrPage(QFrame):
 
         return tuple(
             self._report_paths
+        )
+
+    @property
+    def map_paths(
+        self,
+    ) -> tuple[str, ...]:
+        """Return generated contact map paths."""
+
+        return tuple(
+            self._map_paths
+        )
+
+    @property
+    def route_paths(
+        self,
+    ) -> tuple[str, ...]:
+        """Return generated movement-route paths."""
+
+        return tuple(
+            self._route_paths
         )
 
     def _build_layout(
@@ -306,6 +451,12 @@ class CdrPage(QFrame):
         )
         action_row.addWidget(
             self._open_report_button
+        )
+        action_row.addWidget(
+            self._open_map_button
+        )
+        action_row.addWidget(
+            self._open_route_button
         )
         action_row.addStretch()
 
@@ -497,7 +648,15 @@ class CdrPage(QFrame):
             )
 
         self._report_paths = []
+        self._map_paths = []
+        self._route_paths = []
         self._open_report_button.setEnabled(
+            False
+        )
+        self._open_map_button.setEnabled(
+            False
+        )
+        self._open_route_button.setEnabled(
             False
         )
         self._status_label.setText(
@@ -601,7 +760,15 @@ class CdrPage(QFrame):
             return
 
         self._report_paths = []
+        self._map_paths = []
+        self._route_paths = []
         self._open_report_button.setEnabled(
+            False
+        )
+        self._open_map_button.setEnabled(
+            False
+        )
+        self._open_route_button.setEnabled(
             False
         )
         self._log.clear()
@@ -719,9 +886,47 @@ class CdrPage(QFrame):
             ).strip()
         ]
 
+        map_paths = result.get(
+            "map_paths",
+            [],
+        )
+        self._map_paths = [
+            str(
+                path
+            )
+            for path in map_paths
+            if str(
+                path
+            ).strip()
+        ]
+
+        route_paths = result.get(
+            "route_paths",
+            [],
+        )
+        self._route_paths = [
+            str(
+                path
+            )
+            for path in route_paths
+            if str(
+                path
+            ).strip()
+        ]
+
         self._open_report_button.setEnabled(
             bool(
                 self._report_paths
+            )
+        )
+        self._open_map_button.setEnabled(
+            bool(
+                self._map_paths
+            )
+        )
+        self._open_route_button.setEnabled(
+            bool(
+                self._route_paths
             )
         )
 
@@ -737,6 +942,16 @@ class CdrPage(QFrame):
             for report_path in self._report_paths:
                 self._append_log(
                     f"[+] Report: {report_path}"
+                )
+
+            for map_path in self._map_paths:
+                self._append_log(
+                    f"[+] Contact map: {map_path}"
+                )
+
+            for route_path in self._route_paths:
+                self._append_log(
+                    f"[+] Movement route: {route_path}"
                 )
         else:
             self._status_label.setText(
@@ -769,6 +984,128 @@ class CdrPage(QFrame):
         self._set_running_state(
             False
         )
+
+    def _open_contact_map(
+        self,
+    ) -> None:
+        if not self._map_paths:
+            return
+
+        map_path_text = self._map_paths[
+            0
+        ]
+
+        if len(
+            self._map_paths
+        ) > 1:
+            choices = contact_map_choices(
+                self._map_paths
+            )
+            labels = [
+                label
+                for label, _ in choices
+            ]
+            selected, accepted = QInputDialog.getItem(
+                self,
+                "Select Contact Map",
+                "Choose the target map to review:",
+                labels,
+                0,
+                False,
+            )
+
+            if not accepted:
+                return
+
+            map_path_text = choices[
+                labels.index(
+                    selected
+                )
+            ][
+                1
+            ]
+
+        map_path = Path(
+            map_path_text
+        )
+
+        if not map_path.is_file():
+            QMessageBox.warning(
+                self,
+                "Map Not Found",
+                f"The contact map file is not available:\n{map_path}",
+            )
+            return
+
+        dialog = ContactMapDialog(
+            map_path,
+            self,
+        )
+        dialog.exec()
+
+    def _open_movement_route(
+        self,
+    ) -> None:
+        if not self._route_paths:
+            return
+
+        route_path_text = self._route_paths[
+            0
+        ]
+
+        if len(
+            self._route_paths
+        ) > 1:
+            choices = contact_map_choices(
+                self._route_paths
+            )
+            labels = [
+                label
+                for label, _ in choices
+            ]
+            selected, accepted = QInputDialog.getItem(
+                self,
+                "Select Movement Route",
+                "Choose the target route to review:",
+                labels,
+                0,
+                False,
+            )
+
+            if not accepted:
+                return
+
+            route_path_text = choices[
+                labels.index(
+                    selected
+                )
+            ][
+                1
+            ]
+
+        route_path = Path(
+            route_path_text
+        )
+
+        if not route_path.is_file():
+            QMessageBox.warning(
+                self,
+                "Route Not Found",
+                f"The movement route file is not available:\n{route_path}",
+            )
+            return
+
+        dialog = ContactMapDialog(
+            route_path,
+            self,
+            window_title="CDR Target Movement Route",
+            heading="Target Movement Route",
+            caution=(
+                "The line connects serving towers in chronological order. "
+                "It does not prove the exact road or exact handset location."
+            ),
+        )
+        dialog.exec()
 
     def _open_latest_report(
         self,
