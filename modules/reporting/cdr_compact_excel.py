@@ -19,10 +19,19 @@ from . import single_cdr_excel as detailed
 from .excel_security import excel_safe_value
 from .report_paths import get_single_report_path
 
+from modules.analysis.cdr.contact_report import (
+    build_full_contact_summary,
+)
+from modules.analysis.cdr.device_quality import (
+    device_change_review,
+    device_summary,
+    split_change_review,
+)
+
 
 SINGLE_CDR_COMPACT_SHEETS = (
     "1. Executive Summary",
-    "2. Priority Contacts",
+    "2. Full Contact Summary",
     "3. Communication Intel",
     "4. Network Intelligence",
     "5. Location & Roaming",
@@ -50,11 +59,14 @@ TECHNICAL_COLUMNS = {
 }
 
 SECTION_COLUMN_PROFILES = {
-    "CC SUMMARY": (
+    "FULL CONTACT SUMMARY (CC SUMMARY)": (
         "Other Party",
         "Name",
         "Father Name",
         "SDR Address",
+        "SDR Operator",
+        "SDR Circle",
+        "SDR Lookup Status",
         "Total Calls",
         "Total Duration",
         "Avg. Call Duration",
@@ -64,7 +76,20 @@ SECTION_COLUMN_PROFILES = {
         "In SMS Count",
         "First Call Time",
         "Last Call Time",
-        "SDR Lookup Status",
+        "Unique Target Towers",
+        "Most Used Target CGI",
+        "Most Used CGI Events",
+        "Most Used CGI Lookup Status",
+        "Most Used Site Name",
+        "Most Used Tower Address",
+        "Most Used Latitude",
+        "Most Used Longitude",
+        "Last Interaction CGI",
+        "Last Interaction CGI Lookup Status",
+        "Last Interaction Site Name",
+        "Last Interaction Tower Address",
+        "Last Interaction Latitude",
+        "Last Interaction Longitude",
     ),
     "TOP HUMAN CONTACTS": (
         "Contact",
@@ -297,34 +322,49 @@ SECTION_COLUMN_PROFILES = {
         "To Tower Address",
         "Occurrences",
     ),
-    "IMEI SUMMARY": (
-        "imei",
+    "DEVICE SUMMARY": (
+        "Device Key",
         "IMEI",
+        "Observed IMEI Values",
+        "Valid IMEI",
+        "Invalid IMEI Values",
+        "IMEI Status",
         "First Seen",
         "Last Seen",
         "Total Events",
         "Unique Human Contacts",
         "Unique Valid Towers",
         "Total Duration (Sec)",
-    ),
-    "IMEI INTELLIGENCE": (
-        "IMEI",
-        "First Seen",
-        "Last Seen",
-        "Total Events",
-        "Unique Human Contacts",
-        "Unique Valid Towers",
         "Most Used Valid Tower",
         "Most Human Contacted",
     ),
-    "SIM OR DEVICE CHANGES": (
+    "CONFIRMED DEVICE OR SIM CHANGES": (
         "Date",
         "Time",
+        "Change Type",
         "Old IMEI",
         "New IMEI",
+        "Old Device Key",
+        "New Device Key",
+        "Old IMSI",
+        "New IMSI",
         "Tower",
         "Contact",
         "Event",
+        "Interpretation",
+    ),
+    "OBSERVED IDENTIFIER VARIATIONS": (
+        "Date",
+        "Time",
+        "Change Type",
+        "Old IMEI",
+        "New IMEI",
+        "Old Device Key",
+        "New Device Key",
+        "Tower",
+        "Contact",
+        "Event",
+        "Interpretation",
     ),
     "BEHAVIORAL OBSERVATIONS": (
         "Indicator",
@@ -336,7 +376,40 @@ SECTION_COLUMN_PROFILES = {
         "Count",
         "Remark",
     ),
+    "HOURLY ACTIVITY": (
+        "Time Window",
+        "Total Events",
+        "Activity Share (%)",
+        "Activity Rank",
+    ),
+    "WEEKLY ACTIVITY": (
+        "Year-Week",
+        "Date Range",
+        "Total Events",
+        "Active Days",
+        "Average Events per Active Day",
+    ),
 }
+
+# Backward-compatible profile alias. The workbook writes only the
+# full contact section, so this does not create duplicate report content.
+SECTION_COLUMN_PROFILES["CC SUMMARY"] = (
+    "Other Party",
+    "Name",
+    "Father Name",
+    "SDR Address",
+    "Total Calls",
+    "Total Duration",
+    "Avg. Call Duration",
+    "Out Count",
+    "IN Count",
+    "Out SMS Count",
+    "In SMS Count",
+    "First Call Time",
+    "Last Call Time",
+    "SDR Lookup Status",
+)
+
 
 THIN_BORDER = Border(
     left=Side(style="thin", color="D9E1F2"),
@@ -1682,6 +1755,11 @@ def _write_section(
             )
         )
 
+    frame = _ensure_full_contact_profile_columns(
+        frame,
+        title,
+        selected_columns,
+    )
     frame = _preferred_columns(
         frame,
         selected_columns,
@@ -1743,8 +1821,8 @@ def _write_section(
     ):
         note_parts.append(
             f"Showing first {max_rows:,} of "
-            f"{total_rows:,} rows. Full detail remains "
-            "available in the detailed report or source evidence."
+            f"{total_rows:,} rows. Review the source evidence "
+            "for any rows not displayed in this compact section."
         )
 
     if note_parts:
@@ -2336,6 +2414,10 @@ def generate_single_cdr_compact_report(
         cc_summary = detailed._contact_summary(
             data
         )
+        full_contact_summary = build_full_contact_summary(
+            data,
+            cc_summary,
+        )
         cell_summary = detailed._cell_summary(
             data
         )
@@ -2549,7 +2631,7 @@ def generate_single_cdr_compact_report(
             worksheet
         )
 
-        # 2. Priority Contacts
+        # 2. Full Contact Summary
         worksheet = workbook.create_sheet(
             SINGLE_CDR_COMPACT_SHEETS[
                 1
@@ -2557,68 +2639,21 @@ def generate_single_cdr_compact_report(
         )
         row = _write_sheet_title(
             worksheet,
-            title="Priority Contact Review",
+            title="Complete Contact and Tower Review",
             metadata=report_metadata,
         )
         row = _write_section(
             worksheet,
             row,
-            title="CC SUMMARY",
-            frame=cc_summary,
-            max_rows=50,
+            title="FULL CONTACT SUMMARY (CC SUMMARY)",
+            frame=full_contact_summary,
+            max_rows=None,
             guidance=(
-                "Review frequent contacts together with duration, "
-                "direction and SDR identity. Frequency alone is not a conclusion."
+                "This table contains the complete human/mobile contact "
+                "summary. Tower fields describe the target handset's "
+                "serving network location during communication; they do "
+                "not establish the contact person's exact location."
             ),
-        )
-        row = _write_section(
-            worksheet,
-            row,
-            title="TOP HUMAN CONTACTS",
-            frame=_as_frame(
-                results.get(
-                    "top_contacts"
-                )
-            ),
-            max_rows=30,
-            display_context="16. Top Human Contacts",
-        )
-        row = _write_section(
-            worksheet,
-            row,
-            title="CONTACT RANKING",
-            frame=_as_frame(
-                results.get(
-                    "contact_ranking"
-                )
-            ),
-            max_rows=30,
-            display_context="20. Contact Ranking",
-        )
-        row = _write_section(
-            worksheet,
-            row,
-            title="TOP CONTACT DETAILS",
-            frame=_as_frame(
-                results.get(
-                    "top_contact_details"
-                )
-            ),
-            max_rows=30,
-        )
-        row = _write_section(
-            worksheet,
-            row,
-            title="OUTGOING VOICE CALLS",
-            frame=outgoing_voice,
-            max_rows=50,
-        )
-        row = _write_section(
-            worksheet,
-            row,
-            title="INCOMING VOICE CALLS",
-            frame=incoming_voice,
-            max_rows=50,
         )
         _finish_sheet(
             worksheet
@@ -2889,34 +2924,66 @@ def generate_single_cdr_compact_report(
             title="Device and SIM Intelligence",
             metadata=report_metadata,
         )
+
+        device_table = _as_frame(
+            results.get(
+                "imei_intelligence"
+            )
+        )
+
+        if device_table.empty:
+            device_table = device_summary(
+                data
+            )
+
+        change_table = _as_frame(
+            results.get(
+                "sim_change"
+            )
+        )
+
+        if change_table.empty:
+            change_table = device_change_review(
+                data
+            )
+
+        confirmed_changes, identifier_variants = split_change_review(
+            change_table
+        )
+
         row = _write_section(
             worksheet,
             row,
-            title="IMEI SUMMARY",
-            frame=imei_summary,
-            max_rows=30,
+            title="DEVICE SUMMARY",
+            frame=device_table,
+            max_rows=None,
+            guidance=(
+                "Valid and invalid observed IMEI values are preserved. "
+                "Values sharing one 14-digit device key are grouped as "
+                "one probable device group."
+            ),
         )
         row = _write_section(
             worksheet,
             row,
-            title="IMEI INTELLIGENCE",
-            frame=_as_frame(
-                results.get(
-                    "imei_intelligence"
-                )
+            title="CONFIRMED DEVICE OR SIM CHANGES",
+            frame=confirmed_changes,
+            max_rows=100,
+            guidance=(
+                "Only probable device-key changes and IMSI changes appear "
+                "here. Each event still requires source verification."
             ),
-            max_rows=30,
         )
         row = _write_section(
             worksheet,
             row,
-            title="SIM OR DEVICE CHANGES",
-            frame=_as_frame(
-                results.get(
-                    "sim_change"
-                )
+            title="OBSERVED IDENTIFIER VARIATIONS",
+            frame=identifier_variants,
+            max_rows=100,
+            guidance=(
+                "These raw IMEI changes share the same probable device key "
+                "and are not counted as device changes."
             ),
-            max_rows=50,
         )
         _finish_sheet(
             worksheet
@@ -3130,3 +3197,179 @@ def generate_single_cdr_compact_report(
             ),
         )
         return None
+
+# BEGIN CDR IDENTIFIER TEXT PATCH
+_finish_sheet_base_final_presentation = _finish_sheet
+
+IDENTIFIER_TEXT_HEADERS = {
+    "Device Key",
+    "IMEI",
+    "imei",
+    "Observed IMEI Values",
+    "Valid IMEI",
+    "Invalid IMEI Values",
+    "Old IMEI",
+    "New IMEI",
+    "Old Device Key",
+    "New Device Key",
+    "IMSI",
+    "Old IMSI",
+    "New IMSI",
+    "MSISDN",
+    "Target Number",
+    "Other Party",
+}
+
+
+def _identifier_display_text(value):
+    """Return a complete identifier string for Excel display."""
+
+    if value is None:
+        return None
+
+    if isinstance(value, bool):
+        return str(value)
+
+    if isinstance(value, int):
+        return str(value)
+
+    if isinstance(value, float):
+        if value.is_integer():
+            return str(int(value))
+
+        return format(value, ".15g")
+
+    return str(value)
+
+
+def _format_identifier_tables_as_text(
+    worksheet,
+) -> None:
+    """Format identifier table columns as text until the next blank row."""
+
+    for header_row in range(
+        1,
+        worksheet.max_row + 1,
+    ):
+        matched_columns = []
+
+        for column in range(
+            1,
+            worksheet.max_column + 1,
+        ):
+            value = worksheet.cell(
+                row=header_row,
+                column=column,
+            ).value
+            header = (
+                str(value).strip()
+                if value is not None
+                else ""
+            )
+
+            if header in IDENTIFIER_TEXT_HEADERS:
+                matched_columns.append(
+                    column
+                )
+
+        if not matched_columns:
+            continue
+
+        end_row = header_row + 1
+
+        while end_row <= worksheet.max_row:
+            row_is_blank = all(
+                worksheet.cell(
+                    row=end_row,
+                    column=column,
+                ).value
+                in (
+                    None,
+                    "",
+                )
+                for column in range(
+                    1,
+                    worksheet.max_column + 1,
+                )
+            )
+
+            if row_is_blank:
+                break
+
+            end_row += 1
+
+        for column in matched_columns:
+            column_letter = get_column_letter(
+                column
+            )
+            current_width = (
+                worksheet.column_dimensions[
+                    column_letter
+                ].width
+                or 0
+            )
+            worksheet.column_dimensions[
+                column_letter
+            ].width = min(
+                max(
+                    current_width,
+                    20,
+                ),
+                34,
+            )
+
+            for data_row in range(
+                header_row + 1,
+                end_row,
+            ):
+                cell = worksheet.cell(
+                    row=data_row,
+                    column=column,
+                )
+
+                if cell.value is None:
+                    continue
+
+                cell.value = _identifier_display_text(
+                    cell.value
+                )
+                cell.number_format = "@"
+
+
+def _finish_sheet(
+    worksheet,
+):
+    """Finish a report sheet and preserve identifiers as text."""
+
+    result = _finish_sheet_base_final_presentation(
+        worksheet
+    )
+    _format_identifier_tables_as_text(
+        worksheet
+    )
+
+    return result
+# END CDR IDENTIFIER TEXT PATCH
+
+# BEGIN FULL CONTACT COLUMN PRESERVATION
+def _ensure_full_contact_profile_columns(
+    frame,
+    title,
+    selected_columns,
+):
+    """Keep required Full Contact Summary columns visible when values are blank."""
+
+    if (
+        title != "FULL CONTACT SUMMARY (CC SUMMARY)"
+        or not selected_columns
+    ):
+        return frame
+
+    for column in selected_columns:
+        if column not in frame.columns:
+            frame[
+                column
+            ] = pd.NA
+
+    return frame
+# END FULL CONTACT COLUMN PRESERVATION

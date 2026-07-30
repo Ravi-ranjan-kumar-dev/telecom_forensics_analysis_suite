@@ -62,10 +62,19 @@ def behavioral_intelligence(df: pd.DataFrame) -> pd.DataFrame:
         hourly = hourly_activity(df)
         if hourly.empty:
             return
-        row = hourly.iloc[0]
+        row = hourly.loc[
+            hourly["Total Events"].idxmax()
+        ]
+        time_window = row.get(
+            "Time Window",
+            f"{int(row['Hour']):02d}:00-{int(row['Hour']):02d}:59",
+        )
         add_observation(
             "Peak recorded hour",
-            f"The largest hourly count is around {int(row['Hour']):02d}:00 with {int(row['Total Events'])} event(s).",
+            (
+                f"The largest hourly count is in {time_window} "
+                f"with {int(row['Total Events'])} event(s)."
+            ),
             "This is a descriptive traffic pattern and requires event-context corroboration.",
         )
 

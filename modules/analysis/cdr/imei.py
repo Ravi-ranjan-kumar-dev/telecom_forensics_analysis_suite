@@ -93,132 +93,21 @@ def _most_used_valid_tower(data):
 
 
 def imei_summary(df):
-    data = _prepare_imei_data(df)
+    'Return the canonical probable-device summary.'
 
-    if data.empty:
-        return pd.DataFrame(
-            columns=[
-                "imei",
-                "First Seen",
-                "Last Seen",
-                "Total Events",
-                "Unique Human Contacts",
-                "Unique Valid Towers",
-                "Total Duration (Sec)",
-            ]
-        )
-
-    human = data[data["_contact_category"].eq("human_mobile")].copy()
-
-    result = (
-        data.groupby("imei")
-        .agg(
-            **{
-                "First Seen": ("_event_datetime", "min"),
-                "Last Seen": ("_event_datetime", "max"),
-                "Total Events": ("imei", "count"),
-                "Unique Valid Towers": ("_valid_cell_id", lambda x: x.replace("", pd.NA).dropna().nunique()),
-                "Total Duration (Sec)": ("_duration", "sum"),
-            }
-        )
-        .reset_index()
+    from modules.analysis.cdr.device_quality import (
+        device_summary,
     )
 
-    human_counts = (
-        human.groupby("imei")["b_party"]
-        .nunique()
-        .reset_index(name="Unique Human Contacts")
-    )
+    return device_summary(df)
 
-    result = result.merge(human_counts, on="imei", how="left")
-    result["Unique Human Contacts"] = result["Unique Human Contacts"].fillna(0).astype(int)
-
-    return result[
-        [
-            "imei",
-            "First Seen",
-            "Last Seen",
-            "Total Events",
-            "Unique Human Contacts",
-            "Unique Valid Towers",
-            "Total Duration (Sec)",
-        ]
-    ].sort_values("Total Events", ascending=False)
 
 
 def imei_intelligence(df):
-    data = _prepare_imei_data(df)
+    'Return the canonical probable-device intelligence table.'
 
-    if data.empty:
-        return pd.DataFrame(
-            columns=[
-                "IMEI",
-                "First Seen",
-                "Last Seen",
-                "Total Events",
-                "Unique Human Contacts",
-                "Unique Valid Towers",
-                "Total Duration (Sec)",
-                "Most Used Valid Tower",
-                "Most Human Contacted",
-                "Top Service Sender ID",
-                "Service Sender Events",
-                "Short Code Events",
-            ]
-        )
-
-    summary = (
-        data.groupby("imei")
-        .agg(
-            **{
-                "First Seen": ("_event_datetime", "min"),
-                "Last Seen": ("_event_datetime", "max"),
-                "Total Events": ("imei", "count"),
-                "Unique Valid Towers": ("_valid_cell_id", lambda x: x.replace("", pd.NA).dropna().nunique()),
-                "Total Duration (Sec)": ("_duration", "sum"),
-            }
-        )
-        .reset_index()
-        .rename(columns={"imei": "IMEI"})
+    from modules.analysis.cdr.device_quality import (
+        device_intelligence,
     )
 
-    human = data[data["_contact_category"].eq("human_mobile")].copy()
-    human_counts = (
-        human.groupby("imei")["b_party"]
-        .nunique()
-        .reset_index(name="Unique Human Contacts")
-        .rename(columns={"imei": "IMEI"})
-    )
-
-    most_tower = _most_used_valid_tower(data)
-    most_human = _top_value_by_imei(data, "human_mobile", "Most Human Contacted")
-    top_service = _top_value_by_imei(data, "service_sender_id", "Top Service Sender ID")
-    service_events = _count_events_by_imei(data, "service_sender_id", "Service Sender Events")
-    short_code_events = _count_events_by_imei(data, "short_code", "Short Code Events")
-
-    for extra in [human_counts, most_tower, most_human, top_service, service_events, short_code_events]:
-        summary = summary.merge(extra, on="IMEI", how="left")
-
-    summary["Unique Human Contacts"] = summary["Unique Human Contacts"].fillna(0).astype(int)
-    summary["Service Sender Events"] = summary["Service Sender Events"].fillna(0).astype(int)
-    summary["Short Code Events"] = summary["Short Code Events"].fillna(0).astype(int)
-    summary["Most Used Valid Tower"] = summary["Most Used Valid Tower"].fillna("N/A")
-    summary["Most Human Contacted"] = summary["Most Human Contacted"].fillna("N/A")
-    summary["Top Service Sender ID"] = summary["Top Service Sender ID"].fillna("N/A")
-
-    return summary[
-        [
-            "IMEI",
-            "First Seen",
-            "Last Seen",
-            "Total Events",
-            "Unique Human Contacts",
-            "Unique Valid Towers",
-            "Total Duration (Sec)",
-            "Most Used Valid Tower",
-            "Most Human Contacted",
-            "Top Service Sender ID",
-            "Service Sender Events",
-            "Short Code Events",
-        ]
-    ].sort_values("Total Events", ascending=False)
+    return device_intelligence(df)

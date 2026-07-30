@@ -127,14 +127,41 @@ def generate_multi_cdr_report(
         workbook = Workbook()
         workbook.remove(workbook.active)
 
+        error_sheet_written = False
+
         for sheet_name, report_name, result_key in SHEET_MAP:
+            frame = bundle.get(result_key)
+
+            if result_key == "errors" and isinstance(frame, dict):
+                frame = pd.DataFrame(
+                    [
+                        {
+                            "Analysis": key,
+                            "Error": value,
+                        }
+                        for key, value in frame.items()
+                    ]
+                )
+
+            if (
+                result_key == "errors"
+                and (
+                    not isinstance(frame, pd.DataFrame)
+                    or frame.empty
+                )
+            ):
+                continue
+
+            if result_key == "errors":
+                error_sheet_written = True
+
             _write_dataframe_sheet(
                 workbook=workbook,
                 sheet_name=sheet_name,
                 report_name=report_name,
                 metadata=report_metadata,
                 target_count=len(loaded_cdrs),
-                frame=bundle.get(result_key),
+                frame=frame,
             )
 
         rejected_frames: list[pd.DataFrame] = []
@@ -154,7 +181,11 @@ def generate_multi_cdr_report(
         )
         _write_dataframe_sheet(
             workbook=workbook,
-            sheet_name="15. Rejected Rows",
+            sheet_name=(
+                "15. Rejected Rows"
+                if error_sheet_written
+                else "14. Rejected Rows"
+            ),
             report_name="Rejected / Quarantined Source Rows",
             metadata=report_metadata,
             target_count=len(loaded_cdrs),
