@@ -3,19 +3,31 @@
 from __future__ import annotations
 
 from bisect import bisect_left, bisect_right
+from collections.abc import Iterable, Iterator, Sequence
 from dataclasses import dataclass
 from typing import Any, Final
 
 
 __all__ = [
+    "ReportSearchPage",
     "ReportSection",
     "discover_report_sections",
     "read_report_section_rows",
+    "search_report_rows",
+    "search_report_section_rows",
 ]
 
 
 _NO_RECORDS_TEXT: Final[str] = "No records available for this section."
 _DEFAULT_ROW_LIMIT: Final[int] = 500
+
+
+@dataclass(frozen=True, slots=True)
+class ReportSearchPage:
+    """Return one bounded page and the full literal-match count."""
+
+    rows: tuple[tuple[object, ...], ...]
+    match_count: int
 
 
 @dataclass(frozen=True, slots=True)
@@ -44,6 +56,40 @@ def _clean_cell(value: object) -> str:
     if value is None:
         return ""
     return str(value).strip()
+
+
+def search_report_rows(
+    rows: Iterable[Sequence[object]],
+    query: str,
+    *,
+    offset: int = 0,
+    limit: int = _DEFAULT_ROW_LIMIT,
+) -> ReportSearchPage:
+    """Search row values literally while retaining only one result page."""
+
+    if offset < 0:
+        raise ValueError("The report search result offset cannot be negative.")
+    if limit < 1:
+        raise ValueError("The report search result limit must be positive.")
+
+    normalized_query = query.strip().casefold()
+    if not normalized_query:
+        raise ValueError("The report search query cannot be empty.")
+
+    output: list[tuple[object, ...]] = []
+    match_count = 0
+    for row in rows:
+        if not any(
+            normalized_query in _clean_cell(value).casefold()
+            for value in row
+        ):
+            continue
+
+        if match_count >= offset and len(output) < limit:
+            output.append(tuple(row))
+        match_count += 1
+
+    return ReportSearchPage(rows=tuple(output), match_count=match_count)
 
 
 def _has_table_border(cell: Any) -> bool:
@@ -259,3 +305,39 @@ def read_report_section_rows(
             break
 
     return tuple(output)
+
+
+def search_report_section_rows(
+    worksheet: Any,
+    section: ReportSection,
+    query: str,
+    *,
+    offset: int = 0,
+    limit: int = _DEFAULT_ROW_LIMIT,
+) -> ReportSearchPage:
+    """Search all records in one section and retain one matching page."""
+
+    def section_rows() -> Iterator[tuple[object, ...]]:
+        if (
+            section.record_count == 0
+            or section.data_start_row is None
+            or section.data_end_row is None
+            or not section.headers
+        ):
+            return
+
+        for row in worksheet.iter_rows(
+            min_row=section.data_start_row,
+            max_row=section.data_end_row,
+            min_col=1,
+            max_col=len(section.headers),
+        ):
+            if row and _has_table_border(row[0]):
+                yield tuple(cell.value for cell in row)
+
+    return search_report_rows(
+        section_rows(),
+        query,
+        offset=offset,
+        limit=limit,
+    )

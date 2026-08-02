@@ -443,6 +443,121 @@ def test_viewer_pages_through_large_legacy_sheet(tmp_path: Path):
         dialog.close()
 
 
+def test_viewer_searches_all_structured_pages_and_pages_matching_results(
+    tmp_path: Path,
+):
+    build_application(["report-viewer-all-pages-search-test"])
+
+    report = tmp_path / "large-structured-search-report.xlsx"
+    _write_large_structured_report(report)
+
+    dialog = ReportViewerDialog(report)
+
+    try:
+        dialog._search_input.setText("record-0500")
+
+        assert dialog._table.rowCount() == 0
+        assert dialog._search_all_pages_button.isEnabled()
+
+        dialog._search_all_pages_button.click()
+
+        assert dialog._search_input.text() == "record-0500"
+        assert dialog._table.rowCount() == 1
+        assert dialog._table.item(0, 0).text() == "record-0500"
+        assert dialog._record_count_label.text() == (
+            "Visible search results: 1 of 1 loaded. Total matches: 1. "
+            "Section total: 501."
+        )
+        assert dialog._page_label.text() == "Search Page 1 of 1"
+        assert dialog._page_controls.isHidden()
+        assert 'Search all pages: "record-0500"' in dialog._status.text()
+
+        dialog._search_input.setText("not-present")
+        dialog._search_all_pages_button.click()
+
+        assert dialog._table.rowCount() == 0
+        assert dialog._search_input.isEnabled()
+        assert dialog._page_label.text() == "Search Page 0 of 0"
+        assert dialog._record_count_label.text() == (
+            "Visible search results: 0 of 0 loaded. Total matches: 0. "
+            "Section total: 501."
+        )
+        assert "No matching records were found across all pages." in (
+            dialog._status.text()
+        )
+
+        dialog._search_input.setText("outgoing")
+
+        assert dialog._page_label.text() == "Page 1 of 2"
+        assert dialog._table.rowCount() == 500
+
+        dialog._search_all_pages_button.click()
+
+        assert dialog._page_label.text() == "Search Page 1 of 2"
+        assert not dialog._page_controls.isHidden()
+        assert dialog._record_count_label.text() == (
+            "Visible search results: 500 of 500 loaded. "
+            "Total matches: 501. Section total: 501."
+        )
+        assert "Showing matching records 1-500 of 501." in (
+            dialog._status.text()
+        )
+
+        dialog._next_page_button.click()
+
+        assert dialog._search_input.text() == "outgoing"
+        assert dialog._page_label.text() == "Search Page 2 of 2"
+        assert dialog._table.rowCount() == 1
+        assert dialog._table.item(0, 0).text() == "record-0500"
+        assert dialog._table.isSortingEnabled()
+
+        dialog._search_input.clear()
+
+        assert dialog._page_label.text() == "Page 1 of 2"
+        assert dialog._table.rowCount() == 500
+        assert dialog._record_count_label.text() == (
+            "Visible records: 500 of 500 loaded. Section total: 501."
+        )
+    finally:
+        dialog.close()
+
+
+def test_viewer_searches_all_legacy_pages_and_returns_to_page_filter(
+    tmp_path: Path,
+):
+    build_application(["report-viewer-legacy-all-pages-search-test"])
+
+    report = tmp_path / "large-legacy-search-report.xlsx"
+    _write_large_legacy_report(report)
+
+    dialog = ReportViewerDialog(report)
+
+    try:
+        dialog._search_input.setText("9000000500")
+        assert dialog._table.rowCount() == 0
+
+        dialog._search_all_pages_button.click()
+
+        assert dialog._table.rowCount() == 1
+        assert dialog._table.item(0, 0).text() == "9000000500"
+        assert dialog._page_label.text() == "Search Page 1 of 1"
+        assert dialog._record_count_label.text() == (
+            "Visible search results: 1 of 1 loaded. Total matches: 1. "
+            "Section total: 501."
+        )
+
+        dialog._search_input.setText("9000000001")
+
+        assert dialog._page_label.text() == "Page 1 of 2"
+        assert dialog._table.rowCount() == 1
+        assert dialog._table.item(0, 0).text() == "9000000001"
+        assert dialog._record_count_label.text() == (
+            "Visible records: 1 of 500 loaded. Section total: 501."
+        )
+    finally:
+        dialog.close()
+
+
 def test_number_double_click_opens_verified_source_records(
     tmp_path: Path,
     monkeypatch,

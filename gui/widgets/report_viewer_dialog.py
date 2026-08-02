@@ -32,6 +32,8 @@ from modules.reporting.report_section_reader import (
     ReportSection,
     discover_report_sections,
     read_report_section_rows,
+    search_report_rows,
+    search_report_section_rows,
 )
 
 __all__ = [
@@ -334,6 +336,8 @@ class ReportViewerDialog(QDialog):
         self._loaded_headers: tuple[str, ...] = ()
         self._loaded_rows: tuple[tuple[object, ...], ...] = ()
         self._section_total_records = 0
+        self._navigation_total_records = 0
+        self._all_pages_search_query = ""
 
         self.setWindowTitle("Investigation Report Viewer")
         self.resize(1200, 760)
@@ -358,15 +362,28 @@ class ReportViewerDialog(QDialog):
         self._status.setWordWrap(True)
 
         self._search_input = QLineEdit()
-        self._search_input.setAccessibleName("Search loaded report records")
-        self._search_input.setPlaceholderText("Search all columns on this page")
+        self._search_input.setAccessibleName(
+            "Filter this page or search all report pages"
+        )
+        self._search_input.setPlaceholderText(
+            "Filter this page; press Enter to search all pages"
+        )
         self._search_input.setToolTip(
-            "Search is case-insensitive and checks only records loaded on the "
-            "current page."
+            "Typing filters the current page. Press Enter or use Search All "
+            "Pages to find literal matches across the selected section or sheet."
         )
         self._search_input.setClearButtonEnabled(True)
         self._search_input.setEnabled(False)
-        self._search_input.textChanged.connect(self._apply_search_filter)
+        self._search_input.textChanged.connect(self._on_search_text_changed)
+        self._search_input.returnPressed.connect(self._search_all_pages)
+
+        self._search_all_pages_button = QPushButton("Search All Pages")
+        self._search_all_pages_button.setObjectName("secondaryButton")
+        self._search_all_pages_button.setAccessibleName(
+            "Search all pages in the selected report section"
+        )
+        self._search_all_pages_button.setEnabled(False)
+        self._search_all_pages_button.clicked.connect(self._search_all_pages)
 
         self._record_count_label = QLabel("Visible records: 0 of 0 loaded.")
         self._record_count_label.setAccessibleName("Visible record count")
@@ -429,6 +446,7 @@ class ReportViewerDialog(QDialog):
         search_controls = QHBoxLayout()
         search_controls.addWidget(QLabel("Search:"))
         search_controls.addWidget(self._search_input, stretch=1)
+        search_controls.addWidget(self._search_all_pages_button)
         search_controls.addWidget(self._record_count_label)
 
         layout = QVBoxLayout(self)
@@ -536,6 +554,7 @@ class ReportViewerDialog(QDialog):
         self._active_section = section
         self._legacy_header_row = None
         self._legacy_headers = ()
+        self._all_pages_search_query = ""
         self._page_index = 0
         self._load_active_page()
 
@@ -558,6 +577,7 @@ class ReportViewerDialog(QDialog):
         self._active_section = None
         self._legacy_header_row = header_index + 1
         self._legacy_headers = headers
+        self._all_pages_search_query = ""
         self._section_total_records = max(
             worksheet_rows - self._legacy_header_row,
             0,
@@ -573,6 +593,11 @@ class ReportViewerDialog(QDialog):
 
         worksheet: Worksheet = self._workbook[self._active_sheet_name]
         offset = self._page_index * _MAX_VISIBLE_ROWS
+        if self._all_pages_search_query:
+            self._load_all_pages_search(worksheet, offset=offset)
+            self._update_page_controls()
+            return
+
         if self._active_section is not None:
             section = self._active_section
             visible_rows = read_report_section_rows(
@@ -649,31 +674,108 @@ class ReportViewerDialog(QDialog):
 
         self._update_page_controls()
 
+    def _load_all_pages_search(
+        self,
+        worksheet: Worksheet,
+        *,
+        offset: int,
+    ) -> None:
+        """Search the full active section or legacy sheet for one result page."""
+
+        query = self._all_pages_search_query
+        section = self._active_section
+        if section is not None:
+            source_total = section.record_count
+            headers = section.headers
+            result = search_report_section_rows(
+                worksheet,
+                section,
+                query,
+                offset=offset,
+                limit=_MAX_VISIBLE_ROWS,
+            )
+            scope = (
+                f"Sheet: {self._active_sheet_name} | Section: {section.title}"
+            )
+        else:
+            source_total = self._section_total_records
+            headers = self._legacy_headers
+            header_row = self._legacy_header_row
+            rows = (
+                worksheet.iter_rows(
+                    min_row=header_row + 1,
+                    max_row=header_row + source_total,
+                    min_col=1,
+                    max_col=len(headers),
+                    values_only=True,
+                )
+                if header_row is not None and source_total and headers
+                else ()
+            )
+            result = search_report_rows(
+                rows,
+                query,
+                offset=offset,
+                limit=_MAX_VISIBLE_ROWS,
+            )
+            scope = f"Sheet: {self._active_sheet_name}"
+
+        self._render_table(
+            headers,
+            result.rows,
+            total_records=source_total,
+            navigation_total_records=result.match_count,
+            clear_search=False,
+        )
+        no_match_note = (
+            " No matching records were found across all pages."
+            if result.match_count == 0
+            else ""
+        )
+        identifier_note = (
+            " Highlighted identifiers open verified source records."
+            if self._identifier_columns
+            else ""
+        )
+        self._status.setText(
+            f'{scope} | Search all pages: "{query}" | '
+            f"Matches: {result.match_count:,} of {source_total:,} records."
+            f"{self._page_range_note(len(result.rows))}"
+            f"{no_match_note}{identifier_note}"
+        )
+
     def _page_range_note(self, visible_count: int) -> str:
         """Describe the active page range when a table spans multiple pages."""
 
-        if self._section_total_records <= _MAX_VISIBLE_ROWS or visible_count < 1:
+        if (
+            self._navigation_total_records <= _MAX_VISIBLE_ROWS
+            or visible_count < 1
+        ):
             return ""
 
         first_record = self._page_index * _MAX_VISIBLE_ROWS + 1
         last_record = first_record + visible_count - 1
+        record_label = (
+            "matching records" if self._all_pages_search_query else "records"
+        )
         return (
-            f" Showing records {first_record:,}-{last_record:,} "
-            f"of {self._section_total_records:,}."
+            f" Showing {record_label} {first_record:,}-{last_record:,} "
+            f"of {self._navigation_total_records:,}."
         )
 
     def _update_page_controls(self) -> None:
         """Show valid navigation actions for the active record page."""
 
         page_count = (
-            self._section_total_records + _MAX_VISIBLE_ROWS - 1
+            self._navigation_total_records + _MAX_VISIBLE_ROWS - 1
         ) // _MAX_VISIBLE_ROWS
         has_multiple_pages = page_count > 1
         self._page_controls.setVisible(has_multiple_pages)
+        page_label = "Search Page" if self._all_pages_search_query else "Page"
         self._page_label.setText(
-            f"Page {self._page_index + 1} of {page_count}"
+            f"{page_label} {self._page_index + 1} of {page_count}"
             if page_count
-            else "Page 0 of 0"
+            else f"{page_label} 0 of 0"
         )
         self._previous_page_button.setEnabled(
             has_multiple_pages and self._page_index > 0
@@ -686,14 +788,22 @@ class ReportViewerDialog(QDialog):
         """Move to one valid adjacent record page."""
 
         page_count = (
-            self._section_total_records + _MAX_VISIBLE_ROWS - 1
+            self._navigation_total_records + _MAX_VISIBLE_ROWS - 1
         ) // _MAX_VISIBLE_ROWS
         next_index = self._page_index + delta
         if next_index < 0 or next_index >= page_count:
             return
 
         self._page_index = next_index
-        self._load_active_page()
+        if not self._all_pages_search_query:
+            self._load_active_page()
+            return
+
+        QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
+        try:
+            self._load_active_page()
+        finally:
+            QApplication.restoreOverrideCursor()
 
     def _render_table(
         self,
@@ -704,6 +814,8 @@ class ReportViewerDialog(QDialog):
         ),
         *,
         total_records: int,
+        navigation_total_records: int | None = None,
+        clear_search: bool = True,
     ) -> None:
         """Store loaded rows and render them with safe local filtering."""
 
@@ -713,11 +825,20 @@ class ReportViewerDialog(QDialog):
             total_records,
             len(self._loaded_rows),
         )
+        self._navigation_total_records = max(
+            (
+                total_records
+                if navigation_total_records is None
+                else navigation_total_records
+            ),
+            len(self._loaded_rows),
+        )
 
-        blocker = QSignalBlocker(self._search_input)
-        self._search_input.clear()
-        del blocker
-        self._search_input.setEnabled(bool(self._loaded_rows))
+        if clear_search:
+            blocker = QSignalBlocker(self._search_input)
+            self._search_input.clear()
+            del blocker
+        self._search_input.setEnabled(self._section_total_records > 0)
 
         self._identifier_columns = detect_identifier_columns(
             self._loaded_headers
@@ -728,7 +849,43 @@ class ReportViewerDialog(QDialog):
             if identifier_type == "phone"
         )
 
-        self._apply_search_filter("")
+        self._apply_search_filter(
+            self._search_input.text() if not clear_search else ""
+        )
+
+    def _on_search_text_changed(self, query: str) -> None:
+        """Apply a page filter or leave all-pages mode after query edits."""
+
+        active_query = self._all_pages_search_query.strip().casefold()
+        normalized_query = query.strip().casefold()
+        if active_query and normalized_query != active_query:
+            pending_query = query
+            self._all_pages_search_query = ""
+            self._page_index = 0
+            self._load_active_page()
+
+            blocker = QSignalBlocker(self._search_input)
+            self._search_input.setText(pending_query)
+            del blocker
+            self._apply_search_filter(pending_query)
+            return
+
+        self._apply_search_filter(query)
+
+    def _search_all_pages(self) -> None:
+        """Search every record in the selected section or legacy sheet."""
+
+        query = self._search_input.text().strip()
+        if not query or self._section_total_records < 1:
+            return
+
+        self._all_pages_search_query = query
+        self._page_index = 0
+        QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
+        try:
+            self._load_active_page()
+        finally:
+            QApplication.restoreOverrideCursor()
 
     def _apply_search_filter(self, query: str) -> None:
         """Show loaded rows containing a case-insensitive literal query."""
@@ -749,15 +906,26 @@ class ReportViewerDialog(QDialog):
         self._populate_table(filtered_rows)
 
         loaded_count = len(self._loaded_rows)
-        count_text = (
-            f"Visible records: {len(filtered_rows):,} "
-            f"of {loaded_count:,} loaded."
-        )
-        if self._section_total_records > loaded_count:
-            count_text += (
-                f" Section total: {self._section_total_records:,}."
+        if self._all_pages_search_query:
+            count_text = (
+                f"Visible search results: {len(filtered_rows):,} "
+                f"of {loaded_count:,} loaded. "
+                f"Total matches: {self._navigation_total_records:,}. "
+                f"Section total: {self._section_total_records:,}."
             )
+        else:
+            count_text = (
+                f"Visible records: {len(filtered_rows):,} "
+                f"of {loaded_count:,} loaded."
+            )
+            if self._section_total_records > loaded_count:
+                count_text += (
+                    f" Section total: {self._section_total_records:,}."
+                )
         self._record_count_label.setText(count_text)
+        self._search_all_pages_button.setEnabled(
+            self._section_total_records > 0 and bool(query.strip())
+        )
 
     def _populate_table(
         self,

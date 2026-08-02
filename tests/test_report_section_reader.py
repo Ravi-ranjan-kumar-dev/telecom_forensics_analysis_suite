@@ -10,6 +10,8 @@ from openpyxl.worksheet.worksheet import Worksheet
 from modules.reporting.report_section_reader import (
     discover_report_sections,
     read_report_section_rows,
+    search_report_rows,
+    search_report_section_rows,
 )
 
 
@@ -151,6 +153,38 @@ def test_reads_only_selected_section_and_honours_row_limit(tmp_path: Path):
         )
     finally:
         workbook.close()
+
+
+def test_searches_full_section_with_literal_match_count_and_bounded_page(
+    tmp_path: Path,
+):
+    report = tmp_path / "structured-search-report.xlsx"
+    _write_structured_report(report)
+
+    workbook = load_workbook(report, read_only=True, data_only=True)
+    try:
+        worksheet = workbook["Communication Intel"]
+        outgoing = discover_report_sections(worksheet)[0]
+        result = search_report_section_rows(
+            worksheet,
+            outgoing,
+            "01/08/2026",
+            offset=1,
+            limit=1,
+        )
+    finally:
+        workbook.close()
+
+    assert result.match_count == 2
+    assert result.rows == ((None, "01/08/2026", "10:05:00"),)
+
+    generic_result = search_report_rows(
+        (("Alpha", 1), ("beta", 2), ("alphabet", 3)),
+        "ALPHA",
+        limit=1,
+    )
+    assert generic_result.match_count == 2
+    assert generic_result.rows == (("Alpha", 1),)
 
 
 def test_section_offset_skips_only_styled_records_across_blank_rows(
