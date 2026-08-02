@@ -19,6 +19,7 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QHeaderView,
     QLabel,
+    QLineEdit,
     QMessageBox,
     QPushButton,
     QTableWidget,
@@ -326,6 +327,9 @@ class ReportViewerDialog(QDialog):
         self._verified_source_link = None
         self._active_sheet_name = ""
         self._sections_by_sheet: dict[str, tuple[ReportSection, ...]] = {}
+        self._loaded_headers: tuple[str, ...] = ()
+        self._loaded_rows: tuple[tuple[object, ...], ...] = ()
+        self._section_total_records = 0
 
         self.setWindowTitle("Investigation Report Viewer")
         self.resize(1200, 760)
@@ -348,6 +352,19 @@ class ReportViewerDialog(QDialog):
         self._status = QLabel()
         self._status.setObjectName("cardText")
         self._status.setWordWrap(True)
+
+        self._search_input = QLineEdit()
+        self._search_input.setAccessibleName("Search loaded report records")
+        self._search_input.setPlaceholderText("Search all columns in loaded records")
+        self._search_input.setToolTip(
+            "Search is case-insensitive and checks only records loaded in the viewer."
+        )
+        self._search_input.setClearButtonEnabled(True)
+        self._search_input.setEnabled(False)
+        self._search_input.textChanged.connect(self._apply_search_filter)
+
+        self._record_count_label = QLabel("Visible records: 0 of 0 loaded.")
+        self._record_count_label.setAccessibleName("Visible record count")
 
         self._table = QTableWidget()
         self._table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
@@ -380,12 +397,18 @@ class ReportViewerDialog(QDialog):
         section_controls.addWidget(self._section_label)
         section_controls.addWidget(self._section_selector, stretch=1)
 
+        search_controls = QHBoxLayout()
+        search_controls.addWidget(QLabel("Search:"))
+        search_controls.addWidget(self._search_input, stretch=1)
+        search_controls.addWidget(self._record_count_label)
+
         layout = QVBoxLayout(self)
         layout.setContentsMargins(24, 22, 24, 22)
         layout.setSpacing(12)
         layout.addWidget(self._file_label)
         layout.addLayout(controls)
         layout.addLayout(section_controls)
+        layout.addLayout(search_controls)
         layout.addWidget(self._status)
         layout.addWidget(self._table, stretch=1)
 
@@ -411,6 +434,7 @@ class ReportViewerDialog(QDialog):
                 "This workbook could not be read. "
                 f"{type(error).__name__}: {error}"
             )
+            self._search_input.setEnabled(False)
             self._table.setEnabled(False)
             return
 
@@ -485,7 +509,11 @@ class ReportViewerDialog(QDialog):
             section,
             limit=_MAX_VISIBLE_ROWS,
         )
-        self._render_table(section.headers, visible_rows)
+        self._render_table(
+            section.headers,
+            visible_rows,
+            total_records=section.record_count,
+        )
 
         limit_note = (
             f" Showing the first {_MAX_VISIBLE_ROWS:,} records."
@@ -535,10 +563,13 @@ class ReportViewerDialog(QDialog):
                 break
             visible_rows.append(tuple(row))
 
-        self._render_table(headers, visible_rows)
-
         worksheet_rows = worksheet.max_row or 0
         total_rows = max(worksheet_rows - header_index - 1, 0)
+        self._render_table(
+            headers,
+            visible_rows,
+            total_records=total_rows,
+        )
         limit_note = (
             f" Showing the first {_MAX_VISIBLE_ROWS:,} records."
             if total_rows > _MAX_VISIBLE_ROWS
@@ -556,25 +587,77 @@ class ReportViewerDialog(QDialog):
             list[tuple[object, ...]]
             | tuple[tuple[object, ...], ...]
         ),
+        *,
+        total_records: int,
     ) -> None:
-        """Render rows while preserving identifier drill-down behavior."""
+        """Store loaded rows and render them with safe local filtering."""
 
-        header_labels = list(headers)
-        self._identifier_columns = detect_identifier_columns(header_labels)
+        self._loaded_headers = tuple(headers)
+        self._loaded_rows = tuple(tuple(row) for row in visible_rows)
+        self._section_total_records = max(
+            total_records,
+            len(self._loaded_rows),
+        )
+
+        blocker = QSignalBlocker(self._search_input)
+        self._search_input.clear()
+        del blocker
+        self._search_input.setEnabled(bool(self._loaded_rows))
+
+        self._identifier_columns = detect_identifier_columns(
+            self._loaded_headers
+        )
         self._number_columns = tuple(
             index
             for index, identifier_type in self._identifier_columns.items()
             if identifier_type == "phone"
         )
 
+        self._apply_search_filter("")
+
+    def _apply_search_filter(self, query: str) -> None:
+        """Show loaded rows containing a case-insensitive literal query."""
+
+        normalized_query = query.strip().casefold()
+        if normalized_query:
+            filtered_rows = tuple(
+                row
+                for row in self._loaded_rows
+                if any(
+                    normalized_query in _clean_cell(value).casefold()
+                    for value in row
+                )
+            )
+        else:
+            filtered_rows = self._loaded_rows
+
+        self._populate_table(filtered_rows)
+
+        loaded_count = len(self._loaded_rows)
+        count_text = (
+            f"Visible records: {len(filtered_rows):,} "
+            f"of {loaded_count:,} loaded."
+        )
+        if self._section_total_records > loaded_count:
+            count_text += (
+                f" Section total: {self._section_total_records:,}."
+            )
+        self._record_count_label.setText(count_text)
+
+    def _populate_table(
+        self,
+        visible_rows: tuple[tuple[object, ...], ...],
+    ) -> None:
+        """Populate filtered rows while preserving sorting and drill-down."""
+
         self._table.setSortingEnabled(False)
         self._table.clear()
-        self._table.setColumnCount(len(header_labels))
-        self._table.setHorizontalHeaderLabels(header_labels)
+        self._table.setColumnCount(len(self._loaded_headers))
+        self._table.setHorizontalHeaderLabels(self._loaded_headers)
         self._table.setRowCount(len(visible_rows))
 
         for row_index, row in enumerate(visible_rows):
-            for column_index in range(len(header_labels)):
+            for column_index in range(len(self._loaded_headers)):
                 value = row[column_index] if column_index < len(row) else None
                 item = QTableWidgetItem(_clean_cell(value))
                 if column_index in self._identifier_columns:

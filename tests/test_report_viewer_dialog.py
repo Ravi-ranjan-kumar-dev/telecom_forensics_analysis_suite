@@ -125,6 +125,24 @@ def _write_structured_report(path: Path) -> None:
     workbook.close()
 
 
+def _write_large_structured_report(path: Path) -> None:
+    workbook = Workbook()
+    sheet = workbook.active
+    sheet.title = "Large Section"
+
+    _write_section_title(sheet, 3, "LARGE CONTACT SECTION")
+    _write_section_header(sheet, 4, ("Record", "Event Type"))
+    for index in range(501):
+        _write_section_record(
+            sheet,
+            5 + index,
+            (f"record-{index:04d}", "Outgoing"),
+        )
+
+    workbook.save(path)
+    workbook.close()
+
+
 def test_number_column_detection_supports_report_labels():
     assert detect_number_columns(
         ["Contact", "Call Type", "Common Number", "Source Target"]
@@ -219,6 +237,119 @@ def test_viewer_navigates_structured_sections_without_cross_section_rows(
             in dialog._status.text()
         )
         assert "Review only confirmed variations." in dialog._status.text()
+    finally:
+        dialog.close()
+
+
+def test_viewer_filters_selected_section_and_resets_search_on_navigation(
+    tmp_path: Path,
+):
+    build_application(["report-viewer-filter-test"])
+
+    report = tmp_path / "structured-filter-report.xlsx"
+    _write_structured_report(report)
+
+    dialog = ReportViewerDialog(report)
+
+    try:
+        assert dialog._search_input.isEnabled()
+        assert dialog._record_count_label.text() == (
+            "Visible records: 2 of 2 loaded."
+        )
+
+        dialog._search_input.setText("incoming")
+
+        assert dialog._table.rowCount() == 1
+        assert dialog._table.item(0, 0).text() == "9000000003"
+        assert dialog._record_count_label.text() == (
+            "Visible records: 1 of 2 loaded."
+        )
+        assert dialog.number_columns == (0,)
+        assert dialog._table.isSortingEnabled()
+
+        dialog._search_input.setText("not-present")
+
+        assert dialog._table.rowCount() == 0
+        assert dialog._record_count_label.text() == (
+            "Visible records: 0 of 2 loaded."
+        )
+
+        dialog._section_selector.setCurrentText("MOVING CALLS")
+
+        assert dialog._search_input.text() == ""
+        assert dialog._search_input.isEnabled()
+        assert dialog._table.rowCount() == 1
+        assert dialog._record_count_label.text() == (
+            "Visible records: 1 of 1 loaded."
+        )
+
+        dialog._section_selector.setCurrentText(
+            "OBSERVED IDENTIFIER VARIATIONS"
+        )
+
+        assert dialog._search_input.text() == ""
+        assert not dialog._search_input.isEnabled()
+        assert dialog._record_count_label.text() == (
+            "Visible records: 0 of 0 loaded."
+        )
+    finally:
+        dialog.close()
+
+
+def test_viewer_filters_legacy_sheet_and_clears_query_on_sheet_change(
+    tmp_path: Path,
+):
+    build_application(["report-viewer-legacy-filter-test"])
+
+    report = tmp_path / "legacy-filter-report.xlsx"
+    _write_report(report)
+
+    dialog = ReportViewerDialog(report)
+
+    try:
+        dialog._search_input.setText("OUTGOING")
+
+        assert dialog._table.rowCount() == 1
+        assert dialog._table.item(0, 0).text() == "919000000001"
+        assert dialog._record_count_label.text() == (
+            "Visible records: 1 of 2 loaded."
+        )
+
+        dialog._sheet_selector.setCurrentText("Common Contacts")
+
+        assert dialog._search_input.text() == ""
+        assert dialog._table.rowCount() == 1
+        assert dialog._record_count_label.text() == (
+            "Visible records: 1 of 1 loaded."
+        )
+    finally:
+        dialog.close()
+
+
+def test_viewer_reports_loaded_and_section_totals_when_rows_are_limited(
+    tmp_path: Path,
+):
+    build_application(["report-viewer-filter-limit-test"])
+
+    report = tmp_path / "large-structured-report.xlsx"
+    _write_large_structured_report(report)
+
+    dialog = ReportViewerDialog(report)
+
+    try:
+        assert dialog._table.rowCount() == 500
+        assert dialog._record_count_label.text() == (
+            "Visible records: 500 of 500 loaded. Section total: 501."
+        )
+        assert "Showing the first 500 records." in dialog._status.text()
+
+        dialog._search_input.setText("record-0499")
+
+        assert dialog._table.rowCount() == 1
+        assert dialog._table.item(0, 0).text() == "record-0499"
+        assert dialog._record_count_label.text() == (
+            "Visible records: 1 of 500 loaded. Section total: 501."
+        )
     finally:
         dialog.close()
 
