@@ -156,3 +156,103 @@ def test_cell_id_query_handles_numeric_float_suffix(
 
     assert len(result) == 1
     assert result.iloc[0]["Source Target"] == "9000000001"
+
+
+def _write_related_limit_probe_dataset(tmp_path, name, row_count):
+    import pandas as pd
+
+    frame = pd.DataFrame(
+        {
+            "a_party": ["9000000001"] * row_count,
+            "b_party": ["9000000002"] * row_count,
+            "call_date": ["01/08/2026"] * row_count,
+            "call_time": [
+                f"10:00:{index:02d}"
+                for index in range(row_count)
+            ],
+        }
+    )
+    path = tmp_path / f"{name}.parquet"
+    frame.to_parquet(path, index=False)
+    return {
+        "path": path.name,
+        "columns": list(frame.columns),
+        "target": name,
+    }
+
+
+def test_query_related_records_distinguishes_exact_limit_from_truncation(
+    tmp_path,
+    monkeypatch,
+):
+    from modules.reporting import cdr_report_source
+
+    monkeypatch.setattr(
+        cdr_report_source,
+        "_resolve_portable_path",
+        lambda value: tmp_path / str(value),
+    )
+    query_related_records = cdr_report_source.query_related_records
+
+    first_dataset = _write_related_limit_probe_dataset(
+        tmp_path,
+        "first_target",
+        2,
+    )
+
+    exact_result = query_related_records(
+        {"datasets": [first_dataset]},
+        "9000000002",
+        limit=2,
+    )
+
+    assert len(exact_result) == 2
+    assert exact_result.attrs["result_limit"] == 2
+    assert exact_result.attrs["result_limited"] is False
+
+    second_dataset = _write_related_limit_probe_dataset(
+        tmp_path,
+        "second_target",
+        1,
+    )
+    limited_result = query_related_records(
+        {"datasets": [first_dataset, second_dataset]},
+        "9000000002",
+        limit=2,
+    )
+
+    assert len(limited_result) == 2
+    assert limited_result.attrs["result_limit"] == 2
+    assert limited_result.attrs["result_limited"] is True
+
+
+def test_query_related_records_attaches_metadata_to_empty_results(
+    tmp_path,
+    monkeypatch,
+):
+    from modules.reporting import cdr_report_source
+
+    monkeypatch.setattr(
+        cdr_report_source,
+        "_resolve_portable_path",
+        lambda value: tmp_path / str(value),
+    )
+    query_related_records = cdr_report_source.query_related_records
+
+    dataset = _write_related_limit_probe_dataset(
+        tmp_path,
+        "empty_result_target",
+        1,
+    )
+    source_link = {"datasets": [dataset]}
+
+    for identifier in ("", "9888888888"):
+        result = query_related_records(
+            source_link,
+            identifier,
+            limit=2,
+        )
+
+        assert result.empty
+        assert result.attrs["result_limit"] == 2
+        assert result.attrs["result_limited"] is False

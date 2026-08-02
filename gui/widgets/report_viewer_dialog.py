@@ -118,9 +118,32 @@ class RelatedRecordsDialog(QDialog):
             if duplicates_hidden
             else ""
         )
+        metadata = getattr(records, "attrs", {})
+        result_limited = bool(metadata.get("result_limited", False))
+        limit_note = ""
+        if result_limited:
+            try:
+                result_limit = max(
+                    1,
+                    int(metadata.get("result_limit", len(records))),
+                )
+            except (TypeError, ValueError):
+                result_limit = len(records)
+
+            minimum_matches = max(
+                result_limit + 1,
+                len(records) + 1,
+            )
+            limit_note = (
+                " Query limit reached: at least "
+                f"{minimum_matches:,} matching source records were found; "
+                f"the first {len(records):,} source records were loaded."
+            )
+
         status = QLabel(
             f"Verified records shown: {len(display_records):,}."
-            f"{duplicate_note} Source evidence was read without modification."
+            f"{duplicate_note}{limit_note} "
+            "Source evidence was read without modification."
         )
         status.setWordWrap(True)
 
@@ -142,6 +165,7 @@ class RelatedRecordsDialog(QDialog):
                     column_index,
                     QTableWidgetItem(_clean_cell(value)),
                 )
+        table.setSortingEnabled(True)
         table.horizontalHeader().setSectionResizeMode(
             QHeaderView.ResizeMode.Interactive
         )
@@ -163,6 +187,7 @@ class RelatedRecordsDialog(QDialog):
         layout.addLayout(controls)
 
         self._table = table
+        self._status = status
 
 
 def prepare_related_records(records: Any) -> tuple[Any, int]:

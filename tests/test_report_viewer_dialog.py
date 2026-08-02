@@ -433,3 +433,65 @@ def test_device_identifier_double_click_uses_typed_verified_query(
     assert opened["executed"] is True
 
     dialog.close()
+
+
+def test_related_records_dialog_reports_limit_and_enables_sorting():
+    import pandas as pd
+    from PySide6.QtWidgets import QApplication, QLabel, QTableWidget
+
+    from gui.widgets.report_viewer_dialog import RelatedRecordsDialog
+
+    application = QApplication.instance() or QApplication([])
+    assert application is not None
+
+    records = pd.DataFrame(
+        {
+            "Source Target": ["9000000001", "9000000001"],
+            "B Party Number": ["9000000002", "9000000002"],
+            "Call Date": ["01/08/2026", "01/08/2026"],
+            "Call Time": ["10:00:00", "10:01:00"],
+            "Call Type": ["Outgoing", "Incoming"],
+        }
+    )
+    plain_records = records.iloc[:1].copy()
+    plain_records.attrs.clear()
+
+    records.attrs["result_limit"] = 2
+    records.attrs["result_limited"] = True
+
+    limited_dialog = RelatedRecordsDialog(
+        "9000000002",
+        records,
+        identifier_label="Number",
+    )
+    plain_dialog = RelatedRecordsDialog(
+        "9000000002",
+        plain_records,
+        identifier_label="Number",
+    )
+
+    try:
+        table = limited_dialog.findChild(QTableWidget)
+        assert table is not None
+        assert table.isSortingEnabled()
+
+        limited_text = "\n".join(
+            label.text()
+            for label in limited_dialog.findChildren(QLabel)
+        )
+        assert "Verified records shown: 2." in limited_text
+        assert (
+            "Query limit reached: at least 3 matching source records were found"
+            in limited_text
+        )
+        assert "the first 2 source records were loaded" in limited_text
+
+        plain_text = "\n".join(
+            label.text()
+            for label in plain_dialog.findChildren(QLabel)
+        )
+        assert "Verified records shown: 1." in plain_text
+        assert "Query limit reached" not in plain_text
+    finally:
+        limited_dialog.close()
+        plain_dialog.close()

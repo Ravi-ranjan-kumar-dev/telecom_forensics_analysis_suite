@@ -248,6 +248,7 @@ def query_related_records(
     if column_pattern is None:
         raise ValueError(f"Unsupported identifier type: {identifier_type}")
 
+    result_limit = max(1, min(int(limit), MAX_RELATED_RECORDS))
     raw_value = str(identifier or "").strip()
     if identifier_type == "phone":
         digits = re.sub(r"\D", "", raw_value)
@@ -257,12 +258,15 @@ def query_related_records(
     else:
         canonical = re.sub(r"\D", "", raw_value)
     if not canonical:
-        return pd.DataFrame()
+        result = pd.DataFrame()
+        result.attrs["result_limit"] = result_limit
+        result.attrs["result_limited"] = False
+        return result
 
     frames: list[pd.DataFrame] = []
-    remaining = max(1, min(int(limit), MAX_RELATED_RECORDS))
+    probe_remaining = result_limit + 1
     for dataset in source_link.get("datasets", []):
-        if remaining <= 0:
+        if probe_remaining <= 0:
             break
         path = _resolve_portable_path(dataset.get("path"))
         columns = [str(value) for value in dataset.get("columns", [])]
@@ -298,7 +302,7 @@ def query_related_records(
         if not predicates:
             continue
 
-        parameters.append(remaining)
+        parameters.append(probe_remaining)
         sql = (
             "SELECT * FROM read_parquet(?) WHERE "
             + " OR ".join(predicates)
@@ -317,10 +321,17 @@ def query_related_records(
             )
             frame.insert(0, target_column, str(dataset.get("target", "")))
             frames.append(frame)
-            remaining -= len(frame)
+            probe_remaining -= len(frame)
 
-    return (
+    result = (
         pd.concat(frames, ignore_index=True, sort=False)
         if frames
         else pd.DataFrame()
     )
+    result_limited = len(result) > result_limit
+    if result_limited:
+        result = result.iloc[:result_limit].copy()
+
+    result.attrs["result_limit"] = result_limit
+    result.attrs["result_limited"] = result_limited
+    return result
