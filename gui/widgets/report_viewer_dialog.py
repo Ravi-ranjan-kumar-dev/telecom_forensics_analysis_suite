@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import re
-from itertools import chain, islice
+from itertools import islice
 from pathlib import Path
 from typing import Any, Final
 
@@ -327,6 +327,10 @@ class ReportViewerDialog(QDialog):
         self._verified_source_link = None
         self._active_sheet_name = ""
         self._sections_by_sheet: dict[str, tuple[ReportSection, ...]] = {}
+        self._active_section: ReportSection | None = None
+        self._legacy_header_row: int | None = None
+        self._legacy_headers: tuple[str, ...] = ()
+        self._page_index = 0
         self._loaded_headers: tuple[str, ...] = ()
         self._loaded_rows: tuple[tuple[object, ...], ...] = ()
         self._section_total_records = 0
@@ -355,9 +359,10 @@ class ReportViewerDialog(QDialog):
 
         self._search_input = QLineEdit()
         self._search_input.setAccessibleName("Search loaded report records")
-        self._search_input.setPlaceholderText("Search all columns in loaded records")
+        self._search_input.setPlaceholderText("Search all columns on this page")
         self._search_input.setToolTip(
-            "Search is case-insensitive and checks only records loaded in the viewer."
+            "Search is case-insensitive and checks only records loaded on the "
+            "current page."
         )
         self._search_input.setClearButtonEnabled(True)
         self._search_input.setEnabled(False)
@@ -365,6 +370,30 @@ class ReportViewerDialog(QDialog):
 
         self._record_count_label = QLabel("Visible records: 0 of 0 loaded.")
         self._record_count_label.setAccessibleName("Visible record count")
+
+        self._previous_page_button = QPushButton("Previous Page")
+        self._previous_page_button.setObjectName("secondaryButton")
+        self._previous_page_button.setAccessibleName("Previous report page")
+        self._previous_page_button.clicked.connect(
+            lambda _checked=False: self._change_page(-1)
+        )
+        self._page_label = QLabel("Page 0 of 0")
+        self._page_label.setAccessibleName("Report page position")
+        self._next_page_button = QPushButton("Next Page")
+        self._next_page_button.setObjectName("secondaryButton")
+        self._next_page_button.setAccessibleName("Next report page")
+        self._next_page_button.clicked.connect(
+            lambda _checked=False: self._change_page(1)
+        )
+        self._page_controls = QWidget()
+        self._page_controls.setVisible(False)
+        page_controls = QHBoxLayout(self._page_controls)
+        page_controls.setContentsMargins(0, 0, 0, 0)
+        page_controls.addStretch(1)
+        page_controls.addWidget(self._previous_page_button)
+        page_controls.addWidget(self._page_label)
+        page_controls.addWidget(self._next_page_button)
+        page_controls.addStretch(1)
 
         self._table = QTableWidget()
         self._table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
@@ -409,6 +438,7 @@ class ReportViewerDialog(QDialog):
         layout.addLayout(controls)
         layout.addLayout(section_controls)
         layout.addLayout(search_controls)
+        layout.addWidget(self._page_controls)
         layout.addWidget(self._status)
         layout.addWidget(self._table, stretch=1)
 
@@ -435,6 +465,7 @@ class ReportViewerDialog(QDialog):
                 f"{type(error).__name__}: {error}"
             )
             self._search_input.setEnabled(False)
+            self._page_controls.setVisible(False)
             self._table.setEnabled(False)
             return
 
@@ -459,10 +490,10 @@ class ReportViewerDialog(QDialog):
 
         self._set_section_choices(sections)
         if sections:
-            self._render_section(worksheet, sections[0])
+            self._render_section(sections[0])
             return
 
-        self._render_legacy_sheet(worksheet, sheet_name)
+        self._render_legacy_sheet(worksheet)
 
     def _set_section_choices(
         self,
@@ -494,57 +525,23 @@ class ReportViewerDialog(QDialog):
         if not isinstance(section, ReportSection):
             return
 
-        worksheet: Worksheet = self._workbook[self._active_sheet_name]
-        self._render_section(worksheet, section)
+        self._render_section(section)
 
     def _render_section(
         self,
-        worksheet: Worksheet,
         section: ReportSection,
     ) -> None:
         """Render one bounded report section and its investigator context."""
 
-        visible_rows = read_report_section_rows(
-            worksheet,
-            section,
-            limit=_MAX_VISIBLE_ROWS,
-        )
-        self._render_table(
-            section.headers,
-            visible_rows,
-            total_records=section.record_count,
-        )
-
-        limit_note = (
-            f" Showing the first {_MAX_VISIBLE_ROWS:,} records."
-            if section.record_count > len(visible_rows)
-            else ""
-        )
-        empty_note = (
-            " No records are available for this section."
-            if section.is_empty
-            else ""
-        )
-        guidance_note = (
-            f" Review guidance: {section.guidance}"
-            if section.guidance
-            else ""
-        )
-        identifier_note = (
-            " Highlighted identifiers open verified source records."
-            if self._identifier_columns
-            else ""
-        )
-        self._status.setText(
-            f"Sheet: {self._active_sheet_name} | Section: {section.title} | "
-            f"Records: {section.record_count:,}."
-            f"{limit_note}{empty_note}{guidance_note}{identifier_note}"
-        )
+        self._active_section = section
+        self._legacy_header_row = None
+        self._legacy_headers = ()
+        self._page_index = 0
+        self._load_active_page()
 
     def _render_legacy_sheet(
         self,
         worksheet: Worksheet,
-        sheet_name: str,
     ) -> None:
         """Preserve bounded viewing for older reports without sections."""
 
@@ -552,33 +549,151 @@ class ReportViewerDialog(QDialog):
         scanned_rows = list(islice(rows, _HEADER_SCAN_ROWS))
         header_index = _header_index(scanned_rows)
         header_row = scanned_rows[header_index] if scanned_rows else ()
-        headers = [
+        headers = tuple(
             _clean_cell(value) or f"Column {index + 1}"
             for index, value in enumerate(header_row)
-        ]
-        data_rows = chain(scanned_rows[header_index + 1 :], rows)
-        visible_rows: list[tuple[object, ...]] = []
-        for row_number, row in enumerate(data_rows):
-            if row_number >= _MAX_VISIBLE_ROWS:
-                break
-            visible_rows.append(tuple(row))
+        )
 
         worksheet_rows = worksheet.max_row or 0
-        total_rows = max(worksheet_rows - header_index - 1, 0)
-        self._render_table(
-            headers,
-            visible_rows,
-            total_records=total_rows,
+        self._active_section = None
+        self._legacy_header_row = header_index + 1
+        self._legacy_headers = headers
+        self._section_total_records = max(
+            worksheet_rows - self._legacy_header_row,
+            0,
         )
-        limit_note = (
-            f" Showing the first {_MAX_VISIBLE_ROWS:,} records."
-            if total_rows > _MAX_VISIBLE_ROWS
-            else ""
+        self._page_index = 0
+        self._load_active_page()
+
+    def _load_active_page(self) -> None:
+        """Load one bounded page for the active section or legacy sheet."""
+
+        if self._workbook is None or not self._active_sheet_name:
+            return
+
+        worksheet: Worksheet = self._workbook[self._active_sheet_name]
+        offset = self._page_index * _MAX_VISIBLE_ROWS
+        if self._active_section is not None:
+            section = self._active_section
+            visible_rows = read_report_section_rows(
+                worksheet,
+                section,
+                offset=offset,
+                limit=_MAX_VISIBLE_ROWS,
+            )
+            self._render_table(
+                section.headers,
+                visible_rows,
+                total_records=section.record_count,
+            )
+
+            empty_note = (
+                " No records are available for this section."
+                if section.is_empty
+                else ""
+            )
+            guidance_note = (
+                f" Review guidance: {section.guidance}"
+                if section.guidance
+                else ""
+            )
+            identifier_note = (
+                " Highlighted identifiers open verified source records."
+                if self._identifier_columns
+                else ""
+            )
+            self._status.setText(
+                f"Sheet: {self._active_sheet_name} | Section: {section.title} | "
+                f"Records: {section.record_count:,}."
+                f"{self._page_range_note(len(visible_rows))}"
+                f"{empty_note}{guidance_note}{identifier_note}"
+            )
+        else:
+            header_row = self._legacy_header_row
+            if header_row is None:
+                return
+
+            total_rows = self._section_total_records
+            visible_rows: tuple[tuple[object, ...], ...] = ()
+            if offset < total_rows and self._legacy_headers:
+                first_row = header_row + 1 + offset
+                last_row = min(
+                    header_row + total_rows,
+                    first_row + _MAX_VISIBLE_ROWS - 1,
+                )
+                visible_rows = tuple(
+                    tuple(row)
+                    for row in worksheet.iter_rows(
+                        min_row=first_row,
+                        max_row=last_row,
+                        min_col=1,
+                        max_col=len(self._legacy_headers),
+                        values_only=True,
+                    )
+                )
+
+            self._render_table(
+                self._legacy_headers,
+                visible_rows,
+                total_records=total_rows,
+            )
+            identifier_note = (
+                " Highlighted identifiers open verified source records."
+                if self._identifier_columns
+                else ""
+            )
+            self._status.setText(
+                f"Sheet: {self._active_sheet_name} | Records: {total_rows:,}."
+                f"{self._page_range_note(len(visible_rows))}{identifier_note}"
+            )
+
+        self._update_page_controls()
+
+    def _page_range_note(self, visible_count: int) -> str:
+        """Describe the active page range when a table spans multiple pages."""
+
+        if self._section_total_records <= _MAX_VISIBLE_ROWS or visible_count < 1:
+            return ""
+
+        first_record = self._page_index * _MAX_VISIBLE_ROWS + 1
+        last_record = first_record + visible_count - 1
+        return (
+            f" Showing records {first_record:,}-{last_record:,} "
+            f"of {self._section_total_records:,}."
         )
-        self._status.setText(
-            f"Sheet: {sheet_name} | Records: {total_rows:,}."
-            f"{limit_note} Highlighted identifiers open verified source records."
+
+    def _update_page_controls(self) -> None:
+        """Show valid navigation actions for the active record page."""
+
+        page_count = (
+            self._section_total_records + _MAX_VISIBLE_ROWS - 1
+        ) // _MAX_VISIBLE_ROWS
+        has_multiple_pages = page_count > 1
+        self._page_controls.setVisible(has_multiple_pages)
+        self._page_label.setText(
+            f"Page {self._page_index + 1} of {page_count}"
+            if page_count
+            else "Page 0 of 0"
         )
+        self._previous_page_button.setEnabled(
+            has_multiple_pages and self._page_index > 0
+        )
+        self._next_page_button.setEnabled(
+            has_multiple_pages and self._page_index + 1 < page_count
+        )
+
+    def _change_page(self, delta: int) -> None:
+        """Move to one valid adjacent record page."""
+
+        page_count = (
+            self._section_total_records + _MAX_VISIBLE_ROWS - 1
+        ) // _MAX_VISIBLE_ROWS
+        next_index = self._page_index + delta
+        if next_index < 0 or next_index >= page_count:
+            return
+
+        self._page_index = next_index
+        self._load_active_page()
 
     def _render_table(
         self,

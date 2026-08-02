@@ -132,12 +132,54 @@ def test_reads_only_selected_section_and_honours_row_limit(tmp_path: Path):
             ("9000000002", "01/08/2026", "10:00:00"),
             (None, "01/08/2026", "10:05:00"),
         )
+        assert read_report_section_rows(
+            worksheet,
+            outgoing,
+            offset=1,
+            limit=1,
+        ) == (
+            (None, "01/08/2026", "10:05:00"),
+        )
+        assert read_report_section_rows(
+            worksheet,
+            outgoing,
+            offset=outgoing.record_count,
+        ) == ()
         assert read_report_section_rows(worksheet, empty) == ()
         assert read_report_section_rows(worksheet, incoming) == (
             ("9000000004", "01/08/2026", "11:00:00"),
         )
     finally:
         workbook.close()
+
+
+def test_section_offset_skips_only_styled_records_across_blank_rows(
+    tmp_path: Path,
+):
+    report = tmp_path / "sparse-section-report.xlsx"
+    workbook = Workbook()
+    sheet = workbook.active
+    _write_section_title(sheet, 3, "SPARSE RECORDS")
+    _write_header(sheet, 4, ("Other Party", "Event Type"))
+    _write_record(sheet, 5, ("9000000001", "Outgoing"))
+    _write_record(sheet, 7, ("9000000002", "Incoming"))
+    workbook.save(report)
+    workbook.close()
+
+    loaded = load_workbook(report, read_only=True, data_only=True)
+    try:
+        worksheet = loaded.active
+        section = discover_report_sections(worksheet)[0]
+
+        assert section.record_count == 2
+        assert read_report_section_rows(
+            worksheet,
+            section,
+            offset=1,
+            limit=1,
+        ) == (("9000000002", "Incoming"),)
+    finally:
+        loaded.close()
 
 
 def test_plain_legacy_sheet_has_no_false_structured_sections(tmp_path: Path):
@@ -166,5 +208,7 @@ def test_rejects_non_positive_section_row_limit(tmp_path: Path):
         section = discover_report_sections(worksheet)[0]
         with pytest.raises(ValueError, match="must be positive"):
             read_report_section_rows(worksheet, section, limit=0)
+        with pytest.raises(ValueError, match="cannot be negative"):
+            read_report_section_rows(worksheet, section, offset=-1)
     finally:
         workbook.close()

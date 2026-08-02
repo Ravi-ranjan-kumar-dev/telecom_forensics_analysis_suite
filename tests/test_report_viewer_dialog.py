@@ -139,6 +139,22 @@ def _write_large_structured_report(path: Path) -> None:
             (f"record-{index:04d}", "Outgoing"),
         )
 
+    _write_section_title(sheet, 508, "SMALL CONTACT SECTION")
+    _write_section_header(sheet, 509, ("Record", "Event Type"))
+    _write_section_record(sheet, 510, ("small-record", "Incoming"))
+
+    workbook.save(path)
+    workbook.close()
+
+
+def _write_large_legacy_report(path: Path) -> None:
+    workbook = Workbook()
+    sheet = workbook.active
+    sheet.title = "Legacy Records"
+    sheet.append(["Contact", "Event Type"])
+    for index in range(501):
+        sheet.append((f"900000{index:04d}", "Outgoing"))
+
     workbook.save(path)
     workbook.close()
 
@@ -179,6 +195,7 @@ def test_viewer_lists_sheets_and_detects_number_columns(tmp_path: Path):
 
     assert dialog._sheet_selector.count() == 2
     assert dialog._section_selector.isHidden()
+    assert dialog._page_controls.isHidden()
     assert dialog._table.rowCount() == 2
     assert dialog.number_columns == (0,)
 
@@ -212,6 +229,7 @@ def test_viewer_navigates_structured_sections_without_cross_section_rows(
         assert dialog._table.horizontalHeaderItem(0).text() == "Other Party"
         assert dialog._table.item(0, 0).text() == "9000000002"
         assert dialog.number_columns == (0,)
+        assert dialog._page_controls.isHidden()
         assert "Records: 2." in dialog._status.text()
         assert "Review the first and last daily events." in dialog._status.text()
 
@@ -222,6 +240,7 @@ def test_viewer_navigates_structured_sections_without_cross_section_rows(
         assert dialog._table.horizontalHeaderItem(0).text() == "Cell ID"
         assert dialog._table.item(0, 0).text() == "405-51-834-15492631"
         assert dialog.number_columns == ()
+        assert dialog._page_controls.isHidden()
         assert "Section: MOVING CALLS" in dialog._status.text()
         assert "9000000002" not in dialog._status.text()
 
@@ -231,6 +250,8 @@ def test_viewer_navigates_structured_sections_without_cross_section_rows(
 
         assert dialog._table.columnCount() == 0
         assert dialog._table.rowCount() == 0
+        assert dialog._page_controls.isHidden()
+        assert dialog._page_label.text() == "Page 0 of 0"
         assert "Records: 0." in dialog._status.text()
         assert (
             "No records are available for this section."
@@ -326,7 +347,7 @@ def test_viewer_filters_legacy_sheet_and_clears_query_on_sheet_change(
         dialog.close()
 
 
-def test_viewer_reports_loaded_and_section_totals_when_rows_are_limited(
+def test_viewer_pages_through_large_structured_section_and_resets_search(
     tmp_path: Path,
 ):
     build_application(["report-viewer-filter-limit-test"])
@@ -338,10 +359,16 @@ def test_viewer_reports_loaded_and_section_totals_when_rows_are_limited(
 
     try:
         assert dialog._table.rowCount() == 500
+        assert dialog._table.item(0, 0).text() == "record-0000"
+        assert dialog._table.item(499, 0).text() == "record-0499"
         assert dialog._record_count_label.text() == (
             "Visible records: 500 of 500 loaded. Section total: 501."
         )
-        assert "Showing the first 500 records." in dialog._status.text()
+        assert not dialog._page_controls.isHidden()
+        assert dialog._page_label.text() == "Page 1 of 2"
+        assert not dialog._previous_page_button.isEnabled()
+        assert dialog._next_page_button.isEnabled()
+        assert "Showing records 1-500 of 501." in dialog._status.text()
 
         dialog._search_input.setText("record-0499")
 
@@ -350,6 +377,68 @@ def test_viewer_reports_loaded_and_section_totals_when_rows_are_limited(
         assert dialog._record_count_label.text() == (
             "Visible records: 1 of 500 loaded. Section total: 501."
         )
+
+        dialog._next_page_button.click()
+
+        assert dialog._search_input.text() == ""
+        assert dialog._table.rowCount() == 1
+        assert dialog._table.item(0, 0).text() == "record-0500"
+        assert dialog._record_count_label.text() == (
+            "Visible records: 1 of 1 loaded. Section total: 501."
+        )
+        assert dialog._table.isSortingEnabled()
+        assert dialog._page_label.text() == "Page 2 of 2"
+        assert dialog._previous_page_button.isEnabled()
+        assert not dialog._next_page_button.isEnabled()
+        assert "Showing records 501-501 of 501." in dialog._status.text()
+
+        dialog._previous_page_button.click()
+
+        assert dialog._table.rowCount() == 500
+        assert dialog._table.item(0, 0).text() == "record-0000"
+        assert dialog._page_label.text() == "Page 1 of 2"
+
+        dialog._next_page_button.click()
+        dialog._section_selector.setCurrentText("SMALL CONTACT SECTION")
+
+        assert dialog._page_controls.isHidden()
+        assert dialog._page_label.text() == "Page 1 of 1"
+        assert dialog._table.rowCount() == 1
+        assert dialog._table.item(0, 0).text() == "small-record"
+
+        dialog._section_selector.setCurrentText("LARGE CONTACT SECTION")
+
+        assert dialog._page_label.text() == "Page 1 of 2"
+        assert dialog._table.rowCount() == 500
+        assert dialog._table.item(0, 0).text() == "record-0000"
+    finally:
+        dialog.close()
+
+
+def test_viewer_pages_through_large_legacy_sheet(tmp_path: Path):
+    build_application(["report-viewer-legacy-page-test"])
+
+    report = tmp_path / "large-legacy-report.xlsx"
+    _write_large_legacy_report(report)
+
+    dialog = ReportViewerDialog(report)
+
+    try:
+        assert dialog._section_selector.isHidden()
+        assert not dialog._page_controls.isHidden()
+        assert dialog._page_label.text() == "Page 1 of 2"
+        assert dialog._table.rowCount() == 500
+        assert dialog._table.item(0, 0).text() == "9000000000"
+        assert dialog._table.item(499, 0).text() == "9000000499"
+
+        dialog._next_page_button.click()
+
+        assert dialog._page_label.text() == "Page 2 of 2"
+        assert dialog._table.rowCount() == 1
+        assert dialog._table.item(0, 0).text() == "9000000500"
+        assert dialog.number_columns == (0,)
+        assert dialog._table.isSortingEnabled()
+        assert "Showing records 501-501 of 501." in dialog._status.text()
     finally:
         dialog.close()
 

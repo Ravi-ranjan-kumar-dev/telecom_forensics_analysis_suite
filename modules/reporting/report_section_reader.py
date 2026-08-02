@@ -217,28 +217,42 @@ def read_report_section_rows(
     worksheet: Any,
     section: ReportSection,
     *,
+    offset: int = 0,
     limit: int = _DEFAULT_ROW_LIMIT,
 ) -> tuple[tuple[object, ...], ...]:
     """Read bounded rows from exactly one discovered report section."""
 
+    if offset < 0:
+        raise ValueError("The report section row offset cannot be negative.")
     if limit < 1:
         raise ValueError("The report section row limit must be positive.")
     if (
         section.record_count == 0
+        or offset >= section.record_count
         or section.data_start_row is None
         or section.data_end_row is None
         or not section.headers
     ):
         return ()
 
+    first_row = section.data_start_row
+    records_to_skip = offset
+    physical_row_count = section.data_end_row - section.data_start_row + 1
+    if physical_row_count == section.record_count:
+        first_row += offset
+        records_to_skip = 0
+
     output: list[tuple[object, ...]] = []
     for row in worksheet.iter_rows(
-        min_row=section.data_start_row,
+        min_row=first_row,
         max_row=section.data_end_row,
         min_col=1,
         max_col=len(section.headers),
     ):
         if not row or not _has_table_border(row[0]):
+            continue
+        if records_to_skip:
+            records_to_skip -= 1
             continue
         output.append(tuple(cell.value for cell in row))
         if len(output) >= limit:
