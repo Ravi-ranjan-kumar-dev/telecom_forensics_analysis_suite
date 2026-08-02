@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import re
+from datetime import date, datetime
 from itertools import islice
+from math import isfinite
 from pathlib import Path
 from typing import Any, Final
 
@@ -99,6 +101,24 @@ _RELATED_RECORD_COLUMNS: Final[tuple[tuple[str, str], ...]] = (
     ("roaming_network", "Roaming Network"),
     ("service_type", "Service Type"),
 )
+_INCOMING_EVENT_TYPES: Final[frozenset[str]] = frozenset(
+    {"incoming", "incomingcall", "incomingsms", "smsin"}
+)
+_OUTGOING_EVENT_TYPES: Final[frozenset[str]] = frozenset(
+    {"outgoing", "outgoingcall", "outgoingsms", "smsout"}
+)
+_CALL_EVENT_TYPES: Final[frozenset[str]] = frozenset(
+    {"incoming", "incomingcall", "outgoing", "outgoingcall"}
+)
+_SUMMARY_DATE_FORMATS: Final[tuple[str, ...]] = (
+    "%d-%m-%Y",
+    "%d/%m/%Y",
+    "%Y-%m-%d",
+    "%Y/%m/%d",
+    "%d-%m-%Y %H:%M:%S",
+    "%d/%m/%Y %H:%M:%S",
+    "%Y-%m-%d %H:%M:%S",
+)
 
 
 class RelatedRecordsDialog(QDialog):
@@ -129,6 +149,15 @@ class RelatedRecordsDialog(QDialog):
         )
         metadata = getattr(records, "attrs", {})
         result_limited = bool(metadata.get("result_limited", False))
+        summary = QLabel(
+            _related_record_summary_text(
+                display_records,
+                result_limited=result_limited,
+            )
+        )
+        summary.setObjectName("cardText")
+        summary.setAccessibleName("Related record investigation summary")
+        summary.setWordWrap(True)
         limit_note = ""
         if result_limited:
             try:
@@ -191,11 +220,13 @@ class RelatedRecordsDialog(QDialog):
         layout.setContentsMargins(24, 22, 24, 22)
         layout.setSpacing(12)
         layout.addWidget(title)
+        layout.addWidget(summary)
         layout.addWidget(status)
         layout.addWidget(table, stretch=1)
         layout.addLayout(controls)
 
         self._table = table
+        self._summary = summary
         self._status = status
 
 
@@ -239,6 +270,150 @@ def _clean_cell(value: object) -> str:
     if value is None:
         return ""
     return str(value).strip()
+
+
+def _summary_column(records: Any, *headings: str) -> object | None:
+    """Find one source or display column used by the record summary."""
+
+    expected = set(headings)
+    return next(
+        (
+            column
+            for column in records.columns
+            if re.sub(
+                r"[^a-z0-9]",
+                "",
+                _clean_cell(column).casefold(),
+            )
+            in expected
+        ),
+        None,
+    )
+
+
+def _summary_event_type(value: object) -> str:
+    """Return a stable comparison key for one event label."""
+
+    return re.sub(r"[^a-z0-9]", "", _clean_cell(value).casefold())
+
+
+def _summary_date(value: object) -> date | None:
+    """Parse common CDR date values without changing the source value."""
+
+    text = _clean_cell(value)
+    if not text or text.casefold() in {"<na>", "nan", "nat", "none"}:
+        return None
+    if isinstance(value, datetime):
+        return value.date()
+    if isinstance(value, date):
+        return value
+    for date_format in _SUMMARY_DATE_FORMATS:
+        try:
+            return datetime.strptime(text, date_format).date()
+        except ValueError:
+            continue
+    try:
+        return datetime.fromisoformat(text.replace("Z", "+00:00")).date()
+    except ValueError:
+        return None
+
+
+def _summary_duration(value: object) -> float:
+    """Return one safe, non-negative duration in seconds."""
+
+    try:
+        seconds = float(_clean_cell(value).replace(",", ""))
+    except (TypeError, ValueError):
+        return 0.0
+    return seconds if isfinite(seconds) and seconds >= 0 else 0.0
+
+
+def _format_summary_duration(total_seconds: int) -> str:
+    """Format whole seconds as a short readable duration."""
+
+    hours, remainder = divmod(max(total_seconds, 0), 3600)
+    minutes, seconds = divmod(remainder, 60)
+    parts: list[str] = []
+    if hours:
+        parts.append(f"{hours}h")
+    if minutes:
+        parts.append(f"{minutes}m")
+    if seconds or not parts:
+        parts.append(f"{seconds}s")
+    return " ".join(parts)
+
+
+def _related_record_summary_text(
+    records: Any,
+    *,
+    result_limited: bool,
+) -> str:
+    """Build a compact summary from deduplicated displayed records."""
+
+    heading = (
+        "Shown-record summary (loaded subset)"
+        if result_limited
+        else "Shown-record summary"
+    )
+    parts = [f"Records: {len(records):,}"]
+
+    event_column = _summary_column(records, "calltype", "eventtype")
+    event_types: tuple[str, ...] = ()
+    if event_column is not None:
+        event_types = tuple(
+            _summary_event_type(value)
+            for value in records[event_column].tolist()
+        )
+        parts.extend(
+            (
+                "Incoming: "
+                f"{sum(value in _INCOMING_EVENT_TYPES for value in event_types):,}",
+                "Outgoing: "
+                f"{sum(value in _OUTGOING_EVENT_TYPES for value in event_types):,}",
+                "Calls: "
+                f"{sum(value in _CALL_EVENT_TYPES for value in event_types):,}",
+                f"SMS: {sum('sms' in value for value in event_types):,}",
+            )
+        )
+
+    duration_column = _summary_column(
+        records,
+        "callduration",
+        "calldurationseconds",
+        "duration",
+        "durationseconds",
+    )
+    if duration_column is not None and event_types:
+        duration_seconds = round(
+            sum(
+                _summary_duration(value)
+                for value, event_type in zip(
+                    records[duration_column].tolist(),
+                    event_types,
+                )
+                if event_type in _CALL_EVENT_TYPES
+            )
+        )
+        parts.append(
+            f"Call duration: {_format_summary_duration(duration_seconds)}"
+        )
+
+    date_column = _summary_column(records, "calldate", "date", "eventdate")
+    if date_column is not None:
+        dates = tuple(
+            parsed_date
+            for value in records[date_column].tolist()
+            if (parsed_date := _summary_date(value)) is not None
+        )
+        if dates:
+            first_date = min(dates)
+            last_date = max(dates)
+            date_range = first_date.strftime("%d %b %Y")
+            if last_date != first_date:
+                date_range += f" to {last_date.strftime('%d %b %Y')}"
+            parts.append(f"Date range: {date_range}")
+
+    return f"{heading}: " + " | ".join(parts)
 
 
 def _canonical_digits(value: object) -> str:

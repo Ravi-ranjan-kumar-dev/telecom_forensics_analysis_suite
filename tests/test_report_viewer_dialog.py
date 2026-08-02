@@ -913,6 +913,67 @@ def test_device_identifier_double_click_uses_typed_verified_query(
     dialog.close()
 
 
+def test_related_records_dialog_shows_investigation_summary():
+    from PySide6.QtWidgets import QApplication
+
+    from gui.widgets.report_viewer_dialog import RelatedRecordsDialog
+
+    application = QApplication.instance() or QApplication([])
+    assert application is not None
+
+    records = pd.DataFrame(
+        [
+            {
+                "b_party": "9000000002",
+                "call_date": "03/08/2026",
+                "call_type": "Incoming",
+                "call_duration": 30,
+            },
+            {
+                "b_party": "9000000002",
+                "call_date": "01-08-2026",
+                "call_type": "outgoing",
+                "call_duration": "60",
+            },
+            {
+                "b_party": "9000000002",
+                "call_date": "02/08/2026",
+                "call_type": "smsin",
+                "call_duration": 0,
+            },
+            {
+                "b_party": "9000000002",
+                "call_date": "02/08/2026",
+                "call_type": "SMS Out",
+                "call_duration": 0,
+            },
+            {
+                "b_party": "9000000002",
+                "call_date": "02/08/2026",
+                "call_type": "sms",
+                "call_duration": 0,
+            },
+            {
+                "b_party": "9000000002",
+                "call_date": "unavailable",
+                "call_type": "unknown",
+                "call_duration": 99,
+            },
+        ]
+    )
+
+    dialog = RelatedRecordsDialog("9000000002", records)
+
+    try:
+        assert dialog._summary.text() == (
+            "Shown-record summary: Records: 6 | Incoming: 2 | Outgoing: 2 | "
+            "Calls: 2 | SMS: 3 | Call duration: 1m 30s | "
+            "Date range: 01 Aug 2026 to 03 Aug 2026"
+        )
+    finally:
+        dialog.close()
+
+
 def test_related_records_dialog_reports_limit_and_enables_sorting():
     import pandas as pd
     from PySide6.QtWidgets import QApplication, QLabel, QTableWidget
@@ -957,6 +1018,12 @@ def test_related_records_dialog_reports_limit_and_enables_sorting():
             label.text()
             for label in limited_dialog.findChildren(QLabel)
         )
+        assert (
+            "Shown-record summary (loaded subset): Records: 2 | "
+            "Incoming: 1 | Outgoing: 1 | Calls: 2 | SMS: 0 | "
+            "Date range: 01 Aug 2026"
+            in limited_text
+        )
         assert "Verified records shown: 2." in limited_text
         assert (
             "Query limit reached: at least 3 matching source records were found"
@@ -967,6 +1034,11 @@ def test_related_records_dialog_reports_limit_and_enables_sorting():
         plain_text = "\n".join(
             label.text()
             for label in plain_dialog.findChildren(QLabel)
+        )
+        assert (
+            "Shown-record summary: Records: 1 | Incoming: 0 | Outgoing: 1 | "
+            "Calls: 1 | SMS: 0 | Date range: 01 Aug 2026"
+            in plain_text
         )
         assert "Verified records shown: 1." in plain_text
         assert "Query limit reached" not in plain_text
