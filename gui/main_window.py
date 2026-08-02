@@ -21,6 +21,7 @@ from PySide6.QtWidgets import (
 )
 
 from gui.pages.cdr_page import CdrPage
+from gui.pages.case_reports_page import CaseReportsPage
 
 
 @dataclass(frozen=True)
@@ -77,7 +78,7 @@ NAVIGATION_ITEMS = (
     ),
     NavigationItem(
         key="case_reports",
-        title="Case Reports",
+        title="View Case Reports",
         description=(
             "Open investigation reports created for the active case."
         ),
@@ -566,13 +567,14 @@ class MainWindow(QMainWindow):
         )
 
         for item in NAVIGATION_ITEMS:
-            page = (
-                CdrPage()
-                if item.key == "cdr"
-                else ModulePage(
+            if item.key == "cdr":
+                page = CdrPage()
+            elif item.key == "case_reports":
+                page = CaseReportsPage()
+            else:
+                page = ModulePage(
                     item
                 )
-            )
             self._page_stack.addWidget(
                 page
             )
@@ -610,6 +612,19 @@ class MainWindow(QMainWindow):
         self._page_stack.setCurrentIndex(
             index
         )
+        page = self._page_stack.widget(
+            index
+        )
+        refresh = getattr(
+            page,
+            "refresh",
+            None,
+        )
+
+        if callable(
+            refresh
+        ):
+            refresh()
         self._navigation_buttons[
             index
         ].setChecked(

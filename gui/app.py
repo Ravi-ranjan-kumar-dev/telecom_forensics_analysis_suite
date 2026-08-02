@@ -52,6 +52,10 @@ def main() -> int:
     application = build_application()
 
     window = MainWindow()
+
+    # Keep a strong reference for the complete application lifetime.
+    application.main_window = window
+
     window.show()
 
     return application.exec()

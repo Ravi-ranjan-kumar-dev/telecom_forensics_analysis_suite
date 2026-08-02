@@ -35,6 +35,7 @@ from modules.controllers.case_controller import (
     show_case_reports,
 )
 from modules.core.paths import PROJECT_ROOT, TOWER_DUMP_DATA_DIR
+from modules.core.time_utils import new_run_id
 
 
 DIRECT_ANALYSIS_CASE_ID = "DEV-WORKSPACE"
@@ -337,6 +338,7 @@ def handle_single_cdr(
         return None
 
     case_id = str(case["case_id"])
+    analysis_run_id = new_run_id("single_cdr")
     log_case_event(
         case_id,
         action="SINGLE_CDR_ANALYSIS_STARTED",
@@ -374,10 +376,26 @@ def handle_single_cdr(
         excel_path = result.get("excel")
 
         if excel_path:
+            from modules.reporting.cdr_report_source import (
+                create_cdr_source_run,
+                link_report_to_source,
+            )
+
+            source_run = create_cdr_source_run(
+                case_id=case_id,
+                analysis_run_id=analysis_run_id,
+                target_frames={str(target): df},
+            )
+            link_report_to_source(
+                excel_path,
+                source_run,
+                targets=[str(target)],
+            )
             register_report(
                 case_id,
                 report_type="SINGLE_CDR",
                 report_path=excel_path,
+                analysis_run_id=analysis_run_id,
             )
 
         register_analysis_run(
@@ -386,6 +404,7 @@ def handle_single_cdr(
             status="COMPLETED",
             input_records=len(df),
             report_path=str(excel_path or ""),
+            analysis_run_id=analysis_run_id,
         )
 
         print(f"\n[+] Case report: {excel_path or 'Unavailable'}")
@@ -397,6 +416,7 @@ def handle_single_cdr(
             analysis_type="SINGLE_CDR",
             status="FAILED",
             error_message=str(error),
+            analysis_run_id=analysis_run_id,
         )
         print_error("Single CDR analysis failed", error)
         return None
@@ -453,6 +473,7 @@ def handle_multiple_cdr(
         return None
 
     case_id = str(case["case_id"])
+    analysis_run_id = new_run_id("multiple_cdr")
     log_case_event(
         case_id,
         action="MULTIPLE_CDR_ANALYSIS_STARTED",
@@ -500,13 +521,6 @@ def handle_multiple_cdr(
             )
             individual_results[target] = result
 
-            if result.get("excel"):
-                register_report(
-                    case_id,
-                    report_type="MULTIPLE_CDR_INDIVIDUAL",
-                    report_path=result["excel"],
-                )
-
         cross_builder = safe_import(
             "modules.analysis.cdr.cross_target",
             "build_cross_target_analysis",
@@ -536,11 +550,49 @@ def handle_multiple_cdr(
                 min_targets=2,
             )
 
+        from modules.reporting.cdr_report_source import (
+            create_cdr_source_run,
+            link_report_to_source,
+        )
+
+        source_run = create_cdr_source_run(
+            case_id=case_id,
+            analysis_run_id=analysis_run_id,
+            target_frames={
+                target: info["df"]
+                for target, info in loaded_cdrs.items()
+                if isinstance(info.get("df"), pd.DataFrame)
+                and not info["df"].empty
+            },
+        )
+
+        for target, result in individual_results.items():
+            report_path = result.get("excel") if isinstance(result, dict) else None
+            if not report_path:
+                continue
+            link_report_to_source(
+                report_path,
+                source_run,
+                targets=[target],
+            )
+            register_report(
+                case_id,
+                report_type="MULTIPLE_CDR_INDIVIDUAL",
+                report_path=report_path,
+                analysis_run_id=analysis_run_id,
+            )
+
         if common_path:
+            link_report_to_source(
+                common_path,
+                source_run,
+                targets=loaded_cdrs.keys(),
+            )
             register_report(
                 case_id,
                 report_type="MULTIPLE_CDR_COMMON",
                 report_path=common_path,
+                analysis_run_id=analysis_run_id,
             )
 
         total_records = sum(
@@ -556,6 +608,7 @@ def handle_multiple_cdr(
             input_records=total_records,
             output_records=len(individual_results),
             report_path=str(common_path or ""),
+            analysis_run_id=analysis_run_id,
         )
 
         print(f"\n[+] Individual reports: {individual_dir}")
@@ -573,6 +626,7 @@ def handle_multiple_cdr(
             analysis_type="MULTIPLE_CDR",
             status="FAILED",
             error_message=str(error),
+            analysis_run_id=analysis_run_id,
         )
         print_error("Multiple CDR analysis failed", error)
         return None
