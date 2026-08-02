@@ -9,7 +9,7 @@ from typing import Any, Final
 
 from openpyxl import load_workbook
 from openpyxl.worksheet.worksheet import Worksheet
-from PySide6.QtCore import Qt, QUrl
+from PySide6.QtCore import QSignalBlocker, Qt, QUrl
 from PySide6.QtGui import QColor, QCloseEvent, QDesktopServices
 from PySide6.QtWidgets import (
     QAbstractItemView,
@@ -25,6 +25,12 @@ from PySide6.QtWidgets import (
     QTableWidgetItem,
     QVBoxLayout,
     QWidget,
+)
+
+from modules.reporting.report_section_reader import (
+    ReportSection,
+    discover_report_sections,
+    read_report_section_rows,
 )
 
 __all__ = [
@@ -318,6 +324,8 @@ class ReportViewerDialog(QDialog):
         self._number_columns: tuple[int, ...] = ()
         self._identifier_columns: dict[int, str] = {}
         self._verified_source_link = None
+        self._active_sheet_name = ""
+        self._sections_by_sheet: dict[str, tuple[ReportSection, ...]] = {}
 
         self.setWindowTitle("Investigation Report Viewer")
         self.resize(1200, 760)
@@ -329,6 +337,13 @@ class ReportViewerDialog(QDialog):
         self._sheet_selector = QComboBox()
         self._sheet_selector.setAccessibleName("Report sheet")
         self._sheet_selector.currentTextChanged.connect(self._show_sheet)
+
+        self._section_label = QLabel("Section:")
+        self._section_label.setVisible(False)
+        self._section_selector = QComboBox()
+        self._section_selector.setAccessibleName("Report section")
+        self._section_selector.setVisible(False)
+        self._section_selector.currentIndexChanged.connect(self._show_section)
 
         self._status = QLabel()
         self._status.setObjectName("cardText")
@@ -361,11 +376,16 @@ class ReportViewerDialog(QDialog):
         controls.addWidget(external_button)
         controls.addWidget(close_button)
 
+        section_controls = QHBoxLayout()
+        section_controls.addWidget(self._section_label)
+        section_controls.addWidget(self._section_selector, stretch=1)
+
         layout = QVBoxLayout(self)
         layout.setContentsMargins(24, 22, 24, 22)
         layout.setSpacing(12)
         layout.addWidget(self._file_label)
         layout.addLayout(controls)
+        layout.addLayout(section_controls)
         layout.addWidget(self._status)
         layout.addWidget(self._table, stretch=1)
 
@@ -394,7 +414,9 @@ class ReportViewerDialog(QDialog):
             self._table.setEnabled(False)
             return
 
+        blocker = QSignalBlocker(self._sheet_selector)
         self._sheet_selector.addItems(self._workbook.sheetnames)
+        del blocker
         if self._workbook.sheetnames:
             self._show_sheet(self._workbook.sheetnames[0])
 
@@ -404,7 +426,100 @@ class ReportViewerDialog(QDialog):
         if self._workbook is None or not sheet_name:
             return
 
+        self._active_sheet_name = sheet_name
         worksheet: Worksheet = self._workbook[sheet_name]
+        sections = self._sections_by_sheet.get(sheet_name)
+        if sections is None:
+            sections = discover_report_sections(worksheet)
+            self._sections_by_sheet[sheet_name] = sections
+
+        self._set_section_choices(sections)
+        if sections:
+            self._render_section(worksheet, sections[0])
+            return
+
+        self._render_legacy_sheet(worksheet, sheet_name)
+
+    def _set_section_choices(
+        self,
+        sections: tuple[ReportSection, ...],
+    ) -> None:
+        """Show only canonical table sections for the active sheet."""
+
+        blocker = QSignalBlocker(self._section_selector)
+        self._section_selector.clear()
+        for section in sections:
+            self._section_selector.addItem(section.title, section)
+        del blocker
+
+        has_sections = bool(sections)
+        self._section_label.setVisible(has_sections)
+        self._section_selector.setVisible(has_sections)
+
+    def _show_section(self, index: int) -> None:
+        """Render the selected canonical section without rescanning the sheet."""
+
+        if (
+            self._workbook is None
+            or not self._active_sheet_name
+            or index < 0
+        ):
+            return
+
+        section = self._section_selector.itemData(index)
+        if not isinstance(section, ReportSection):
+            return
+
+        worksheet: Worksheet = self._workbook[self._active_sheet_name]
+        self._render_section(worksheet, section)
+
+    def _render_section(
+        self,
+        worksheet: Worksheet,
+        section: ReportSection,
+    ) -> None:
+        """Render one bounded report section and its investigator context."""
+
+        visible_rows = read_report_section_rows(
+            worksheet,
+            section,
+            limit=_MAX_VISIBLE_ROWS,
+        )
+        self._render_table(section.headers, visible_rows)
+
+        limit_note = (
+            f" Showing the first {_MAX_VISIBLE_ROWS:,} records."
+            if section.record_count > len(visible_rows)
+            else ""
+        )
+        empty_note = (
+            " No records are available for this section."
+            if section.is_empty
+            else ""
+        )
+        guidance_note = (
+            f" Review guidance: {section.guidance}"
+            if section.guidance
+            else ""
+        )
+        identifier_note = (
+            " Highlighted identifiers open verified source records."
+            if self._identifier_columns
+            else ""
+        )
+        self._status.setText(
+            f"Sheet: {self._active_sheet_name} | Section: {section.title} | "
+            f"Records: {section.record_count:,}."
+            f"{limit_note}{empty_note}{guidance_note}{identifier_note}"
+        )
+
+    def _render_legacy_sheet(
+        self,
+        worksheet: Worksheet,
+        sheet_name: str,
+    ) -> None:
+        """Preserve bounded viewing for older reports without sections."""
+
         rows = worksheet.iter_rows(values_only=True)
         scanned_rows = list(islice(rows, _HEADER_SCAN_ROWS))
         header_index = _header_index(scanned_rows)
@@ -413,13 +528,6 @@ class ReportViewerDialog(QDialog):
             _clean_cell(value) or f"Column {index + 1}"
             for index, value in enumerate(header_row)
         ]
-        self._identifier_columns = detect_identifier_columns(headers)
-        self._number_columns = tuple(
-            index
-            for index, identifier_type in self._identifier_columns.items()
-            if identifier_type == "phone"
-        )
-
         data_rows = chain(scanned_rows[header_index + 1 :], rows)
         visible_rows: list[tuple[object, ...]] = []
         for row_number, row in enumerate(data_rows):
@@ -427,25 +535,8 @@ class ReportViewerDialog(QDialog):
                 break
             visible_rows.append(tuple(row))
 
-        self._table.setSortingEnabled(False)
-        self._table.clear()
-        self._table.setColumnCount(len(headers))
-        self._table.setHorizontalHeaderLabels(headers)
-        self._table.setRowCount(len(visible_rows))
+        self._render_table(headers, visible_rows)
 
-        for row_index, row in enumerate(visible_rows):
-            for column_index in range(len(headers)):
-                value = row[column_index] if column_index < len(row) else None
-                item = QTableWidgetItem(_clean_cell(value))
-                if column_index in self._identifier_columns:
-                    label = _IDENTIFIER_LABELS[
-                        self._identifier_columns[column_index]
-                    ]
-                    item.setForeground(QColor("#285A1F"))
-                    item.setToolTip(f"Double-click to view related {label} records")
-                self._table.setItem(row_index, column_index, item)
-
-        self._table.setSortingEnabled(True)
         worksheet_rows = worksheet.max_row or 0
         total_rows = max(worksheet_rows - header_index - 1, 0)
         limit_note = (
@@ -457,6 +548,44 @@ class ReportViewerDialog(QDialog):
             f"Sheet: {sheet_name} | Records: {total_rows:,}."
             f"{limit_note} Highlighted identifiers open verified source records."
         )
+
+    def _render_table(
+        self,
+        headers: list[str] | tuple[str, ...],
+        visible_rows: (
+            list[tuple[object, ...]]
+            | tuple[tuple[object, ...], ...]
+        ),
+    ) -> None:
+        """Render rows while preserving identifier drill-down behavior."""
+
+        header_labels = list(headers)
+        self._identifier_columns = detect_identifier_columns(header_labels)
+        self._number_columns = tuple(
+            index
+            for index, identifier_type in self._identifier_columns.items()
+            if identifier_type == "phone"
+        )
+
+        self._table.setSortingEnabled(False)
+        self._table.clear()
+        self._table.setColumnCount(len(header_labels))
+        self._table.setHorizontalHeaderLabels(header_labels)
+        self._table.setRowCount(len(visible_rows))
+
+        for row_index, row in enumerate(visible_rows):
+            for column_index in range(len(header_labels)):
+                value = row[column_index] if column_index < len(row) else None
+                item = QTableWidgetItem(_clean_cell(value))
+                if column_index in self._identifier_columns:
+                    label = _IDENTIFIER_LABELS[
+                        self._identifier_columns[column_index]
+                    ]
+                    item.setForeground(QColor("#285A1F"))
+                    item.setToolTip(f"Double-click to view related {label} records")
+                self._table.setItem(row_index, column_index, item)
+
+        self._table.setSortingEnabled(True)
 
     def _show_number_summary(self, row: int, column: int) -> None:
         """Backward-compatible phone-number drill-down entry point."""

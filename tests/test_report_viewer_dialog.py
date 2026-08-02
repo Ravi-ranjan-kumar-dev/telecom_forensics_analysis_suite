@@ -5,6 +5,8 @@ from pathlib import Path
 import pytest
 import pandas as pd
 from openpyxl import Workbook
+from openpyxl.styles import Border, Font, PatternFill, Side
+from openpyxl.worksheet.worksheet import Worksheet
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
@@ -15,6 +17,16 @@ from gui.widgets.report_viewer_dialog import (
     detect_identifier_columns,
     detect_number_columns,
     prepare_related_records,
+)
+
+
+_SECTION_FILL = PatternFill("solid", fgColor="D9EAF7")
+_HEADER_FILL = PatternFill("solid", fgColor="5B9BD5")
+_TABLE_BORDER = Border(
+    left=Side(style="thin"),
+    right=Side(style="thin"),
+    top=Side(style="thin"),
+    bottom=Side(style="thin"),
 )
 
 
@@ -32,6 +44,85 @@ def _write_report(path: Path) -> None:
     details.append(["9000000002", "9000000001", 3])
 
     workbook.save(path)
+
+
+def _write_section_title(sheet: Worksheet, row: int, title: str) -> None:
+    cell = sheet.cell(row=row, column=1, value=title)
+    cell.fill = _SECTION_FILL
+    cell.font = Font(bold=True)
+
+
+def _write_section_header(
+    sheet: Worksheet,
+    row: int,
+    headers: tuple[str, ...],
+) -> None:
+    for column, header in enumerate(headers, start=1):
+        cell = sheet.cell(row=row, column=column, value=header)
+        cell.fill = _HEADER_FILL
+        cell.font = Font(bold=True, color="FFFFFF")
+        cell.border = _TABLE_BORDER
+
+
+def _write_section_record(
+    sheet: Worksheet,
+    row: int,
+    values: tuple[object, ...],
+) -> None:
+    for column, value in enumerate(values, start=1):
+        cell = sheet.cell(row=row, column=column, value=value)
+        cell.border = _TABLE_BORDER
+
+
+def _write_structured_report(path: Path) -> None:
+    workbook = Workbook()
+    sheet = workbook.active
+    sheet.title = "Movement & Daily Routine"
+
+    report_title = sheet.cell(row=1, column=1, value="Movement Analysis")
+    report_title.fill = PatternFill("solid", fgColor="1F4E78")
+    report_title.font = Font(bold=True, color="FFFFFF")
+
+    _write_section_title(
+        sheet,
+        7,
+        "FIRST AND LAST COMMUNICATION BY DAY (FCLC)",
+    )
+    sheet.cell(row=8, column=1, value="Review the first and last daily events.")
+    _write_section_header(
+        sheet,
+        9,
+        ("Other Party", "Event Type", "Date"),
+    )
+    _write_section_record(
+        sheet,
+        10,
+        ("9000000002", "Outgoing", "01/08/2026"),
+    )
+    _write_section_record(
+        sheet,
+        11,
+        ("9000000003", "Incoming", "01/08/2026"),
+    )
+
+    _write_section_title(sheet, 14, "MOVING CALLS")
+    _write_section_header(sheet, 15, ("Cell ID", "Event Type", "Date"))
+    _write_section_record(
+        sheet,
+        16,
+        ("405-51-834-15492631", "Outgoing", "01/08/2026"),
+    )
+
+    _write_section_title(sheet, 19, "OBSERVED IDENTIFIER VARIATIONS")
+    sheet.cell(row=20, column=1, value="Review only confirmed variations.")
+    sheet.cell(
+        row=21,
+        column=1,
+        value="No records available for this section.",
+    )
+
+    workbook.save(path)
+    workbook.close()
 
 
 def test_number_column_detection_supports_report_labels():
@@ -69,15 +160,67 @@ def test_viewer_lists_sheets_and_detects_number_columns(tmp_path: Path):
     dialog = ReportViewerDialog(report)
 
     assert dialog._sheet_selector.count() == 2
+    assert dialog._section_selector.isHidden()
     assert dialog._table.rowCount() == 2
     assert dialog.number_columns == (0,)
 
     dialog._sheet_selector.setCurrentText("Common Contacts")
 
     assert dialog._table.rowCount() == 1
+    assert dialog._section_selector.isHidden()
     assert dialog.number_columns == (0, 1)
 
     dialog.close()
+
+
+def test_viewer_navigates_structured_sections_without_cross_section_rows(
+    tmp_path: Path,
+):
+    build_application(["report-viewer-section-test"])
+
+    report = tmp_path / "structured-report.xlsx"
+    _write_structured_report(report)
+
+    dialog = ReportViewerDialog(report)
+
+    try:
+        assert not dialog._section_selector.isHidden()
+        assert dialog._section_selector.count() == 3
+        assert dialog._section_selector.currentText() == (
+            "FIRST AND LAST COMMUNICATION BY DAY (FCLC)"
+        )
+        assert dialog._table.columnCount() == 3
+        assert dialog._table.rowCount() == 2
+        assert dialog._table.horizontalHeaderItem(0).text() == "Other Party"
+        assert dialog._table.item(0, 0).text() == "9000000002"
+        assert dialog.number_columns == (0,)
+        assert "Records: 2." in dialog._status.text()
+        assert "Review the first and last daily events." in dialog._status.text()
+
+        dialog._section_selector.setCurrentText("MOVING CALLS")
+
+        assert dialog._table.columnCount() == 3
+        assert dialog._table.rowCount() == 1
+        assert dialog._table.horizontalHeaderItem(0).text() == "Cell ID"
+        assert dialog._table.item(0, 0).text() == "405-51-834-15492631"
+        assert dialog.number_columns == ()
+        assert "Section: MOVING CALLS" in dialog._status.text()
+        assert "9000000002" not in dialog._status.text()
+
+        dialog._section_selector.setCurrentText(
+            "OBSERVED IDENTIFIER VARIATIONS"
+        )
+
+        assert dialog._table.columnCount() == 0
+        assert dialog._table.rowCount() == 0
+        assert "Records: 0." in dialog._status.text()
+        assert (
+            "No records are available for this section."
+            in dialog._status.text()
+        )
+        assert "Review only confirmed variations." in dialog._status.text()
+    finally:
+        dialog.close()
 
 
 def test_number_double_click_opens_verified_source_records(
