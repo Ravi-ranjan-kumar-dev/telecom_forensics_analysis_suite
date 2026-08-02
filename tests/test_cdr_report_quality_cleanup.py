@@ -145,10 +145,62 @@ def test_same_device_raw_change_is_identifier_variant():
     result = device_change_review(_device_frame())
 
     assert len(result) == 1
-    assert result.iloc[0]["Change Type"] == "Identifier Variant"
-    assert result.iloc[0]["Old Device Key"] == (
-        result.iloc[0]["New Device Key"]
-    )
+
+    row = result.iloc[0]
+
+    assert row["Change Type"] == "Identifier Variant"
+    assert row["Old Device Key"] == row["New Device Key"]
+    assert row["Old IMSI"] == ""
+    assert row["New IMSI"] == ""
+
+
+def test_device_only_change_hides_unchanged_imsi():
+    frame = _device_frame()
+    frame.loc[1, "imei"] = "490154203237518"
+
+    result = device_change_review(frame)
+
+    assert len(result) == 1
+
+    row = result.iloc[0]
+
+    assert row["Change Type"] == "Device Change"
+    assert row["Old Device Key"] != row["New Device Key"]
+    assert row["Old IMSI"] == ""
+    assert row["New IMSI"] == ""
+
+
+def test_sim_only_change_preserves_imsi_transition():
+    frame = _device_frame()
+    frame.loc[1, "imei"] = frame.loc[0, "imei"]
+    frame.loc[1, "imsi"] = "405002222222222"
+
+    result = device_change_review(frame)
+
+    assert len(result) == 1
+
+    row = result.iloc[0]
+
+    assert row["Change Type"] == "SIM Change"
+    assert row["Old IMSI"] == "405001111111111"
+    assert row["New IMSI"] == "405002222222222"
+
+
+def test_device_and_sim_change_preserves_imsi_transition():
+    frame = _device_frame()
+    frame.loc[1, "imei"] = "490154203237518"
+    frame.loc[1, "imsi"] = "405002222222222"
+
+    result = device_change_review(frame)
+
+    assert len(result) == 1
+
+    row = result.iloc[0]
+
+    assert row["Change Type"] == "Device and SIM Change"
+    assert row["Old Device Key"] != row["New Device Key"]
+    assert row["Old IMSI"] == "405001111111111"
+    assert row["New IMSI"] == "405002222222222"
 
 
 def test_contact_summary_has_map_ready_fields(monkeypatch):

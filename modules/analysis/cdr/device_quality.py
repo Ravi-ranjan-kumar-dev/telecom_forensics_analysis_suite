@@ -500,6 +500,12 @@ def device_change_review(dataframe: pd.DataFrame) -> pd.DataFrame:
     changes["New Device Key"] = changes["_device_key"]
     changes["Old IMSI"] = changes["_previous_imsi"]
     changes["New IMSI"] = changes["_raw_imsi"]
+
+    sim_changed_rows = sim_change.loc[changes.index].fillna(False)
+    changes.loc[
+        ~sim_changed_rows,
+        ["Old IMSI", "New IMSI"],
+    ] = ""
     changes["Tower"] = (
         changes["first_cell_id"]
         if "first_cell_id" in changes.columns
