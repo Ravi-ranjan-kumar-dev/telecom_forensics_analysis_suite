@@ -9,7 +9,105 @@ The workspace groups all location/tower-originated source types:
 from __future__ import annotations
 
 import importlib
+from pathlib import Path
 from typing import Any
+
+
+TOWER_DUMP_SOURCE_TYPES = (
+    "cdr",
+    "gprs",
+    "ipdr",
+)
+
+TOWER_DUMP_SOURCE_SUFFIXES = {
+    "cdr": frozenset(
+        {
+            ".csv",
+            ".txt",
+            ".tsv",
+            ".xlsx",
+            ".xls",
+        }
+    ),
+    "gprs": frozenset(
+        {
+            ".csv",
+            ".txt",
+        }
+    ),
+    "ipdr": frozenset(
+        {
+            ".csv",
+            ".txt",
+        }
+    ),
+}
+
+
+def run_complete_tower_dump_analysis(
+    case: dict[str, Any],
+    *,
+    source_type: str,
+    input_folder: str | Path,
+) -> dict[str, Any] | None:
+    """Run one complete Tower Dump workflow without CLI prompts."""
+
+    normalized_source = str(
+        source_type
+    ).strip().casefold()
+
+    if normalized_source not in TOWER_DUMP_SOURCE_TYPES:
+        raise ValueError(
+            f"Unsupported Tower Dump source type: {source_type}"
+        )
+
+    folder_text = str(
+        input_folder
+    ).strip()
+
+    if not folder_text:
+        raise ValueError(
+            "Tower Dump input folder is required."
+        )
+
+    folder = Path(
+        folder_text
+    ).expanduser().resolve()
+
+    if not folder.is_dir():
+        raise FileNotFoundError(
+            f"Tower Dump input folder not found: {folder}"
+        )
+
+    if normalized_source == "cdr":
+        from modules.controllers.tower_cdr_controller import (
+            _run_complete_analysis,
+        )
+
+        return _run_complete_analysis(
+            case,
+            input_folder=folder,
+        )
+
+    if normalized_source == "gprs":
+        from modules.controllers.tower_gprs_controller import (
+            _execute,
+        )
+
+        return _execute(
+            case,
+            use_partitions=False,
+            input_folder=folder,
+        )
+
+    from modules.controllers.tower_ipdr_controller import (
+        _run_complete_tower_ipdr_analysis,
+    )
+
+    return _run_complete_tower_ipdr_analysis(
+        case,
+        input_folder=folder,
+    )
 
 
 def _menu(case: dict[str, Any]) -> str:

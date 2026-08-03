@@ -842,6 +842,7 @@ def _execute(
     case: dict[str, Any],
     *,
     use_partitions: bool,
+    input_folder: str | Path | None = None,
 ) -> dict[str, Any] | None:
     from modules.analysis.gprsdump.duckdb_presence import (
         build_tower_gprs_duckdb_presence,
@@ -867,7 +868,15 @@ def _execute(
     )
 
     try:
-        input_folder = _input_folder(case_id)
+        input_folder = (
+            Path(
+                input_folder
+            ).expanduser().resolve()
+            if input_folder is not None
+            else _input_folder(
+                case_id
+            )
+        )
         print(f"[+] Tower GPRS Dump input folder: {input_folder}")
 
         pipeline_result = run_scalable_analysis_pipeline(

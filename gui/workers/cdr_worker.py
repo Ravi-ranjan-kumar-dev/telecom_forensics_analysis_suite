@@ -3,58 +3,12 @@
 from __future__ import annotations
 
 import contextlib
-import io
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any
 
 from PySide6.QtCore import QObject, Signal, Slot
 
-
-class _SignalTextStream(io.TextIOBase):
-    """Send complete output lines through a Qt signal callback."""
-
-    def __init__(
-        self,
-        emit_line: Callable[[str], None],
-    ) -> None:
-        super().__init__()
-        self._emit_line = emit_line
-        self._buffer = ""
-
-    def writable(self) -> bool:
-        return True
-
-    def write(
-        self,
-        text: str,
-    ) -> int:
-        value = str(text)
-
-        if not value:
-            return 0
-
-        self._buffer += value
-
-        while "\n" in self._buffer:
-            line, self._buffer = self._buffer.split(
-                "\n",
-                1,
-            )
-
-            if line.strip():
-                self._emit_line(
-                    line.rstrip()
-                )
-
-        return len(value)
-
-    def flush(self) -> None:
-        if self._buffer.strip():
-            self._emit_line(
-                self._buffer.rstrip()
-            )
-
-        self._buffer = ""
+from gui.workers.text_stream import SignalTextStream
 
 
 def _portable_report_path(
@@ -263,7 +217,7 @@ class CdrWorker(QObject):
     ) -> None:
         """Execute the selected case-aware CDR workflow."""
 
-        output_stream = _SignalTextStream(
+        output_stream = SignalTextStream(
             self.log.emit
         )
 

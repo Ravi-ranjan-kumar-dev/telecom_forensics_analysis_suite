@@ -71,7 +71,9 @@ TOWER_IPDR_WORKFLOW = "tower_ipdr"
 
 
 
-def _tower_ipdr_input_fingerprint() -> dict:
+def _tower_ipdr_input_fingerprint(
+    input_folder: str | Path | None = None,
+) -> dict:
     """Return a simple fingerprint of Tower IPDR input files.
 
     This is used only to decide whether backend data needs refresh.
@@ -80,7 +82,15 @@ def _tower_ipdr_input_fingerprint() -> dict:
 
     from pathlib import Path
 
-    input_dir = Path("data/tower_dump/ipdr/input")
+    input_dir = (
+        Path(
+            input_folder
+        ).expanduser().resolve()
+        if input_folder is not None
+        else Path(
+            "data/tower_dump/ipdr/input"
+        )
+    )
     allowed_suffixes = {".csv", ".txt", ".xlsx", ".xls"}
 
     files = []
@@ -155,21 +165,31 @@ def _tower_ipdr_database_has_rows(case_id: str) -> bool:
         return False
 
 
-def _ensure_tower_ipdr_data_ready(case_id: str, load_function) -> bool:
+def _ensure_tower_ipdr_data_ready(
+    case_id: str,
+    load_function,
+    *,
+    input_folder: str | Path | None = None,
+) -> bool:
     """Ensure Tower IPDR backend data is ready before analysis/report.
 
     Returns True when data is ready, False when no input files are available
     or load failed.
     """
 
-    current_fingerprint = _tower_ipdr_input_fingerprint()
+    current_fingerprint = _tower_ipdr_input_fingerprint(
+        input_folder
+    )
     saved_fingerprint = _read_tower_ipdr_saved_fingerprint(case_id)
 
     print("[+] Tower IPDR data status check ho raha hai...")
 
     if current_fingerprint.get("file_count", 0) <= 0:
         print("[-] Tower IPDR input folder me koi supported file nahi mili.")
-        print("    Folder: data/tower_dump/ipdr/input")
+        print(
+            "    Folder: "
+            f"{current_fingerprint.get('input_dir', '')}"
+        )
         return False
 
     database_ready = _tower_ipdr_database_has_rows(case_id)
@@ -657,6 +677,7 @@ def _save_tower_ipdr_backend_state(
     *,
     import_summary: dict[str, Any] | None = None,
     source: str = "tower_ipdr",
+    input_folder: str | Path | None = None,
 ) -> dict[str, Any]:
     """Save Tower IPDR backend state in common pipeline-state style."""
 
@@ -670,7 +691,9 @@ def _save_tower_ipdr_backend_state(
     manifest_path = tower_ipdr_manifest_path(case_id)
     row_count = count_tower_ipdr_events(case_id)
     column_count = _tower_ipdr_column_count(case_id)
-    fingerprint = _tower_ipdr_input_fingerprint()
+    fingerprint = _tower_ipdr_input_fingerprint(
+        input_folder
+    )
 
     payload: dict[str, Any] = {
         "ok": bool(row_count > 0 and database_path.exists()),
@@ -765,9 +788,21 @@ def _print_tower_ipdr_backend_status(
         print(f"Pipeline state  : {payload.get('pipeline_state_path', '')}")
         print("-" * 78)
 
-def _import_staging(case: dict[str, Any]) -> None:
+def _import_staging(
+    case: dict[str, Any],
+    *,
+    input_folder: str | Path | None = None,
+) -> None:
     case_id = str(case["case_id"])
-    input_folder = _input_folder(case_id)
+    input_folder = (
+        Path(
+            input_folder
+        ).expanduser().resolve()
+        if input_folder is not None
+        else _input_folder(
+            case_id
+        )
+    )
 
     print(f"[+] Tower IPDR staging input folder: {input_folder}")
 
@@ -782,6 +817,7 @@ def _import_staging(case: dict[str, Any]) -> None:
         case_id,
         import_summary=summary,
         source="staging_import",
+        input_folder=input_folder,
     )
     _print_tower_ipdr_backend_status(
         backend_state,
@@ -1030,7 +1066,11 @@ def _collect_date_time_ranges() -> list[tuple[str, str]]:
 
 
 
-def _run_complete_tower_ipdr_analysis(case: dict[str, Any]) -> None:
+def _run_complete_tower_ipdr_analysis(
+    case: dict[str, Any],
+    *,
+    input_folder: str | Path | None = None,
+) -> dict[str, Any] | None:
     """Run total Tower IPDR analysis on the full loaded backend dataset.
 
     This is different from Part-wise Analysis.
@@ -1040,11 +1080,23 @@ def _run_complete_tower_ipdr_analysis(case: dict[str, Any]) -> None:
 
     case_id = str(case["case_id"])
 
+    selected_input_folder = (
+        Path(
+            input_folder
+        ).expanduser().resolve()
+        if input_folder is not None
+        else None
+    )
+
     if not _ensure_tower_ipdr_data_ready(
         case_id,
-        lambda _case_id: _import_staging(case),
+        lambda _case_id: _import_staging(
+            case,
+            input_folder=selected_input_folder,
+        ),
+        input_folder=selected_input_folder,
     ):
-        return
+        return None
 
     print("[+] Complete Tower IPDR total analysis start ho raha hai...")
 
@@ -2321,6 +2373,7 @@ def _run_complete_tower_ipdr_analysis(case: dict[str, Any]) -> None:
         backend_state = _save_tower_ipdr_backend_state(
             case_id,
             source="complete_analysis",
+            input_folder=selected_input_folder,
         )
 
         latest_pointer_payload = {
@@ -2431,6 +2484,25 @@ def _run_complete_tower_ipdr_analysis(case: dict[str, Any]) -> None:
         print(f"Main Summary  : {summary_path}")
         print(f"Excel Report  : {excel_path}")
         print("=" * 78)
+
+        return {
+            "run_id": run_id,
+            "input_folder": str(
+                selected_input_folder
+                or _input_folder(
+                    case_id
+                )
+            ),
+            "report_folder": str(
+                report_dir
+            ),
+            "summary_report": str(
+                summary_path
+            ),
+            "excel_report": str(
+                excel_path
+            ),
+        }
 
     finally:
         con.close()

@@ -22,6 +22,7 @@ from PySide6.QtWidgets import (
 
 from gui.pages.cdr_page import CdrPage
 from gui.pages.case_reports_page import CaseReportsPage
+from gui.pages.tower_dump_page import TowerDumpPage
 
 
 @dataclass(frozen=True)
@@ -569,6 +570,8 @@ class MainWindow(QMainWindow):
         for item in NAVIGATION_ITEMS:
             if item.key == "cdr":
                 page = CdrPage()
+            elif item.key == "tower_dump":
+                page = TowerDumpPage()
             elif item.key == "case_reports":
                 page = CaseReportsPage()
             else:

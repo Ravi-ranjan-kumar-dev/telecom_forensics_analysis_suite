@@ -553,6 +553,8 @@ def _cached_tower_cdr_load_result(
 
 def _run_complete_analysis(
     case: dict[str, Any],
+    *,
+    input_folder: str | Path | None = None,
 ) -> dict[str, Any] | None:
     from modules.analysis.towerdump import build_tower_dump_analysis_bundle
     from modules.analysis.towerdump.duckdb_presence import (
@@ -575,7 +577,15 @@ def _run_complete_analysis(
     )
 
     case_id = str(case["case_id"])
-    input_folder = _input_folder(case_id)
+    input_folder = (
+        Path(
+            input_folder
+        ).expanduser().resolve()
+        if input_folder is not None
+        else _input_folder(
+            case_id
+        )
+    )
     print(f"[+] Tower CDR Dump input: {input_folder}")
 
     log_case_event(
