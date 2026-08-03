@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import os
+import threading
+import time
 from pathlib import Path
 
 os.environ.setdefault(
@@ -9,6 +11,7 @@ os.environ.setdefault(
 )
 
 from gui.app import build_application
+from gui import main_window as main_window_module
 from gui.main_window import MainWindow
 from gui.pages.tower_dump_page import TowerDumpPage
 from gui.workers.tower_dump_worker import (
@@ -261,3 +264,139 @@ def test_main_window_uses_real_tower_dump_page():
     )
 
     window.close()
+
+
+def test_main_window_blocks_close_until_tower_analysis_finishes(
+    tmp_path: Path,
+    monkeypatch,
+):
+    application = build_application(
+        [
+            "tower-thread-lifecycle-test",
+        ]
+    )
+    case = {
+        "case_id": "DEV-WORKSPACE",
+    }
+    started = threading.Event()
+    release = threading.Event()
+    warnings: list[tuple[str, str]] = []
+    report = tmp_path / "tower.xlsx"
+    evidence = tmp_path / "evidence"
+    evidence.mkdir()
+    (
+        evidence
+        / "tower.csv"
+    ).write_text(
+        "header\n",
+        encoding="utf-8",
+    )
+
+    monkeypatch.setattr(
+        app_controller,
+        "get_direct_analysis_workspace",
+        lambda: case,
+    )
+
+    def controlled_run(
+        selected_case,
+        *,
+        source_type,
+        input_folder,
+    ):
+        assert selected_case is case
+        assert source_type == "cdr"
+        assert input_folder == evidence.resolve()
+        started.set()
+
+        if not release.wait(
+            timeout=3.0
+        ):
+            raise TimeoutError(
+                "Test worker was not released."
+            )
+
+        report.write_bytes(
+            b"report"
+        )
+        return {
+            "excel_report": report,
+        }
+
+    monkeypatch.setattr(
+        tower_dump_controller,
+        "run_complete_tower_dump_analysis",
+        controlled_run,
+    )
+    monkeypatch.setattr(
+        main_window_module.QMessageBox,
+        "warning",
+        lambda _parent, title, message: warnings.append(
+            (
+                title,
+                message,
+            )
+        ),
+    )
+
+    window = MainWindow()
+    tower_index = window.navigation_keys.index(
+        "tower_dump"
+    )
+    page = window._page_stack.widget(
+        tower_index
+    )
+    assert isinstance(
+        page,
+        TowerDumpPage,
+    )
+    page.set_mode(
+        "cdr"
+    )
+    page.set_selected_folder(
+        evidence
+    )
+    window.show()
+
+    try:
+        page._start_analysis()
+        deadline = time.monotonic() + 3.0
+
+        while (
+            not started.is_set()
+            and time.monotonic() < deadline
+        ):
+            application.processEvents()
+
+        assert started.is_set()
+        assert page.is_running
+        assert window.close() is False
+        assert window.isVisible()
+        assert warnings
+        assert warnings[0][0] == "Analysis in Progress"
+        assert "Tower Dump Analysis is still running" in (
+            warnings[0][1]
+        )
+
+        release.set()
+        deadline = time.monotonic() + 3.0
+
+        while (
+            page.is_running
+            and time.monotonic() < deadline
+        ):
+            application.processEvents()
+
+        assert not page.is_running
+        assert window.close() is True
+
+    finally:
+        release.set()
+
+        if page.is_running:
+            page._thread.quit()
+            page._thread.wait(
+                3000
+            )
+
+        window.close()

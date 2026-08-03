@@ -5,12 +5,14 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from PySide6.QtCore import Qt
+from PySide6.QtGui import QCloseEvent
 from PySide6.QtWidgets import (
     QButtonGroup,
     QFrame,
     QHBoxLayout,
     QLabel,
     QMainWindow,
+    QMessageBox,
     QPushButton,
     QSizePolicy,
     QSpacerItem,
@@ -414,6 +416,68 @@ class MainWindow(QMainWindow):
         return NAVIGATION_ITEMS[
             index
         ].key
+
+    @property
+    def running_analysis_titles(
+        self,
+    ) -> tuple[str, ...]:
+        """Return investigator-facing titles for active analyses."""
+
+        titles: list[str] = []
+
+        for index, item in enumerate(
+            NAVIGATION_ITEMS
+        ):
+            page = self._page_stack.widget(
+                index
+            )
+
+            if bool(
+                getattr(
+                    page,
+                    "is_running",
+                    False,
+                )
+            ):
+                titles.append(
+                    item.title
+                )
+
+        return tuple(
+            titles
+        )
+
+    def closeEvent(
+        self,
+        event: QCloseEvent,
+    ) -> None:
+        """Keep active analysis threads alive until work completes."""
+
+        running_titles = self.running_analysis_titles
+
+        if running_titles:
+            event.ignore()
+            analysis_text = ", ".join(
+                running_titles
+            )
+            message = (
+                f"{analysis_text} is still running. Keep the application "
+                "open until the analysis finishes. Closing now could "
+                "interrupt report generation."
+            )
+            self.statusBar().showMessage(
+                message
+            )
+            QMessageBox.warning(
+                self,
+                "Analysis in Progress",
+                message,
+            )
+            return
+
+        super().closeEvent(
+            event
+        )
 
     def _build_sidebar(
         self,
