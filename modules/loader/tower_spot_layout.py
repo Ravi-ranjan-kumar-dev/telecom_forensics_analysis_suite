@@ -22,6 +22,155 @@ ROOT_SPOT_ID = "UNASSIGNED-ROOT"
 ROOT_SPOT_NAME = "ROOT_LEVEL_FILES"
 
 
+def normalize_selected_spot_folders(
+    root_folder: str | Path,
+    selected_spot_folders: Iterable[str],
+) -> tuple[str, ...]:
+    """Return validated immediate Spot folder names."""
+
+    root = Path(
+        root_folder
+    ).expanduser().resolve()
+
+    if not root.is_dir():
+        raise FileNotFoundError(
+            f"Tower Dump parent folder not found: {root}"
+        )
+
+    selected: dict[str, str] = {}
+
+    for value in selected_spot_folders:
+        name = str(
+            value
+        ).strip()
+
+        if (
+            not name
+            or name in {
+                ".",
+                "..",
+            }
+            or "/" in name
+            or "\\" in name
+            or "\x00" in name
+            or Path(name).is_absolute()
+        ):
+            raise ValueError(
+                f"Unsafe Spot folder name: {value!r}"
+            )
+
+        candidate = (
+            root
+            / name
+        ).resolve(
+            strict=False
+        )
+
+        try:
+            relative = candidate.relative_to(
+                root
+            )
+        except ValueError as error:
+            raise ValueError(
+                f"Spot folder is outside the parent folder: {name}"
+            ) from error
+
+        if (
+            len(relative.parts) != 1
+            or not candidate.is_dir()
+        ):
+            raise ValueError(
+                f"Spot folder was not found under the parent folder: {name}"
+            )
+
+        selected.setdefault(
+            name,
+            name,
+        )
+
+    return tuple(
+        sorted(
+            selected.values(),
+            key=lambda item: (
+                item.casefold(),
+                item,
+            ),
+        )
+    )
+
+
+def select_tower_evidence_files(
+    root_folder: str | Path,
+    candidate_files: Iterable[str | Path],
+    *,
+    selected_spot_folders: Iterable[str] | None = None,
+    include_root_files: bool = True,
+) -> list[Path]:
+    """Filter evidence files using validated immediate Spot folders."""
+
+    root = Path(
+        root_folder
+    ).expanduser().resolve()
+
+    selected = (
+        None
+        if selected_spot_folders is None
+        else set(
+            normalize_selected_spot_folders(
+                root,
+                selected_spot_folders,
+            )
+        )
+    )
+
+    output: set[Path] = set()
+
+    for value in candidate_files:
+        path = Path(
+            value
+        ).expanduser().resolve(
+            strict=False
+        )
+
+        if not path.is_file():
+            continue
+
+        try:
+            relative = path.relative_to(
+                root
+            )
+        except ValueError:
+            continue
+
+        is_root_file = len(
+            relative.parts
+        ) == 1
+
+        if is_root_file:
+            if include_root_files:
+                output.add(
+                    path
+                )
+            continue
+
+        if (
+            selected is None
+            or relative.parts[0] in selected
+        ):
+            output.add(
+                path
+            )
+
+    return sorted(
+        output,
+        key=lambda path: str(
+            path.relative_to(
+                root
+            )
+        ).casefold(),
+    )
+
+
 def build_tower_spot_layout(
     root_folder: str | Path,
     files: Iterable[str | Path],

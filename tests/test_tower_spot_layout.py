@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 import pandas as pd
 
 
@@ -216,3 +218,154 @@ def test_explicit_no_data_report_is_valid_empty(tmp_path):
         result["searched_cell_id"]
         == "405-52-8192-12769369399"
     )
+
+def test_selected_spot_filter_excludes_root_and_unchecked_folders(
+    tmp_path,
+):
+    from modules.loader.tower_spot_layout import (
+        select_tower_evidence_files,
+    )
+
+    first_spot = tmp_path / "First Spot"
+    second_spot = tmp_path / "Second Spot"
+    operator_folder = first_spot / "Airtel"
+
+    operator_folder.mkdir(
+        parents=True
+    )
+    second_spot.mkdir()
+
+    selected_file = operator_folder / "selected.csv"
+    unchecked_file = second_spot / "unchecked.csv"
+    root_file = tmp_path / "unassigned.csv"
+
+    for path in (
+        selected_file,
+        unchecked_file,
+        root_file,
+    ):
+        path.write_text(
+            "header\n",
+            encoding="utf-8",
+        )
+
+    result = select_tower_evidence_files(
+        tmp_path,
+        [
+            selected_file,
+            unchecked_file,
+            root_file,
+        ],
+        selected_spot_folders=[
+            "First Spot",
+        ],
+        include_root_files=False,
+    )
+
+    assert result == [
+        selected_file.resolve(),
+    ]
+
+
+def test_selected_spot_filter_preserves_legacy_all_file_mode(
+    tmp_path,
+):
+    from modules.loader.tower_spot_layout import (
+        select_tower_evidence_files,
+    )
+
+    spot = tmp_path / "Spot One"
+    spot.mkdir()
+
+    spot_file = spot / "spot.csv"
+    root_file = tmp_path / "root.csv"
+
+    spot_file.write_text(
+        "header\n",
+        encoding="utf-8",
+    )
+    root_file.write_text(
+        "header\n",
+        encoding="utf-8",
+    )
+
+    result = select_tower_evidence_files(
+        tmp_path,
+        [
+            root_file,
+            spot_file,
+        ],
+    )
+
+    assert set(result) == {
+        root_file.resolve(),
+        spot_file.resolve(),
+    }
+
+
+@pytest.mark.parametrize(
+    "selection",
+    [
+        [
+            "../outside",
+        ],
+        [
+            "/tmp/outside",
+        ],
+        [
+            "Missing Spot",
+        ],
+    ],
+)
+def test_selected_spot_filter_rejects_unsafe_or_missing_folders(
+    tmp_path,
+    selection,
+):
+    from modules.loader.tower_spot_layout import (
+        select_tower_evidence_files,
+    )
+
+    with pytest.raises(
+        (
+            ValueError,
+            FileNotFoundError,
+        )
+    ):
+        select_tower_evidence_files(
+            tmp_path,
+            [],
+            selected_spot_folders=selection,
+            include_root_files=False,
+        )
+
+
+def test_selected_spot_filter_rejects_symlink_escape(
+    tmp_path,
+):
+    from modules.loader.tower_spot_layout import (
+        select_tower_evidence_files,
+    )
+
+    parent = tmp_path / "input"
+    outside = tmp_path / "outside"
+
+    parent.mkdir()
+    outside.mkdir()
+
+    (parent / "Escaped Spot").symlink_to(
+        outside,
+        target_is_directory=True,
+    )
+
+    with pytest.raises(
+        ValueError,
+        match="outside the parent folder",
+    ):
+        select_tower_evidence_files(
+            parent,
+            [],
+            selected_spot_folders=[
+                "Escaped Spot",
+            ],
+            include_root_files=False,
+        )
