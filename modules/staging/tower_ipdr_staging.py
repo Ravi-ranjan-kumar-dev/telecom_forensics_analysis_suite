@@ -14,7 +14,7 @@ from __future__ import annotations
 import json
 from datetime import datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, Iterable
 
 import pandas as pd
 
@@ -25,6 +25,7 @@ from modules.loader.tower_ipdr_loader import (
 )
 from modules.loader.tower_spot_layout import (
     build_tower_spot_layout,
+    select_tower_evidence_files,
 )
 from modules.staging.duckdb_store import DuckDBStore
 from modules.staging.manifest import calculate_sha256
@@ -203,19 +204,44 @@ def _upsert_manifest_file(
     files.append(record)
 
 
-def _candidate_files(input_folder: str | Path, recursive: bool = True) -> list[Path]:
-    folder = Path(input_folder).expanduser().resolve()
+def _candidate_files(
+    input_folder: str | Path,
+    recursive: bool = True,
+    *,
+    selected_spot_folders: Iterable[str] | None = None,
+    include_root_files: bool = True,
+) -> list[Path]:
+    """Return selected Tower IPDR evidence files."""
+
+    folder = Path(
+        input_folder
+    ).expanduser().resolve()
 
     if not folder.is_dir():
-        raise FileNotFoundError(f"Input folder not found: {folder}")
+        raise FileNotFoundError(
+            f"Input folder not found: {folder}"
+        )
 
-    iterator = folder.rglob("*") if recursive else folder.glob("*")
-
-    return sorted(
+    iterator = (
+        folder.rglob("*")
+        if recursive
+        else folder.glob("*")
+    )
+    candidates = [
         path
         for path in iterator
-        if path.is_file()
-        and path.suffix.lower() in SUPPORTED_SUFFIXES
+        if (
+            path.is_file()
+            and path.suffix.lower()
+            in SUPPORTED_SUFFIXES
+        )
+    ]
+
+    return select_tower_evidence_files(
+        folder,
+        candidates,
+        selected_spot_folders=selected_spot_folders,
+        include_root_files=include_root_files,
     )
 
 
@@ -283,6 +309,8 @@ def import_tower_ipdr_folder_to_duckdb(
     recursive: bool = True,
     force_rebuild: bool = False,
     max_files: int | None = None,
+    selected_spot_folders: Iterable[str] | None = None,
+    include_root_files: bool = True,
 ) -> dict[str, Any]:
     """Import Tower IPDR files into case DuckDB staging.
 
@@ -317,6 +345,8 @@ def import_tower_ipdr_folder_to_duckdb(
     files = _candidate_files(
         input_root,
         recursive=recursive,
+        selected_spot_folders=selected_spot_folders,
+        include_root_files=include_root_files,
     )
 
     if max_files is not None:

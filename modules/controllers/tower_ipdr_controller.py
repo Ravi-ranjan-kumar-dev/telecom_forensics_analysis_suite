@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any
+from typing import Any, Iterable
 
 import pandas as pd
 
@@ -73,14 +73,16 @@ TOWER_IPDR_WORKFLOW = "tower_ipdr"
 
 def _tower_ipdr_input_fingerprint(
     input_folder: str | Path | None = None,
+    *,
+    selected_spot_folders: Iterable[str] | None = None,
+    include_root_files: bool = True,
 ) -> dict:
-    """Return a simple fingerprint of Tower IPDR input files.
+    """Return a selection-aware Tower IPDR input fingerprint."""
 
-    This is used only to decide whether backend data needs refresh.
-    It avoids unnecessary reload when input files are unchanged.
-    """
-
-    from pathlib import Path
+    from modules.loader.tower_spot_layout import (
+        normalize_selected_spot_folders,
+        select_tower_evidence_files,
+    )
 
     input_dir = (
         Path(
@@ -89,36 +91,79 @@ def _tower_ipdr_input_fingerprint(
         if input_folder is not None
         else Path(
             "data/tower_dump/ipdr/input"
+        ).resolve(
+            strict=False
         )
     )
-    allowed_suffixes = {".csv", ".txt", ".xlsx", ".xls"}
-
+    allowed_suffixes = {
+        ".csv",
+        ".txt",
+        ".xlsx",
+        ".xls",
+    }
+    normalized_selection: tuple[str, ...] | None = None
     files = []
     total_size = 0
 
-    if input_dir.exists():
-        for file_path in sorted(input_dir.rglob("*")):
-            if not file_path.is_file():
-                continue
+    if input_dir.is_dir():
+        if selected_spot_folders is not None:
+            normalized_selection = normalize_selected_spot_folders(
+                input_dir,
+                selected_spot_folders,
+            )
 
-            if file_path.suffix.lower() not in allowed_suffixes:
-                continue
+        candidates = [
+            file_path
+            for file_path in input_dir.rglob("*")
+            if (
+                file_path.is_file()
+                and file_path.suffix.lower()
+                in allowed_suffixes
+            )
+        ]
+        selected_files = select_tower_evidence_files(
+            input_dir,
+            candidates,
+            selected_spot_folders=normalized_selection,
+            include_root_files=include_root_files,
+        )
 
+        for file_path in selected_files:
             stat = file_path.stat()
-            relative_path = file_path.relative_to(input_dir).as_posix()
-
             files.append(
                 {
-                    "path": relative_path,
-                    "size": stat.st_size,
-                    "mtime_ns": stat.st_mtime_ns,
+                    "path": file_path.relative_to(
+                        input_dir
+                    ).as_posix(),
+                    "size": int(
+                        stat.st_size
+                    ),
+                    "mtime_ns": int(
+                        stat.st_mtime_ns
+                    ),
                 }
             )
-            total_size += stat.st_size
+            total_size += int(
+                stat.st_size
+            )
 
     return {
-        "input_dir": str(input_dir),
-        "file_count": len(files),
+        "input_dir": str(
+            input_dir
+        ),
+        "selected_spot_folders": (
+            list(
+                normalized_selection
+            )
+            if normalized_selection is not None
+            else None
+        ),
+        "include_root_files": bool(
+            include_root_files
+        ),
+        "file_count": len(
+            files
+        ),
         "total_size": total_size,
         "files": files,
     }
@@ -170,6 +215,8 @@ def _ensure_tower_ipdr_data_ready(
     load_function,
     *,
     input_folder: str | Path | None = None,
+    selected_spot_folders: Iterable[str] | None = None,
+    include_root_files: bool = True,
 ) -> bool:
     """Ensure Tower IPDR backend data is ready before analysis/report.
 
@@ -178,7 +225,9 @@ def _ensure_tower_ipdr_data_ready(
     """
 
     current_fingerprint = _tower_ipdr_input_fingerprint(
-        input_folder
+        input_folder,
+        selected_spot_folders=selected_spot_folders,
+        include_root_files=include_root_files,
     )
     saved_fingerprint = _read_tower_ipdr_saved_fingerprint(case_id)
 
@@ -678,6 +727,8 @@ def _save_tower_ipdr_backend_state(
     import_summary: dict[str, Any] | None = None,
     source: str = "tower_ipdr",
     input_folder: str | Path | None = None,
+    selected_spot_folders: Iterable[str] | None = None,
+    include_root_files: bool = True,
 ) -> dict[str, Any]:
     """Save Tower IPDR backend state in common pipeline-state style."""
 
@@ -692,7 +743,9 @@ def _save_tower_ipdr_backend_state(
     row_count = count_tower_ipdr_events(case_id)
     column_count = _tower_ipdr_column_count(case_id)
     fingerprint = _tower_ipdr_input_fingerprint(
-        input_folder
+        input_folder,
+        selected_spot_folders=selected_spot_folders,
+        include_root_files=include_root_files,
     )
 
     payload: dict[str, Any] = {
@@ -792,6 +845,8 @@ def _import_staging(
     case: dict[str, Any],
     *,
     input_folder: str | Path | None = None,
+    selected_spot_folders: Iterable[str] | None = None,
+    include_root_files: bool = True,
 ) -> None:
     case_id = str(case["case_id"])
     input_folder = (
@@ -811,6 +866,8 @@ def _import_staging(
         input_folder,
         recursive=True,
         force_rebuild=True,
+        selected_spot_folders=selected_spot_folders,
+        include_root_files=include_root_files,
     )
 
     backend_state = _save_tower_ipdr_backend_state(
@@ -818,6 +875,8 @@ def _import_staging(
         import_summary=summary,
         source="staging_import",
         input_folder=input_folder,
+        selected_spot_folders=selected_spot_folders,
+        include_root_files=include_root_files,
     )
     _print_tower_ipdr_backend_status(
         backend_state,
@@ -1070,6 +1129,8 @@ def _run_complete_tower_ipdr_analysis(
     case: dict[str, Any],
     *,
     input_folder: str | Path | None = None,
+    selected_spot_folders: Iterable[str] | None = None,
+    include_root_files: bool = True,
 ) -> dict[str, Any] | None:
     """Run total Tower IPDR analysis on the full loaded backend dataset.
 
@@ -1088,13 +1149,26 @@ def _run_complete_tower_ipdr_analysis(
         else None
     )
 
+    selected_spot_folders = (
+        None
+        if selected_spot_folders is None
+        else tuple(
+            str(value)
+            for value in selected_spot_folders
+        )
+    )
+
     if not _ensure_tower_ipdr_data_ready(
         case_id,
         lambda _case_id: _import_staging(
             case,
             input_folder=selected_input_folder,
+            selected_spot_folders=selected_spot_folders,
+            include_root_files=include_root_files,
         ),
         input_folder=selected_input_folder,
+        selected_spot_folders=selected_spot_folders,
+        include_root_files=include_root_files,
     ):
         return None
 
