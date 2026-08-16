@@ -11,6 +11,11 @@ from typing import Any, Iterable
 
 import pandas as pd
 
+from modules.cases.repository import (
+    InvalidCaseError,
+    normalize_case_id,
+    safe_descendant,
+)
 from modules.core.paths import PROJECT_ROOT
 
 
@@ -89,16 +94,30 @@ def create_cdr_source_run(
     import duckdb
 
     run_id = _safe_component(analysis_run_id, "analysis")
-    run_root = (
-        PROJECT_ROOT
-        / "cases"
-        / "active"
-        / str(case_id)
-        / "staging"
-        / "cdr_report_runs"
-        / run_id
-    ).resolve(strict=False)
-    dataset_root = run_root / "parquet"
+
+    try:
+        normalized_case_id = normalize_case_id(case_id)
+        active_cases_root = (
+            PROJECT_ROOT
+            / "cases"
+            / "active"
+        )
+        run_root = safe_descendant(
+            active_cases_root,
+            normalized_case_id,
+            "staging",
+            "cdr_report_runs",
+            run_id,
+        )
+    except InvalidCaseError as error:
+        raise SourceLinkError(
+            "The CDR source run contains an unsafe case path."
+        ) from error
+
+    dataset_root = safe_descendant(
+        run_root,
+        "parquet",
+    )
     dataset_root.mkdir(parents=True, exist_ok=True)
 
     datasets: list[dict[str, Any]] = []
@@ -137,7 +156,7 @@ def create_cdr_source_run(
 
     manifest = {
         "schema_version": LINK_SCHEMA_VERSION,
-        "case_id": str(case_id),
+        "case_id": normalized_case_id,
         "analysis_run_id": str(analysis_run_id),
         "created_at": datetime.now(timezone.utc).isoformat(timespec="microseconds"),
         "datasets": datasets,

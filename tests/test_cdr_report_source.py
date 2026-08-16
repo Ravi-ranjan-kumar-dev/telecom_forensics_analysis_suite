@@ -256,3 +256,100 @@ def test_query_related_records_attaches_metadata_to_empty_results(
         assert result.empty
         assert result.attrs["result_limit"] == 2
         assert result.attrs["result_limited"] is False
+
+@pytest.mark.parametrize(
+    "case_id",
+    [
+        "../../outside",
+        "/tmp/outside",
+        r"..\..\outside",
+    ],
+)
+def test_source_run_cannot_escape_active_cases(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    case_id: str,
+) -> None:
+    monkeypatch.setattr(
+        cdr_report_source,
+        "PROJECT_ROOT",
+        tmp_path,
+    )
+
+    source_run = create_cdr_source_run(
+        case_id=case_id,
+        analysis_run_id="security-check",
+        target_frames={"9000000001": _records()},
+    )
+
+    manifest_path = (
+        tmp_path
+        / str(source_run["manifest_path"])
+    ).resolve()
+
+    manifest_path.relative_to(
+        (tmp_path / "cases" / "active").resolve()
+    )
+
+
+@pytest.mark.parametrize(
+    "case_id",
+    [
+        "",
+        ".",
+        "..",
+        "///",
+    ],
+)
+def test_source_run_rejects_invalid_case_ids(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    case_id: str,
+) -> None:
+    monkeypatch.setattr(
+        cdr_report_source,
+        "PROJECT_ROOT",
+        tmp_path,
+    )
+
+    with pytest.raises(
+        SourceLinkError,
+        match="unsafe case path",
+    ):
+        create_cdr_source_run(
+            case_id=case_id,
+            analysis_run_id="security-check",
+            target_frames={"9000000001": _records()},
+        )
+
+
+def test_source_run_rejects_case_symlink_escape(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    active_cases = tmp_path / "cases" / "active"
+    outside = tmp_path / "outside"
+
+    active_cases.mkdir(parents=True)
+    outside.mkdir()
+
+    (active_cases / "CASE-1").symlink_to(
+        outside,
+        target_is_directory=True,
+    )
+
+    monkeypatch.setattr(
+        cdr_report_source,
+        "PROJECT_ROOT",
+        tmp_path,
+    )
+
+    with pytest.raises(
+        SourceLinkError,
+        match="unsafe case path",
+    ):
+        create_cdr_source_run(
+            case_id="CASE-1",
+            analysis_run_id="security-check",
+            target_frames={"9000000001": _records()},
+        )
