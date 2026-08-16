@@ -61,3 +61,8 @@ data/tower_dump/ipdr/input/**
 gprs_finalization_source_bundle.txt
 # Local telecom device evidence inputs
 /data/device/
+
+# Python packaging artifacts
+build/
+dist/
+*.egg-info/
