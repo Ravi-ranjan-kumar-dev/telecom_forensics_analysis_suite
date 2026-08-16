@@ -16,7 +16,15 @@ ALWAYS_EXCLUDE_NAMES = {
 ROOT_RUNTIME_NAMES = {"data", "cases", "output"}
 _SOURCE_ROOT: Path | None = None
 RUNTIME_DIRS = ("data", "cases", "output")
-DATABASE_RUNTIME_PATTERNS = ("*.db", "*.db-wal", "*.db-shm", "*.sqlite", "*.sqlite3")
+DATABASE_RUNTIME_PATTERNS = (
+    "*.db",
+    "*.db-wal",
+    "*.db-shm",
+    "*.sqlite",
+    "*.sqlite3",
+    "*.duckdb",
+    "*.duckdb.wal",
+)
 DATABASE_RUNTIME_DIRS = ("backups", "import_logs")
 
 
