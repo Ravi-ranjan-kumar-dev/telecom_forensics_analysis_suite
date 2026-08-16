@@ -16,10 +16,14 @@ import json
 from dataclasses import asdict
 from datetime import datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, Iterable
 
 import pandas as pd
 
+from modules.loader.tower_spot_layout import (
+    normalize_selected_spot_folders,
+    select_tower_evidence_files,
+)
 from modules.staging.scalable_store import (
     case_staging_root,
     duckdb_database_path,
@@ -64,43 +68,85 @@ def tower_cdr_latest_stage_path(case_id: str) -> Path:
     return tower_cdr_staging_root(case_id) / "latest_stage.json"
 
 
-def tower_cdr_input_fingerprint(input_folder: str | Path) -> dict[str, Any]:
-    """
-    Build a simple fingerprint for Tower CDR input files.
+def tower_cdr_input_fingerprint(
+    input_folder: str | Path,
+    *,
+    selected_spot_folders: Iterable[str] | None = None,
+    include_root_files: bool = True,
+) -> dict[str, Any]:
+    """Build a selection-aware fingerprint for Tower CDR evidence."""
 
-    It records relative path, file size and modified-time nanoseconds.
-    Later this helps decide whether staged backend data is still fresh.
-    """
-
-    root = Path(input_folder)
+    root = Path(
+        input_folder
+    ).expanduser().resolve(
+        strict=False
+    )
     files: list[dict[str, Any]] = []
 
-    if root.exists():
-        for path in sorted(root.rglob("*")):
-            if not path.is_file():
-                continue
+    normalized_selection: tuple[str, ...] | None = None
 
-            if path.suffix.lower() not in SUPPORTED_SUFFIXES:
-                continue
+    if root.is_dir():
+        if selected_spot_folders is not None:
+            normalized_selection = normalize_selected_spot_folders(
+                root,
+                selected_spot_folders,
+            )
 
+        candidates = [
+            path
+            for path in root.rglob("*")
+            if (
+                path.is_file()
+                and path.suffix.lower()
+                in SUPPORTED_SUFFIXES
+            )
+        ]
+        selected_files = select_tower_evidence_files(
+            root,
+            candidates,
+            selected_spot_folders=normalized_selection,
+            include_root_files=include_root_files,
+        )
+
+        for path in selected_files:
             stat = path.stat()
-            try:
-                relative_path = str(path.relative_to(root))
-            except ValueError:
-                relative_path = str(path)
-
             files.append(
                 {
-                    "path": relative_path,
-                    "size": int(stat.st_size),
-                    "mtime_ns": int(stat.st_mtime_ns),
+                    "path": str(
+                        path.relative_to(
+                            root
+                        )
+                    ),
+                    "size": int(
+                        stat.st_size
+                    ),
+                    "mtime_ns": int(
+                        stat.st_mtime_ns
+                    ),
                 }
             )
 
     return {
-        "input_folder": str(root),
-        "file_count": len(files),
-        "total_size": sum(item["size"] for item in files),
+        "input_folder": str(
+            root
+        ),
+        "selected_spot_folders": (
+            list(
+                normalized_selection
+            )
+            if normalized_selection is not None
+            else None
+        ),
+        "include_root_files": bool(
+            include_root_files
+        ),
+        "file_count": len(
+            files
+        ),
+        "total_size": sum(
+            item["size"]
+            for item in files
+        ),
         "files": files,
     }
 
@@ -179,6 +225,9 @@ def save_tower_cdr_reuse_manifest(
     case_id: str,
     input_folder: str | Path,
     dataframe: pd.DataFrame,
+    *,
+    selected_spot_folders: Iterable[str] | None = None,
+    include_root_files: bool = True,
 ) -> dict[str, Any]:
     """Save a verified reusable-stage manifest after successful staging."""
 
@@ -240,7 +289,9 @@ def save_tower_cdr_reuse_manifest(
         "table_name": TOWER_CDR_TABLE,
         "input_fingerprint": (
             tower_cdr_input_fingerprint(
-                input_folder
+                input_folder,
+                selected_spot_folders=selected_spot_folders,
+                include_root_files=include_root_files,
             )
         ),
         "record_count": dataframe_rows,
@@ -308,6 +359,9 @@ def save_tower_cdr_reuse_manifest(
 def load_reusable_tower_cdr_stage(
     case_id: str,
     input_folder: str | Path,
+    *,
+    selected_spot_folders: Iterable[str] | None = None,
+    include_root_files: bool = True,
 ) -> dict[str, Any]:
     """Load normalized Parquet only when input and stage are unchanged."""
 
@@ -360,7 +414,9 @@ def load_reusable_tower_cdr_stage(
 
     current_fingerprint = (
         tower_cdr_input_fingerprint(
-            input_folder
+            input_folder,
+            selected_spot_folders=selected_spot_folders,
+            include_root_files=include_root_files,
         )
     )
 

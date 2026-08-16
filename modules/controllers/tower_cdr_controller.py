@@ -7,7 +7,7 @@ CGI handling are automatic.
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any
+from typing import Any, Iterable
 
 import pandas as pd
 
@@ -555,6 +555,8 @@ def _run_complete_analysis(
     case: dict[str, Any],
     *,
     input_folder: str | Path | None = None,
+    selected_spot_folders: Iterable[str] | None = None,
+    include_root_files: bool = True,
 ) -> dict[str, Any] | None:
     from modules.analysis.towerdump import build_tower_dump_analysis_bundle
     from modules.analysis.towerdump.duckdb_presence import (
@@ -586,6 +588,15 @@ def _run_complete_analysis(
             case_id
         )
     )
+    selected_spot_folders = (
+        None
+        if selected_spot_folders is None
+        else tuple(
+            str(value)
+            for value in selected_spot_folders
+        )
+    )
+
     print(f"[+] Tower CDR Dump input: {input_folder}")
 
     log_case_event(
@@ -602,6 +613,8 @@ def _run_complete_analysis(
             load_reusable_tower_cdr_stage(
                 case_id,
                 folder,
+                selected_spot_folders=selected_spot_folders,
+                include_root_files=include_root_files,
             )
         )
 
@@ -656,6 +669,8 @@ def _run_complete_analysis(
                 "enrich_cgi": True,
                 "recursive": True,
                 "remove_exact_duplicates": False,
+                "selected_spot_folders": selected_spot_folders,
+                "include_root_files": include_root_files,
             },
             table_name=TOWER_CDR_TABLE,
             dataset_name=TOWER_CDR_DATASET,
@@ -688,6 +703,8 @@ def _run_complete_analysis(
                 case_id,
                 input_folder,
                 dataframe,
+                selected_spot_folders=selected_spot_folders,
+                include_root_files=include_root_files,
             )
         )
 

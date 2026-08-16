@@ -15,7 +15,10 @@ from modules.loader.evidence_csv import (
     read_csv_with_quarantine,
 )
 from modules.loader.duplicate_flags import flag_potential_duplicates
-from modules.loader.tower_spot_layout import build_tower_spot_layout
+from modules.loader.tower_spot_layout import (
+    build_tower_spot_layout,
+    select_tower_evidence_files,
+)
 
 
 SUPPORTED_SUFFIXES = {".csv", ".txt", ".tsv"}
@@ -937,6 +940,8 @@ def load_tower_dump_case(
     enrich_cgi: bool = True,
     recursive: bool = True,
     remove_exact_duplicates: bool = False,
+    selected_spot_folders: Iterable[str] | None = None,
+    include_root_files: bool = True,
 ) -> dict[str, Any]:
     """
     Ek Tower Dump case folder ke sab supported files ko load, normalize aur combine karta hai.
@@ -963,7 +968,7 @@ def load_tower_dump_case(
         }
 
     iterator = folder.rglob("*") if recursive else folder.iterdir()
-    files = sorted(
+    candidate_files = sorted(
         path
         for path in iterator
         if (
@@ -971,6 +976,12 @@ def load_tower_dump_case(
             and path.suffix.lower() in SUPPORTED_SUFFIXES
             and not path.name.startswith(("~$", "."))
         )
+    )
+    files = select_tower_evidence_files(
+        folder,
+        candidate_files,
+        selected_spot_folders=selected_spot_folders,
+        include_root_files=include_root_files,
     )
 
     if not files:
