@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import re
 from pathlib import Path
-from typing import Any
+from typing import Any, Iterable
 
 import pandas as pd
 
@@ -19,7 +19,10 @@ from modules.loader.evidence_csv import (
     quarantine_dataframe_rows,
     read_csv_with_quarantine,
 )
-from modules.loader.tower_spot_layout import build_tower_spot_layout
+from modules.loader.tower_spot_layout import (
+    build_tower_spot_layout,
+    select_tower_evidence_files,
+)
 
 
 FORMAT_AIRTEL_GPRS_SESSION = "AIRTEL_GPRS_SESSION"
@@ -720,6 +723,8 @@ def load_gprs_dump_case(
     folder: str | Path,
     *,
     recursive: bool = True,
+    selected_spot_folders: Iterable[str] | None = None,
+    include_root_files: bool = True,
 ) -> dict[str, Any]:
     root = Path(folder).expanduser().resolve()
 
@@ -746,10 +751,16 @@ def load_gprs_dump_case(
         }
 
     iterator = root.rglob("*") if recursive else root.glob("*")
-    files = sorted(
+    candidate_files = sorted(
         path
         for path in iterator
         if path.is_file() and path.suffix.lower() in SUPPORTED_SUFFIXES
+    )
+    files = select_tower_evidence_files(
+        root,
+        candidate_files,
+        selected_spot_folders=selected_spot_folders,
+        include_root_files=include_root_files,
     )
 
     results: list[dict[str, Any]] = []

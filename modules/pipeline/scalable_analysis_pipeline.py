@@ -21,10 +21,14 @@ import time
 from dataclasses import asdict, dataclass, is_dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any, Callable, Iterable
 
 import pandas as pd
 
+from modules.loader.tower_spot_layout import (
+    normalize_selected_spot_folders,
+    select_tower_evidence_files,
+)
 from modules.staging.scalable_store import (
     case_staging_root,
     stage_dataframe_to_parquet_and_duckdb,
@@ -58,6 +62,9 @@ class ScalablePipelineTimings:
 def build_input_fingerprint(
     input_folder: str | Path,
     supported_suffixes: set[str] | None = None,
+    *,
+    selected_spot_folders: Iterable[str] | None = None,
+    include_root_files: bool = True,
 ) -> dict[str, Any]:
     """
     Build fingerprint of input files.
@@ -69,31 +76,61 @@ def build_input_fingerprint(
     suffixes = supported_suffixes or DEFAULT_SUPPORTED_SUFFIXES
     files: list[dict[str, Any]] = []
 
-    if root.exists():
-        for path in sorted(root.rglob("*")):
-            if not path.is_file():
-                continue
+    normalized_selection: tuple[str, ...] | None = None
 
-            if path.suffix.lower() not in suffixes:
-                continue
+    if root.is_dir():
+        if selected_spot_folders is not None:
+            normalized_selection = normalize_selected_spot_folders(
+                root,
+                selected_spot_folders,
+            )
 
+        candidates = [
+            path
+            for path in root.rglob("*")
+            if (
+                path.is_file()
+                and path.suffix.lower()
+                in suffixes
+            )
+        ]
+        selected_files = select_tower_evidence_files(
+            root,
+            candidates,
+            selected_spot_folders=normalized_selection,
+            include_root_files=include_root_files,
+        )
+
+        for path in selected_files:
             stat = path.stat()
-
-            try:
-                relative_path = str(path.relative_to(root))
-            except ValueError:
-                relative_path = str(path)
-
             files.append(
                 {
-                    "path": relative_path,
-                    "size": int(stat.st_size),
-                    "mtime_ns": int(stat.st_mtime_ns),
+                    "path": str(
+                        path.relative_to(
+                            root
+                        )
+                    ),
+                    "size": int(
+                        stat.st_size
+                    ),
+                    "mtime_ns": int(
+                        stat.st_mtime_ns
+                    ),
                 }
             )
 
     return {
         "input_folder": str(root),
+        "selected_spot_folders": (
+            list(
+                normalized_selection
+            )
+            if normalized_selection is not None
+            else None
+        ),
+        "include_root_files": bool(
+            include_root_files
+        ),
         "file_count": len(files),
         "total_size": sum(item["size"] for item in files),
         "files": files,
@@ -311,6 +348,7 @@ def run_scalable_analysis_pipeline(
     sql_analysis: Callable[..., Any] | None = None,
     sql_analysis_kwargs: dict[str, Any] | None = None,
     supported_suffixes: set[str] | None = None,
+    fingerprint_kwargs: dict[str, Any] | None = None,
     status_title: str = "FAST ANALYSIS BACKEND READY",
     print_status: bool = True,
 ) -> dict[str, Any]:
@@ -340,6 +378,10 @@ def run_scalable_analysis_pipeline(
     fingerprint = build_input_fingerprint(
         input_folder=input_folder,
         supported_suffixes=supported_suffixes,
+        **(
+            fingerprint_kwargs
+            or {}
+        ),
     )
 
     load_started = time.perf_counter()

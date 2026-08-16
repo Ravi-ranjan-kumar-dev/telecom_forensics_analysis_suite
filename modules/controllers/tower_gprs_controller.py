@@ -6,7 +6,7 @@ The current parser supports the uploaded Airtel GPRS session format.
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any
+from typing import Any, Iterable
 
 import pandas as pd
 
@@ -843,6 +843,8 @@ def _execute(
     *,
     use_partitions: bool,
     input_folder: str | Path | None = None,
+    selected_spot_folders: Iterable[str] | None = None,
+    include_root_files: bool = True,
 ) -> dict[str, Any] | None:
     from modules.analysis.gprsdump.duckdb_presence import (
         build_tower_gprs_duckdb_presence,
@@ -877,6 +879,15 @@ def _execute(
                 case_id
             )
         )
+        selected_spot_folders = (
+            None
+            if selected_spot_folders is None
+            else tuple(
+                str(value)
+                for value in selected_spot_folders
+            )
+        )
+
         print(f"[+] Tower GPRS Dump input folder: {input_folder}")
 
         pipeline_result = run_scalable_analysis_pipeline(
@@ -886,6 +897,8 @@ def _execute(
             loader=load_gprs_dump_case,
             loader_kwargs={
                 "recursive": True,
+                "selected_spot_folders": selected_spot_folders,
+                "include_root_files": include_root_files,
             },
             table_name=TOWER_GPRS_TABLE,
             dataset_name=TOWER_GPRS_DATASET,
@@ -893,6 +906,10 @@ def _execute(
             sql_analysis=build_tower_gprs_duckdb_presence,
             sql_analysis_kwargs={"top_limit": 500},
             supported_suffixes=SUPPORTED_SUFFIXES,
+            fingerprint_kwargs={
+                "selected_spot_folders": selected_spot_folders,
+                "include_root_files": include_root_files,
+            },
             status_title="TOWER GPRS FAST ANALYSIS BACKEND READY",
             print_status=True,
         )
