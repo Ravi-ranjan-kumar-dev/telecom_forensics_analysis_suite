@@ -32,7 +32,7 @@ def _contact_key(value: Any) -> str:
     return digits or text
 
 
-def build_full_contact_summary(
+def _build_full_contact_summary_base(
     data: pd.DataFrame,
     contact_summary: pd.DataFrame,
 ) -> pd.DataFrame:
@@ -274,7 +274,7 @@ def build_full_contact_summary(
     )
 
 # BEGIN CDR FINAL PRESENTATION PATCH
-_build_full_contact_summary_base_final = build_full_contact_summary
+_build_full_contact_summary_base_final = _build_full_contact_summary_base
 
 FULL_CONTACT_PRESENTATION_COLUMNS = (
     "Other Party",

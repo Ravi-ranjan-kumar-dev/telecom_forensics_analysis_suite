@@ -81,7 +81,7 @@ CGI_ENRICHMENT_RESULT_KEYS = {
 }
 
 
-def _apply_cgi_address_enrichment(results):
+def _apply_cgi_address_enrichment_to_results(results):
     """
     Add tower address details to selected CDR tower analysis results.
 

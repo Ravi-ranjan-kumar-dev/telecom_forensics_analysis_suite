@@ -1921,7 +1921,7 @@ def _write_section(
     return row + 2
 
 
-def _finish_sheet(
+def _finish_sheet_layout(
     worksheet,
 ) -> None:
     """Apply readable widths and page settings."""
@@ -3266,7 +3266,7 @@ def generate_single_cdr_compact_report(
         return None
 
 # BEGIN CDR IDENTIFIER TEXT PATCH
-_finish_sheet_base_final_presentation = _finish_sheet
+_finish_sheet_base_final_presentation = _finish_sheet_layout
 
 IDENTIFIER_TEXT_HEADERS = {
     "Device Key",
