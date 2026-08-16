@@ -27,6 +27,9 @@ from modules.controllers.tower_dump_controller import (
     TOWER_DUMP_SOURCE_TYPES,
 )
 from modules.core.paths import PROJECT_ROOT
+from modules.loader.tower_spot_layout import (
+    build_tower_spot_layout,
+)
 
 
 _MODE_LABELS = {
@@ -77,6 +80,10 @@ class TowerDumpPage(QFrame):
             source_type: []
             for source_type in TOWER_DUMP_SOURCE_TYPES
         }
+        self._spot_layouts: dict[str, dict[str, object]] = {
+            source_type: {}
+            for source_type in TOWER_DUMP_SOURCE_TYPES
+        }
         self._thread: QThread | None = None
         self._worker: TowerDumpWorker | None = None
 
@@ -101,11 +108,11 @@ class TowerDumpPage(QFrame):
             True
         )
         self._folder_edit.setPlaceholderText(
-            "Select a folder containing Tower Dump evidence"
+            "Select the parent folder containing all Spot folders"
         )
 
         self._browse_button = QPushButton(
-            "Select Folder"
+            "Select Parent Folder"
         )
         self._browse_button.setObjectName(
             "secondaryButton"
@@ -116,6 +123,16 @@ class TowerDumpPage(QFrame):
             "cardText"
         )
         self._helper_label.setWordWrap(
+            True
+        )
+
+        self._spot_summary_label = QLabel(
+            "Spot folders will be detected automatically."
+        )
+        self._spot_summary_label.setObjectName(
+            "cardText"
+        )
+        self._spot_summary_label.setWordWrap(
             True
         )
 
@@ -230,6 +247,34 @@ class TowerDumpPage(QFrame):
                 self.selected_mode,
                 [],
             )
+        )
+
+    @property
+    def detected_spot_names(
+        self,
+    ) -> tuple[str, ...]:
+        """Return canonical Spot folder names for the active source."""
+
+        layout = self._spot_layouts.get(
+            self.selected_mode,
+            {},
+        )
+
+        names = layout.get(
+            "spot_names",
+            [],
+        )
+
+        if not isinstance(
+            names,
+            list,
+        ):
+            return ()
+
+        return tuple(
+            str(name)
+            for name in names
+            if str(name).strip()
         )
 
     def _build_layout(
@@ -357,6 +402,9 @@ class TowerDumpPage(QFrame):
         )
         controls_layout.addWidget(
             self._helper_label
+        )
+        controls_layout.addWidget(
+            self._spot_summary_label
         )
         controls_layout.addLayout(
             action_row
@@ -529,6 +577,12 @@ class TowerDumpPage(QFrame):
         if self.selected_folder:
             self._update_folder_summary()
         else:
+            self._spot_layouts[
+                source_type
+            ] = {}
+            self._spot_summary_label.setText(
+                "Spot folders will be detected automatically."
+            )
             self._status_label.setText(
                 "Ready"
             )
@@ -557,7 +611,7 @@ class TowerDumpPage(QFrame):
 
         selected = QFileDialog.getExistingDirectory(
             self,
-            "Select Tower Dump Evidence Folder",
+            "Select Parent Folder Containing Tower Dump Spots",
             str(
                 start_folder
             ),
@@ -593,8 +647,15 @@ class TowerDumpPage(QFrame):
         self,
     ) -> None:
         folder_text = self.selected_folder
+        source_type = self.selected_mode
 
         if not folder_text:
+            self._spot_layouts[
+                source_type
+            ] = {}
+            self._spot_summary_label.setText(
+                "Spot folders will be detected automatically."
+            )
             return
 
         folder = Path(
@@ -602,19 +663,86 @@ class TowerDumpPage(QFrame):
         )
 
         if not folder.is_dir():
+            self._spot_layouts[
+                source_type
+            ] = {}
+            self._spot_summary_label.setText(
+                "Spot layout is unavailable."
+            )
             self._status_label.setText(
                 "Selected folder is not available."
             )
             return
 
-        file_count = len(
-            self._evidence_files(
-                folder,
-                self.selected_mode,
-            )
+        files = self._evidence_files(
+            folder,
+            source_type,
         )
+        layout = build_tower_spot_layout(
+            folder,
+            files,
+        )
+        self._spot_layouts[
+            source_type
+        ] = layout
+
         self._status_label.setText(
-            f"Selected folder contains {file_count} supported file(s)."
+            f"Selected folder contains {len(files)} supported file(s)."
+        )
+
+        summary = layout.get(
+            "spot_summary",
+            [],
+        )
+        folder_spots = [
+            item
+            for item in summary
+            if (
+                isinstance(item, dict)
+                and str(
+                    item.get(
+                        "spot_id",
+                        "",
+                    )
+                )
+                != "UNASSIGNED-ROOT"
+            )
+        ]
+
+        if folder_spots:
+            details = ", ".join(
+                (
+                    f"{item.get('spot_name', item.get('spot_id', 'Spot'))} "
+                    f"({int(item.get('files_found', 0))} file(s))"
+                )
+                for item in folder_spots
+            )
+            message = (
+                f"Detected {len(folder_spots)} Spot folder(s): "
+                f"{details}."
+            )
+        else:
+            message = (
+                "No Spot subfolders were detected. Root-level files "
+                "will be analyzed as unassigned evidence."
+            )
+
+        root_file_count = int(
+            layout.get(
+                "root_level_file_count",
+                0,
+            )
+            or 0
+        )
+
+        if root_file_count:
+            message += (
+                f" Review {root_file_count} root-level file(s) that are "
+                "not assigned to a Spot."
+            )
+
+        self._spot_summary_label.setText(
+            message
         )
 
     def _start_analysis(

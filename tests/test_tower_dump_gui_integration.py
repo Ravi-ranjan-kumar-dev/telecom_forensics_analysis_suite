@@ -400,3 +400,62 @@ def test_main_window_blocks_close_until_tower_analysis_finishes(
             )
 
         window.close()
+
+def test_tower_page_displays_canonical_spot_layout(
+    tmp_path: Path,
+):
+    build_application(
+        [
+            "tower-spot-layout-test",
+        ]
+    )
+    page = TowerDumpPage()
+    folder = tmp_path / "tower_cdr"
+    second_spot = folder / "Second Spot"
+    first_spot = folder / "Event Spot"
+
+    second_spot.mkdir(
+        parents=True
+    )
+    first_spot.mkdir(
+        parents=True
+    )
+
+    (first_spot / "airtel.csv").write_text(
+        "header\n",
+        encoding="utf-8",
+    )
+    (second_spot / "jio.csv").write_text(
+        "header\n",
+        encoding="utf-8",
+    )
+    (folder / "unassigned.csv").write_text(
+        "header\n",
+        encoding="utf-8",
+    )
+
+    page.set_mode(
+        "cdr"
+    )
+    page.set_selected_folder(
+        folder
+    )
+
+    assert page.detected_spot_names == (
+        "Event Spot",
+        "Second Spot",
+    )
+    assert (
+        "Detected 2 Spot folder(s)"
+        in page._spot_summary_label.text()
+    )
+    assert (
+        "1 root-level file(s)"
+        in page._spot_summary_label.text()
+    )
+    assert (
+        "3 supported file(s)"
+        in page._status_label.text()
+    )
+
+    page.close()
