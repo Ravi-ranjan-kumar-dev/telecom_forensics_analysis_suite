@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from PySide6.QtCore import QThread, QUrl
+from PySide6.QtCore import Qt, QThread, QUrl
 from PySide6.QtGui import QDesktopServices
 from PySide6.QtWidgets import (
     QComboBox,
@@ -13,6 +13,8 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QLineEdit,
+    QListWidget,
+    QListWidgetItem,
     QMessageBox,
     QPlainTextEdit,
     QProgressBar,
@@ -84,6 +86,13 @@ class TowerDumpPage(QFrame):
             source_type: {}
             for source_type in TOWER_DUMP_SOURCE_TYPES
         }
+        self._selected_spots: dict[
+            str,
+            set[str] | None,
+        ] = {
+            source_type: None
+            for source_type in TOWER_DUMP_SOURCE_TYPES
+        }
         self._thread: QThread | None = None
         self._worker: TowerDumpWorker | None = None
 
@@ -134,6 +143,47 @@ class TowerDumpPage(QFrame):
         )
         self._spot_summary_label.setWordWrap(
             True
+        )
+
+        self._spot_selection_label = QLabel(
+            "Select Spot Folders"
+        )
+        self._spot_selection_label.setObjectName(
+            "fieldLabel"
+        )
+        self._spot_selection_label.setVisible(
+            False
+        )
+
+        self._spot_list = QListWidget()
+        self._spot_list.setObjectName(
+            "inputControl"
+        )
+        self._spot_list.setMaximumHeight(
+            125
+        )
+        self._spot_list.setVisible(
+            False
+        )
+
+        self._select_all_spots_button = QPushButton(
+            "Select All Spots"
+        )
+        self._select_all_spots_button.setObjectName(
+            "secondaryButton"
+        )
+        self._select_all_spots_button.setVisible(
+            False
+        )
+
+        self._clear_spots_button = QPushButton(
+            "Clear Selection"
+        )
+        self._clear_spots_button.setObjectName(
+            "secondaryButton"
+        )
+        self._clear_spots_button.setVisible(
+            False
         )
 
         self._run_button = QPushButton(
@@ -196,6 +246,15 @@ class TowerDumpPage(QFrame):
         )
         self._browse_button.clicked.connect(
             self._browse_folder
+        )
+        self._spot_list.itemChanged.connect(
+            self._spot_selection_changed
+        )
+        self._select_all_spots_button.clicked.connect(
+            self._select_all_spots
+        )
+        self._clear_spots_button.clicked.connect(
+            self._clear_spot_selection
         )
         self._run_button.clicked.connect(
             self._start_analysis
@@ -275,6 +334,104 @@ class TowerDumpPage(QFrame):
             str(name)
             for name in names
             if str(name).strip()
+        )
+
+    @property
+    def selected_spot_names(
+        self,
+    ) -> tuple[str, ...]:
+        """Return checked Spot folder names for the active source."""
+
+        selected: list[str] = []
+
+        for index in range(
+            self._spot_list.count()
+        ):
+            item = self._spot_list.item(
+                index
+            )
+
+            if (
+                item.checkState()
+                != Qt.CheckState.Checked
+            ):
+                continue
+
+            name = str(
+                item.data(
+                    Qt.ItemDataRole.UserRole
+                )
+                or ""
+            ).strip()
+
+            if name:
+                selected.append(
+                    name
+                )
+
+        return tuple(
+            selected
+        )
+
+    def set_selected_spots(
+        self,
+        spot_names: tuple[str, ...] | list[str],
+    ) -> None:
+        """Set checked Spot folders using detected canonical names."""
+
+        requested = {
+            str(name)
+            for name in spot_names
+            if str(name).strip()
+        }
+        available = set(
+            self.detected_spot_names
+        )
+        unknown = requested.difference(
+            available
+        )
+
+        if unknown:
+            raise ValueError(
+                "Unknown Spot folder(s): "
+                + ", ".join(
+                    sorted(
+                        unknown
+                    )
+                )
+            )
+
+        self._spot_list.blockSignals(
+            True
+        )
+
+        try:
+            for index in range(
+                self._spot_list.count()
+            ):
+                item = self._spot_list.item(
+                    index
+                )
+                name = str(
+                    item.data(
+                        Qt.ItemDataRole.UserRole
+                    )
+                    or ""
+                )
+                item.setCheckState(
+                    Qt.CheckState.Checked
+                    if name in requested
+                    else Qt.CheckState.Unchecked
+                )
+        finally:
+            self._spot_list.blockSignals(
+                False
+            )
+
+        self._selected_spots[
+            self.selected_mode
+        ] = set(
+            requested
         )
 
     def _build_layout(
@@ -376,6 +533,18 @@ class TowerDumpPage(QFrame):
             self._browse_button
         )
 
+        spot_action_row = QHBoxLayout()
+        spot_action_row.setSpacing(
+            10
+        )
+        spot_action_row.addWidget(
+            self._select_all_spots_button
+        )
+        spot_action_row.addWidget(
+            self._clear_spots_button
+        )
+        spot_action_row.addStretch()
+
         action_row = QHBoxLayout()
         action_row.setSpacing(
             10
@@ -405,6 +574,15 @@ class TowerDumpPage(QFrame):
         )
         controls_layout.addWidget(
             self._spot_summary_label
+        )
+        controls_layout.addWidget(
+            self._spot_selection_label
+        )
+        controls_layout.addWidget(
+            self._spot_list
+        )
+        controls_layout.addLayout(
+            spot_action_row
         )
         controls_layout.addLayout(
             action_row
@@ -503,8 +681,21 @@ class TowerDumpPage(QFrame):
             strict=False
         )
 
+        source_type = self.selected_mode
+        previous_folder = self._selected_folders.get(
+            source_type,
+            "",
+        )
+
+        if previous_folder != str(
+            path
+        ):
+            self._selected_spots[
+                source_type
+            ] = None
+
         self._selected_folders[
-            self.selected_mode
+            source_type
         ] = str(
             path
         )
@@ -538,6 +729,15 @@ class TowerDumpPage(QFrame):
         )
 
         if files:
+            if (
+                self.detected_spot_names
+                and not self.selected_spot_names
+            ):
+                return (
+                    "Select at least one Spot folder "
+                    "before running analysis."
+                )
+
             return ""
 
         suffixes = ", ".join(
@@ -737,12 +937,139 @@ class TowerDumpPage(QFrame):
 
         if root_file_count:
             message += (
-                f" Review {root_file_count} root-level file(s) that are "
-                "not assigned to a Spot."
+                f" {root_file_count} root-level file(s) will be "
+                "excluded from selected-Spot analysis."
             )
 
         self._spot_summary_label.setText(
             message
+        )
+        self._populate_spot_selection(
+            folder_spots
+        )
+
+    def _populate_spot_selection(
+        self,
+        folder_spots: list[dict[str, object]],
+    ) -> None:
+        """Populate checked Spot folders without including root files."""
+
+        source_type = self.selected_mode
+        available = {
+            str(
+                item.get(
+                    "spot_name",
+                    "",
+                )
+            ): int(
+                item.get(
+                    "files_found",
+                    0,
+                )
+                or 0
+            )
+            for item in folder_spots
+            if str(
+                item.get(
+                    "spot_name",
+                    "",
+                )
+            ).strip()
+        }
+        stored = self._selected_spots.get(
+            source_type
+        )
+        selected = (
+            set(
+                available
+            )
+            if stored is None
+            else set(
+                stored
+            ).intersection(
+                available
+            )
+        )
+
+        self._selected_spots[
+            source_type
+        ] = selected
+        self._spot_list.blockSignals(
+            True
+        )
+
+        try:
+            self._spot_list.clear()
+
+            for name in sorted(
+                available,
+                key=lambda value: (
+                    value.casefold(),
+                    value,
+                ),
+            ):
+                item = QListWidgetItem(
+                    f"{name} ({available[name]} file(s))"
+                )
+                item.setData(
+                    Qt.ItemDataRole.UserRole,
+                    name,
+                )
+                item.setFlags(
+                    item.flags()
+                    | Qt.ItemFlag.ItemIsUserCheckable
+                )
+                item.setCheckState(
+                    Qt.CheckState.Checked
+                    if name in selected
+                    else Qt.CheckState.Unchecked
+                )
+                self._spot_list.addItem(
+                    item
+                )
+        finally:
+            self._spot_list.blockSignals(
+                False
+            )
+
+        visible = bool(
+            available
+        )
+
+        for widget in (
+            self._spot_selection_label,
+            self._spot_list,
+            self._select_all_spots_button,
+            self._clear_spots_button,
+        ):
+            widget.setVisible(
+                visible
+            )
+
+    def _spot_selection_changed(
+        self,
+        _item: QListWidgetItem,
+    ) -> None:
+        self._selected_spots[
+            self.selected_mode
+        ] = set(
+            self.selected_spot_names
+        )
+
+    def _select_all_spots(
+        self,
+    ) -> None:
+        self.set_selected_spots(
+            list(
+                self.detected_spot_names
+            )
+        )
+
+    def _clear_spot_selection(
+        self,
+    ) -> None:
+        self.set_selected_spots(
+            []
         )
 
     def _start_analysis(
@@ -782,9 +1109,33 @@ class TowerDumpPage(QFrame):
         thread = QThread(
             self
         )
+        has_spot_folders = bool(
+            self.detected_spot_names
+        )
+        selected_spots = (
+            self.selected_spot_names
+            if has_spot_folders
+            else None
+        )
+        include_root_files = not has_spot_folders
+
+        self._append_log(
+            (
+                "[+] Selected Spots: "
+                + ", ".join(
+                    selected_spots
+                    or ()
+                )
+            )
+            if selected_spots
+            else "[+] Legacy root-file input mode."
+        )
+
         worker = TowerDumpWorker(
             source_type=source_type,
             input_folder=self.selected_folder,
+            selected_spot_folders=selected_spots,
+            include_root_files=include_root_files,
         )
 
         worker.moveToThread(
@@ -827,6 +1178,15 @@ class TowerDumpPage(QFrame):
             not running
         )
         self._browse_button.setEnabled(
+            not running
+        )
+        self._spot_list.setEnabled(
+            not running
+        )
+        self._select_all_spots_button.setEnabled(
+            not running
+        )
+        self._clear_spots_button.setEnabled(
             not running
         )
         self._run_button.setEnabled(

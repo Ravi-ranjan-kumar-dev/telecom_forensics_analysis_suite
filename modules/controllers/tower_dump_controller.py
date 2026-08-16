@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import importlib
 from pathlib import Path
-from typing import Any
+from typing import Any, Iterable
 
 
 TOWER_DUMP_SOURCE_TYPES = (
@@ -49,6 +49,8 @@ def run_complete_tower_dump_analysis(
     *,
     source_type: str,
     input_folder: str | Path,
+    selected_spot_folders: Iterable[str] | None = None,
+    include_root_files: bool = True,
 ) -> dict[str, Any] | None:
     """Run one complete Tower Dump workflow without CLI prompts."""
 
@@ -79,6 +81,37 @@ def run_complete_tower_dump_analysis(
             f"Tower Dump input folder not found: {folder}"
         )
 
+    normalized_selection = (
+        None
+        if selected_spot_folders is None
+        else tuple(
+            str(value)
+            for value in selected_spot_folders
+            if str(value).strip()
+        )
+    )
+
+    if (
+        selected_spot_folders is not None
+        and not normalized_selection
+    ):
+        raise ValueError(
+            "Select at least one Tower Dump Spot folder."
+        )
+
+    selection_kwargs: dict[str, Any] = {}
+
+    if (
+        normalized_selection is not None
+        or not include_root_files
+    ):
+        selection_kwargs = {
+            "selected_spot_folders": normalized_selection,
+            "include_root_files": bool(
+                include_root_files
+            ),
+        }
+
     if normalized_source == "cdr":
         from modules.controllers.tower_cdr_controller import (
             _run_complete_analysis,
@@ -87,6 +120,7 @@ def run_complete_tower_dump_analysis(
         return _run_complete_analysis(
             case,
             input_folder=folder,
+            **selection_kwargs,
         )
 
     if normalized_source == "gprs":
@@ -98,6 +132,7 @@ def run_complete_tower_dump_analysis(
             case,
             use_partitions=False,
             input_folder=folder,
+            **selection_kwargs,
         )
 
     from modules.controllers.tower_ipdr_controller import (
@@ -107,6 +142,7 @@ def run_complete_tower_dump_analysis(
     return _run_complete_tower_ipdr_analysis(
         case,
         input_folder=folder,
+        **selection_kwargs,
     )
 
 

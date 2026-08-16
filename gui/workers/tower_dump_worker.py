@@ -81,6 +81,8 @@ class TowerDumpWorker(QObject):
         *,
         source_type: str,
         input_folder: str | Path,
+        selected_spot_folders: tuple[str, ...] | None = None,
+        include_root_files: bool = True,
     ) -> None:
         super().__init__()
 
@@ -97,6 +99,18 @@ class TowerDumpWorker(QObject):
         self.input_folder = Path(
             input_folder
         ).expanduser().resolve()
+        self.selected_spot_folders = (
+            None
+            if selected_spot_folders is None
+            else tuple(
+                str(value)
+                for value in selected_spot_folders
+                if str(value).strip()
+            )
+        )
+        self.include_root_files = bool(
+            include_root_files
+        )
 
     @Slot()
     def run(
@@ -122,10 +136,26 @@ class TowerDumpWorker(QObject):
                 output_stream
             ):
                 case = get_direct_analysis_workspace()
+                selection_kwargs = {}
+
+                if (
+                    self.selected_spot_folders is not None
+                    or not self.include_root_files
+                ):
+                    selection_kwargs = {
+                        "selected_spot_folders": (
+                            self.selected_spot_folders
+                        ),
+                        "include_root_files": (
+                            self.include_root_files
+                        ),
+                    }
+
                 result = run_complete_tower_dump_analysis(
                     case,
                     source_type=self.source_type,
                     input_folder=self.input_folder,
+                    **selection_kwargs,
                 )
 
             output_stream.flush()
@@ -149,6 +179,12 @@ class TowerDumpWorker(QObject):
                         self.input_folder
                     ),
                     "report_paths": report_paths,
+                    "selected_spot_folders": (
+                        self.selected_spot_folders
+                    ),
+                    "include_root_files": (
+                        self.include_root_files
+                    ),
                     "result": result,
                 }
             )

@@ -206,3 +206,90 @@ def test_ipdr_fingerprint_uses_selected_gui_folder(
     assert fingerprint["files"][0]["path"] == (
         "spot_1/cell_ipdr.csv"
     )
+
+@pytest.mark.parametrize(
+    ("source_type", "attribute_name"),
+    [
+        (
+            "cdr",
+            "_run_complete_analysis",
+        ),
+        (
+            "gprs",
+            "_execute",
+        ),
+        (
+            "ipdr",
+            "_run_complete_tower_ipdr_analysis",
+        ),
+    ],
+)
+def test_unified_tower_dispatch_forwards_selected_spots(
+    tmp_path: Path,
+    monkeypatch,
+    source_type,
+    attribute_name,
+):
+    observed = {}
+
+    def fake_run(
+        case,
+        **kwargs,
+    ):
+        observed.update(
+            kwargs
+        )
+        return {
+            "excel_report": "report.xlsx",
+        }
+
+    module = {
+        "cdr": tower_cdr_controller,
+        "gprs": tower_gprs_controller,
+        "ipdr": tower_ipdr_controller,
+    }[
+        source_type
+    ]
+
+    monkeypatch.setattr(
+        module,
+        attribute_name,
+        fake_run,
+    )
+
+    result = (
+        tower_dump_controller
+        .run_complete_tower_dump_analysis(
+            {
+                "case_id": "DEV-WORKSPACE",
+            },
+            source_type=source_type,
+            input_folder=tmp_path,
+            selected_spot_folders=[
+                "Second Spot",
+                "First Spot",
+            ],
+            include_root_files=False,
+        )
+    )
+
+    assert result == {
+        "excel_report": "report.xlsx",
+    }
+    assert observed["input_folder"] == (
+        tmp_path.resolve()
+    )
+    assert observed[
+        "selected_spot_folders"
+    ] == (
+        "Second Spot",
+        "First Spot",
+    )
+    assert observed[
+        "include_root_files"
+    ] is False
+
+    if source_type == "gprs":
+        assert observed[
+            "use_partitions"
+        ] is False

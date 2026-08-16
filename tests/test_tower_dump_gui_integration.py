@@ -459,3 +459,147 @@ def test_tower_page_displays_canonical_spot_layout(
     )
 
     page.close()
+
+def test_tower_worker_forwards_selected_spots(
+    tmp_path: Path,
+    monkeypatch,
+):
+    build_application(
+        [
+            "tower-worker-selected-spots-test",
+        ]
+    )
+
+    observed = {}
+
+    monkeypatch.setattr(
+        app_controller,
+        "get_direct_analysis_workspace",
+        lambda: {
+            "case_id": "DEV-WORKSPACE",
+        },
+    )
+
+    def fake_run(
+        case,
+        **kwargs,
+    ):
+        observed.update(
+            kwargs
+        )
+        return {
+            "excel_report": tmp_path / "tower.xlsx",
+        }
+
+    monkeypatch.setattr(
+        tower_dump_controller,
+        "run_complete_tower_dump_analysis",
+        fake_run,
+    )
+
+    worker = TowerDumpWorker(
+        source_type="cdr",
+        input_folder=tmp_path,
+        selected_spot_folders=(
+            "First Spot",
+            "Second Spot",
+        ),
+        include_root_files=False,
+    )
+    failures = []
+    completed = []
+
+    worker.failed.connect(
+        failures.append
+    )
+    worker.completed.connect(
+        completed.append
+    )
+
+    worker.run()
+
+    assert failures == []
+    assert observed[
+        "selected_spot_folders"
+    ] == (
+        "First Spot",
+        "Second Spot",
+    )
+    assert observed[
+        "include_root_files"
+    ] is False
+    assert completed[0][
+        "selected_spot_folders"
+    ] == (
+        "First Spot",
+        "Second Spot",
+    )
+
+def test_tower_page_allows_manual_spot_selection(
+    tmp_path: Path,
+):
+    build_application(
+        [
+            "tower-manual-spot-selection-test",
+        ]
+    )
+    page = TowerDumpPage()
+    folder = tmp_path / "tower_cdr"
+    first = folder / "First Spot"
+    second = folder / "Second Spot"
+
+    first.mkdir(
+        parents=True
+    )
+    second.mkdir()
+
+    (first / "first.csv").write_text(
+        "header\n",
+        encoding="utf-8",
+    )
+    (second / "second.csv").write_text(
+        "header\n",
+        encoding="utf-8",
+    )
+    (folder / "root.csv").write_text(
+        "header\n",
+        encoding="utf-8",
+    )
+
+    page.set_mode(
+        "cdr"
+    )
+    page.set_selected_folder(
+        folder
+    )
+
+    assert page.selected_spot_names == (
+        "First Spot",
+        "Second Spot",
+    )
+
+    page.set_selected_spots(
+        [
+            "Second Spot",
+        ]
+    )
+
+    assert page.selected_spot_names == (
+        "Second Spot",
+    )
+    assert page.validation_error() == ""
+
+    page.set_selected_spots(
+        []
+    )
+
+    assert (
+        "Select at least one Spot folder"
+        in page.validation_error()
+    )
+    assert (
+        "root-level file(s) will be excluded"
+        in page._spot_summary_label.text()
+    )
+
+    page.close()
