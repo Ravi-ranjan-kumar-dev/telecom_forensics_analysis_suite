@@ -23,6 +23,9 @@ from typing import Any, Iterable
 import duckdb
 import pandas as pd
 
+from modules.cases.repository import normalize_case_id, safe_descendant
+from modules.core.paths import ACTIVE_CASES_DIR
+
 
 _VALID_IDENTIFIER = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 
@@ -73,10 +76,17 @@ def _sql_string(value: str | Path) -> str:
 
 
 def case_staging_root(case_id: str, workflow: str) -> Path:
-    """Return staging root for a case workflow."""
+    """Return a validated staging root inside the active case workspace."""
 
+    normalized_case_id = normalize_case_id(case_id)
     workflow = _safe_identifier(workflow, "workflow")
-    return Path("cases") / "active" / str(case_id) / "staging" / workflow
+
+    return safe_descendant(
+        ACTIVE_CASES_DIR,
+        normalized_case_id,
+        "staging",
+        workflow,
+    )
 
 
 def parquet_dataset_path(
@@ -240,6 +250,7 @@ def stage_dataframe_to_parquet_and_duckdb(
     This is the main helper future workflows should call after normalization.
     """
 
+    case_id = normalize_case_id(case_id)
     workflow = _safe_identifier(workflow, "workflow")
     table_name = _safe_identifier(table_name, "table_name")
     dataset_name = _safe_identifier(dataset_name, "dataset_name")
