@@ -348,6 +348,12 @@ def import_tower_ipdr_folder_to_duckdb(
         selected_spot_folders=selected_spot_folders,
         include_root_files=include_root_files,
     )
+    identity_files = _candidate_files(
+        input_root,
+        recursive=recursive,
+        selected_spot_folders=None,
+        include_root_files=True,
+    )
 
     if max_files is not None:
         files = files[: int(max_files)]
@@ -355,6 +361,7 @@ def import_tower_ipdr_folder_to_duckdb(
     spot_layout = build_tower_spot_layout(
         input_root,
         files,
+        identity_files=identity_files,
     )
     spot_assignments = spot_layout.get(
         "assignments",

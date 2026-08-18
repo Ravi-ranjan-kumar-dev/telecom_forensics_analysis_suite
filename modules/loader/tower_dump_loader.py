@@ -1009,6 +1009,7 @@ def load_tower_dump_case(
     spot_layout = build_tower_spot_layout(
         folder,
         files,
+        identity_files=candidate_files,
     )
     spot_assignments = spot_layout.get(
         "assignments",
@@ -1041,7 +1042,8 @@ def load_tower_dump_case(
 
         result = load_tower_dump(
             path,
-            enrich_cgi=enrich_cgi,
+            # Batch enrichment runs once after all selected files are merged.
+            enrich_cgi=False,
         )
 
         result["spot_id"] = assignment["spot_id"]
@@ -1248,6 +1250,12 @@ def load_tower_dump_case(
         kind="stable",
         na_position="last",
     ).reset_index(drop=True)
+
+    if enrich_cgi:
+        combined = _safe_cgi_enrichment(
+            combined,
+            warnings,
+        )
 
     operators = sorted(
         value

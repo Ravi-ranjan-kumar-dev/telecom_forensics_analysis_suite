@@ -156,6 +156,9 @@ def stage_tower_cdr_dataframe(
     dataframe: pd.DataFrame,
     input_folder: str | Path,
     stage_reason: str = "tower_cdr_analysis",
+    *,
+    selected_spot_folders: Iterable[str] | None = None,
+    include_root_files: bool = True,
 ) -> dict[str, Any]:
     """
     Stage normalized Tower CDR dataframe to Parquet and DuckDB.
@@ -180,7 +183,15 @@ def stage_tower_cdr_dataframe(
     payload = {
         **asdict(stage_result),
         "stage_reason": stage_reason,
-        "input_fingerprint": tower_cdr_input_fingerprint(input_folder),
+        "input_fingerprint": tower_cdr_input_fingerprint(
+            input_folder,
+            selected_spot_folders=(
+                selected_spot_folders
+            ),
+            include_root_files=(
+                include_root_files
+            ),
+        ),
         "updated_at": datetime.now().isoformat(timespec="seconds"),
     }
 
@@ -206,7 +217,8 @@ def load_latest_tower_cdr_stage(case_id: str) -> dict[str, Any] | None:
 
 
 
-TOWER_CDR_REUSE_SCHEMA_VERSION = 1
+# Version 2 invalidates stages created before stable full-inventory Spot IDs.
+TOWER_CDR_REUSE_SCHEMA_VERSION = 2
 
 
 def tower_cdr_reuse_manifest_path(

@@ -76,6 +76,55 @@ def test_spot_layout_marks_root_files_unassigned(tmp_path):
     )
 
 
+def test_spot_ids_stay_stable_when_only_one_folder_is_selected(
+    tmp_path,
+):
+    from modules.loader.tower_spot_layout import (
+        build_tower_spot_layout,
+    )
+
+    first = tmp_path / "First Spot"
+    second = tmp_path / "Second Spot"
+    first.mkdir()
+    second.mkdir()
+    first_file = first / "first.csv"
+    second_file = second / "second.csv"
+    first_file.write_text(
+        "header\n",
+        encoding="utf-8",
+    )
+    second_file.write_text(
+        "header\n",
+        encoding="utf-8",
+    )
+
+    layout = build_tower_spot_layout(
+        tmp_path,
+        [
+            second_file,
+        ],
+        identity_files=[
+            first_file,
+            second_file,
+        ],
+    )
+
+    assignment = layout[
+        "assignments"
+    ][
+        str(
+            second_file.resolve()
+        )
+    ]
+
+    assert assignment["spot_id"] == "SPOT-02"
+    assert assignment["spot_name"] == "Second Spot"
+    assert layout["spot_count"] == 1
+    assert layout["spot_names"] == [
+        "Second Spot",
+    ]
+
+
 def test_case_loader_attaches_spot_identity_to_every_record(
     tmp_path,
     monkeypatch,

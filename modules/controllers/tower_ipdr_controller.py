@@ -2856,6 +2856,260 @@ def _create_date_time_parts(
 
 
 
+def run_tower_ipdr_saved_parts(
+    case: dict[str, Any],
+    *,
+    selected_parts: list[dict[str, Any]] | None = None,
+    input_folder: str | Path | None = None,
+    selected_spot_folders: Iterable[str] | None = None,
+    include_root_files: bool = True,
+) -> dict[str, Any] | None:
+    """Analyze saved Tower IPDR Parts without CLI input prompts.
+
+    When a GUI input folder is supplied, the scalable backend is refreshed
+    only when its evidence fingerprint is missing or stale.
+    """
+
+    case_id = str(
+        case["case_id"]
+    )
+    selected_input_folder = (
+        Path(
+            input_folder
+        ).expanduser().resolve()
+        if input_folder is not None
+        else None
+    )
+    selected_spot_folders = (
+        None
+        if selected_spot_folders is None
+        else tuple(
+            str(value)
+            for value in selected_spot_folders
+        )
+    )
+
+    if selected_input_folder is not None:
+        data_ready = _ensure_tower_ipdr_data_ready(
+            case_id,
+            lambda _case_id: _import_staging(
+                case,
+                input_folder=selected_input_folder,
+                selected_spot_folders=(
+                    selected_spot_folders
+                ),
+                include_root_files=(
+                    include_root_files
+                ),
+            ),
+            input_folder=selected_input_folder,
+            selected_spot_folders=(
+                selected_spot_folders
+            ),
+            include_root_files=include_root_files,
+        )
+
+        if not data_ready:
+            print(
+                "[-] Tower IPDR data could not be prepared "
+                "for Date-Time Part analysis."
+            )
+            return None
+
+    parts = list_date_time_parts(
+        case_id,
+        TOWER_IPDR_WORKFLOW,
+    )
+
+    if not parts:
+        print(
+            "[-] No Date-Time Parts are saved."
+        )
+        return None
+
+    if count_tower_ipdr_events(
+        case_id
+    ) <= 0:
+        print(
+            "[-] Tower IPDR data is not loaded."
+        )
+        return None
+
+    selected_parts = (
+        [
+            dict(part)
+            for part in selected_parts
+        ]
+        if selected_parts is not None
+        else [
+            dict(part)
+            for part in parts
+        ]
+    )
+
+    if not selected_parts:
+        print(
+            "[-] No Tower IPDR Parts were selected."
+        )
+        return None
+
+    results_by_part: dict[
+        int,
+        dict[str, Any],
+    ] = {}
+
+    for part in selected_parts:
+        part_number = int(
+            part.get(
+                "part_no",
+                0,
+            )
+            or 0
+        )
+
+        print("\n" + "#" * 78)
+        print(
+            f"{part.get('part_name')} ANALYSIS"
+        )
+        print("#" * 78)
+
+        print(
+            "Spot  : "
+            f"{part.get('spot_id') or 'ALL-SPOTS'}"
+            + (
+                f" | {part.get('spot_name')}"
+                if part.get(
+                    "spot_name"
+                )
+                else ""
+            )
+        )
+
+        print(
+            "Period: "
+            f"{part.get('start_time')} to "
+            f"{part.get('end_time')}"
+        )
+
+        result = (
+            tower_ipdr_range_investigation_summary(
+                case_id,
+                str(
+                    part.get(
+                        "start_time"
+                    )
+                ),
+                str(
+                    part.get(
+                        "end_time"
+                    )
+                ),
+                spot_id=str(
+                    part.get(
+                        "spot_id",
+                        "",
+                    )
+                    or ""
+                ),
+                spot_name=str(
+                    part.get(
+                        "spot_name",
+                        "",
+                    )
+                    or ""
+                ),
+                comparison_parts=parts,
+                current_part_no=part_number,
+                lead_limit=50,
+            )
+        )
+
+        results_by_part[
+            part_number
+        ] = result
+
+        print_tower_ipdr_investigation_summary(
+            result,
+            max_leads=10,
+        )
+
+    print()
+    print(
+        "[+] Generating Part-wise reports..."
+    )
+
+    try:
+        manifest = (
+            export_tower_ipdr_partwise_range_report(
+                case_id,
+                selected_parts,
+                comparison_parts=parts,
+                precomputed_results=(
+                    results_by_part
+                ),
+                lead_limit=50,
+                max_leads_in_text=20,
+            )
+        )
+    except Exception as error:
+        print(
+            "[-] Part-wise report generation failed."
+        )
+        print(
+            f"    Error Type : "
+            f"{type(error).__name__}"
+        )
+        print(
+            f"    Message    : {error}"
+        )
+        return
+
+    saved_files = dict(
+        manifest.get(
+            "saved_files",
+            {},
+        )
+    )
+
+    print("\n" + "=" * 78)
+    print(
+        "PART-WISE TOWER IPDR REPORT GENERATED"
+    )
+    print("=" * 78)
+    print(
+        "Parts Analyzed : "
+        f"{len(selected_parts)}"
+    )
+    print(
+        "Report Folder  : "
+        f"{manifest.get('output_dir', '')}"
+    )
+    print(
+        "Excel Report   : "
+        f"{saved_files.get('excel_workbook', '')}"
+    )
+    print(
+        "Text Report    : "
+        f"{saved_files.get('investigation_summary_all_parts', '')}"
+    )
+    print(
+        "Manifest       : "
+        f"{saved_files.get('manifest', '')}"
+    )
+    print(
+        "Latest Report  : "
+        f"{saved_files.get('latest_report', '')}"
+    )
+    print("=" * 78)
+
+    return {
+        "manifest": manifest,
+        "saved_files": saved_files,
+        "selected_parts": selected_parts,
+        "results_by_part": results_by_part,
+    }
+
+
 def _run_partwise_analysis(
     case: dict[str, Any],
 ) -> None:
@@ -3033,155 +3287,10 @@ def _run_partwise_analysis(
             )
             return
 
-    results_by_part: dict[
-        int,
-        dict[str, Any],
-    ] = {}
-
-    for part in selected_parts:
-        part_number = int(
-            part.get(
-                "part_no",
-                0,
-            )
-            or 0
-        )
-
-        print("\n" + "#" * 78)
-        print(
-            f"{part.get('part_name')} ANALYSIS"
-        )
-        print("#" * 78)
-
-        print(
-            "Spot  : "
-            f"{part.get('spot_id') or 'ALL-SPOTS'}"
-            + (
-                f" | {part.get('spot_name')}"
-                if part.get(
-                    "spot_name"
-                )
-                else ""
-            )
-        )
-
-        print(
-            "Period: "
-            f"{part.get('start_time')} to "
-            f"{part.get('end_time')}"
-        )
-
-        result = (
-            tower_ipdr_range_investigation_summary(
-                case_id,
-                str(
-                    part.get(
-                        "start_time"
-                    )
-                ),
-                str(
-                    part.get(
-                        "end_time"
-                    )
-                ),
-                spot_id=str(
-                    part.get(
-                        "spot_id",
-                        "",
-                    )
-                    or ""
-                ),
-                spot_name=str(
-                    part.get(
-                        "spot_name",
-                        "",
-                    )
-                    or ""
-                ),
-                comparison_parts=parts,
-                current_part_no=part_number,
-                lead_limit=50,
-            )
-        )
-
-        results_by_part[
-            part_number
-        ] = result
-
-        print_tower_ipdr_investigation_summary(
-            result,
-            max_leads=10,
-        )
-
-    print()
-    print(
-        "[+] Generating Part-wise reports..."
+    return run_tower_ipdr_saved_parts(
+        case,
+        selected_parts=selected_parts,
     )
-
-    try:
-        manifest = (
-            export_tower_ipdr_partwise_range_report(
-                case_id,
-                selected_parts,
-                comparison_parts=parts,
-                precomputed_results=(
-                    results_by_part
-                ),
-                lead_limit=50,
-                max_leads_in_text=20,
-            )
-        )
-    except Exception as error:
-        print(
-            "[-] Part-wise report generation failed."
-        )
-        print(
-            f"    Error Type : "
-            f"{type(error).__name__}"
-        )
-        print(
-            f"    Message    : {error}"
-        )
-        return
-
-    saved_files = dict(
-        manifest.get(
-            "saved_files",
-            {},
-        )
-    )
-
-    print("\n" + "=" * 78)
-    print(
-        "PART-WISE TOWER IPDR REPORT GENERATED"
-    )
-    print("=" * 78)
-    print(
-        "Parts Analyzed : "
-        f"{len(selected_parts)}"
-    )
-    print(
-        "Report Folder  : "
-        f"{manifest.get('output_dir', '')}"
-    )
-    print(
-        "Excel Report   : "
-        f"{saved_files.get('excel_workbook', '')}"
-    )
-    print(
-        "Text Report    : "
-        f"{saved_files.get('investigation_summary_all_parts', '')}"
-    )
-    print(
-        "Manifest       : "
-        f"{saved_files.get('manifest', '')}"
-    )
-    print(
-        "Latest Report  : "
-        f"{saved_files.get('latest_report', '')}"
-    )
-    print("=" * 78)
-
 
 
 def _view_or_export_report(case: dict[str, Any]) -> None:

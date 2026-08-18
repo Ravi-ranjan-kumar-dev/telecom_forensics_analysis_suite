@@ -24,6 +24,9 @@ from PySide6.QtWidgets import (
 )
 
 from gui.workers.tower_dump_worker import TowerDumpWorker
+from gui.widgets.date_time_partition_dialog import (
+    DateTimePartitionDialog,
+)
 from modules.controllers.tower_dump_controller import (
     TOWER_DUMP_SOURCE_SUFFIXES,
     TOWER_DUMP_SOURCE_TYPES,
@@ -93,8 +96,16 @@ class TowerDumpPage(QFrame):
             source_type: None
             for source_type in TOWER_DUMP_SOURCE_TYPES
         }
+        self._partition_parts_by_source: dict[
+            str,
+            list[dict[str, object]] | None,
+        ] = {
+            source_type: None
+            for source_type in TOWER_DUMP_SOURCE_TYPES
+        }
         self._thread: QThread | None = None
         self._worker: TowerDumpWorker | None = None
+        self._running_analysis_mode = ""
 
         self._mode_box = QComboBox()
         self._mode_box.setObjectName(
@@ -186,6 +197,30 @@ class TowerDumpPage(QFrame):
             False
         )
 
+        self._manage_parts_button = QPushButton(
+            "Create / Manage Date-Time Parts"
+        )
+        self._manage_parts_button.setObjectName(
+            "secondaryButton"
+        )
+
+        self._run_parts_button = QPushButton(
+            "Run Part-wise Analysis"
+        )
+        self._run_parts_button.setObjectName(
+            "primaryButton"
+        )
+
+        self._parts_summary_label = QLabel(
+            "Open Date-Time Parts to load or create saved Parts."
+        )
+        self._parts_summary_label.setObjectName(
+            "cardText"
+        )
+        self._parts_summary_label.setWordWrap(
+            True
+        )
+
         self._run_button = QPushButton(
             "Run Complete Analysis"
         )
@@ -257,7 +292,13 @@ class TowerDumpPage(QFrame):
             self._clear_spot_selection
         )
         self._run_button.clicked.connect(
-            self._start_analysis
+            self._start_complete_analysis
+        )
+        self._manage_parts_button.clicked.connect(
+            self._manage_date_time_parts
+        )
+        self._run_parts_button.clicked.connect(
+            self._start_partition_analysis
         )
         self._open_report_button.clicked.connect(
             self._open_latest_report
@@ -545,6 +586,36 @@ class TowerDumpPage(QFrame):
         )
         spot_action_row.addStretch()
 
+        partition_heading = QLabel(
+            "Date-Time Partitioning"
+        )
+        partition_heading.setObjectName(
+            "fieldLabel"
+        )
+
+        partition_help = QLabel(
+            "Create exact Start/End pairs for selected Spots, then run "
+            "the saved Parts as one investigator workflow."
+        )
+        partition_help.setObjectName(
+            "cardText"
+        )
+        partition_help.setWordWrap(
+            True
+        )
+
+        partition_action_row = QHBoxLayout()
+        partition_action_row.setSpacing(
+            10
+        )
+        partition_action_row.addWidget(
+            self._manage_parts_button
+        )
+        partition_action_row.addWidget(
+            self._run_parts_button
+        )
+        partition_action_row.addStretch()
+
         action_row = QHBoxLayout()
         action_row.setSpacing(
             10
@@ -583,6 +654,18 @@ class TowerDumpPage(QFrame):
         )
         controls_layout.addLayout(
             spot_action_row
+        )
+        controls_layout.addWidget(
+            partition_heading
+        )
+        controls_layout.addWidget(
+            partition_help
+        )
+        controls_layout.addLayout(
+            partition_action_row
+        )
+        controls_layout.addWidget(
+            self._parts_summary_label
         )
         controls_layout.addLayout(
             action_row
@@ -693,6 +776,9 @@ class TowerDumpPage(QFrame):
             self._selected_spots[
                 source_type
             ] = None
+            self._partition_parts_by_source[
+                source_type
+            ] = None
 
         self._selected_folders[
             source_type
@@ -773,6 +859,7 @@ class TowerDumpPage(QFrame):
                 self.report_paths
             )
         )
+        self._show_cached_partition_summary()
 
         if self.selected_folder:
             self._update_folder_summary()
@@ -1072,8 +1159,293 @@ class TowerDumpPage(QFrame):
             []
         )
 
+    def _show_cached_partition_summary(
+        self,
+    ) -> None:
+        parts = self._partition_parts_by_source.get(
+            self.selected_mode
+        )
+
+        if parts is None:
+            self._parts_summary_label.setText(
+                "Open Date-Time Parts to load or create saved Parts."
+            )
+            return
+
+        if not parts:
+            self._parts_summary_label.setText(
+                "No Date-Time Parts are saved for this Tower Dump type."
+            )
+            return
+
+        spot_names = {
+            str(
+                part.get(
+                    "spot_name",
+                    "",
+                )
+                or part.get(
+                    "spot_id",
+                    "",
+                )
+            ).strip()
+            for part in parts
+            if str(
+                part.get(
+                    "spot_name",
+                    "",
+                )
+                or part.get(
+                    "spot_id",
+                    "",
+                )
+            ).strip()
+        }
+        self._parts_summary_label.setText(
+            f"Saved Parts: {len(parts)} | Spots: {len(spot_names)} | "
+            "Rule: Start included, End excluded."
+        )
+
+    def _available_partition_spots(
+        self,
+    ) -> list[dict[str, object]]:
+        layout = self._spot_layouts.get(
+            self.selected_mode,
+            {},
+        )
+        summary = [
+            dict(item)
+            for item in layout.get(
+                "spot_summary",
+                [],
+            )
+            if isinstance(
+                item,
+                dict,
+            )
+        ]
+
+        if not self.detected_spot_names:
+            return summary
+
+        selected_names = set(
+            self.selected_spot_names
+        )
+        return [
+            item
+            for item in summary
+            if (
+                str(
+                    item.get(
+                        "spot_id",
+                        "",
+                    )
+                )
+                != "UNASSIGNED-ROOT"
+                and str(
+                    item.get(
+                        "spot_name",
+                        "",
+                    )
+                )
+                in selected_names
+            )
+        ]
+
+    def _partition_input_error(
+        self,
+    ) -> str:
+        error = self.validation_error()
+
+        if error:
+            return error
+
+        if not self._available_partition_spots():
+            return (
+                "No selected investigation Spot is available for "
+                "Date-Time Partitioning."
+            )
+
+        return ""
+
+    @staticmethod
+    def _active_case() -> dict[str, object]:
+        from modules.controllers.app_controller import (
+            get_direct_analysis_workspace,
+        )
+
+        return get_direct_analysis_workspace()
+
+    def _load_partition_parts(
+        self,
+    ) -> list[dict[str, object]]:
+        from modules.controllers.tower_dump_controller import (
+            list_tower_dump_date_time_parts,
+        )
+
+        parts = [
+            dict(part)
+            for part in list_tower_dump_date_time_parts(
+                self._active_case(),
+                source_type=self.selected_mode,
+            )
+        ]
+        self._partition_parts_by_source[
+            self.selected_mode
+        ] = parts
+        self._show_cached_partition_summary()
+        return parts
+
+    def _manage_date_time_parts(
+        self,
+    ) -> None:
+        if self.is_running:
+            return
+
+        error = self._partition_input_error()
+
+        if error:
+            QMessageBox.warning(
+                self,
+                "Date-Time Part Input Review",
+                error,
+            )
+            self._status_label.setText(
+                error
+            )
+            return
+
+        try:
+            case = self._active_case()
+            existing_parts = self._load_partition_parts()
+            dialog = DateTimePartitionDialog(
+                source_type=self.selected_mode,
+                spots=self._available_partition_spots(),
+                existing_parts=existing_parts,
+                parent=self,
+            )
+
+            if not dialog.exec():
+                return
+
+            from modules.controllers.tower_dump_controller import (
+                save_tower_dump_date_time_parts,
+            )
+
+            payload = save_tower_dump_date_time_parts(
+                case,
+                source_type=self.selected_mode,
+                part_specs=dialog.part_specs(),
+            )
+            saved_parts = [
+                dict(part)
+                for part in payload.get(
+                    "parts",
+                    [],
+                )
+            ]
+            self._partition_parts_by_source[
+                self.selected_mode
+            ] = saved_parts
+            self._show_cached_partition_summary()
+
+            overlap_warnings = list(
+                payload.get(
+                    "overlap_warnings",
+                    [],
+                )
+            )
+            self._status_label.setText(
+                f"Saved {len(saved_parts)} Date-Time Part(s)."
+            )
+
+            if overlap_warnings:
+                QMessageBox.warning(
+                    self,
+                    "Date-Time Parts Saved",
+                    (
+                        f"{len(saved_parts)} Part(s) were saved. "
+                        f"{len(overlap_warnings)} overlap warning(s) "
+                        "were found. Overlap is allowed, but some records "
+                        "may appear in more than one Part."
+                    ),
+                )
+            else:
+                QMessageBox.information(
+                    self,
+                    "Date-Time Parts Saved",
+                    f"{len(saved_parts)} Date-Time Part(s) were saved.",
+                )
+
+        except Exception as error:
+            message = f"{type(error).__name__}: {error}"
+            QMessageBox.warning(
+                self,
+                "Date-Time Part Review",
+                message,
+            )
+            self._status_label.setText(
+                "Date-Time Parts could not be saved."
+            )
+
+    def _start_complete_analysis(
+        self,
+    ) -> None:
+        self._start_analysis(
+            "complete"
+        )
+
+    def _start_partition_analysis(
+        self,
+    ) -> None:
+        if self.is_running:
+            return
+
+        error = self._partition_input_error()
+
+        if error:
+            QMessageBox.warning(
+                self,
+                "Date-Time Part Input Review",
+                error,
+            )
+            self._status_label.setText(
+                error
+            )
+            return
+
+        try:
+            parts = self._load_partition_parts()
+        except Exception as error:
+            QMessageBox.warning(
+                self,
+                "Date-Time Part Review",
+                f"{type(error).__name__}: {error}",
+            )
+            return
+
+        if not parts:
+            message = (
+                "Create and save at least one Date-Time Part before "
+                "running Part-wise Analysis."
+            )
+            QMessageBox.warning(
+                self,
+                "No Date-Time Parts",
+                message,
+            )
+            self._status_label.setText(
+                message
+            )
+            return
+
+        self._start_analysis(
+            "partition"
+        )
+
     def _start_analysis(
         self,
+        analysis_mode: str = "complete",
     ) -> None:
         if self.is_running:
             return
@@ -1099,9 +1471,15 @@ class TowerDumpPage(QFrame):
             False
         )
         self._log.clear()
-        self._append_log(
-            f"[+] Starting {_MODE_LABELS[source_type]}."
+        mode_title = (
+            "Part-wise Date-Time Analysis"
+            if analysis_mode == "partition"
+            else "Complete Analysis"
         )
+        self._append_log(
+            f"[+] Starting {mode_title}: {_MODE_LABELS[source_type]}."
+        )
+        self._running_analysis_mode = analysis_mode
         self._set_running_state(
             True
         )
@@ -1134,6 +1512,7 @@ class TowerDumpPage(QFrame):
         worker = TowerDumpWorker(
             source_type=source_type,
             input_folder=self.selected_folder,
+            analysis_mode=analysis_mode,
             selected_spot_folders=selected_spots,
             include_root_files=include_root_files,
         )
@@ -1192,6 +1571,12 @@ class TowerDumpPage(QFrame):
         self._run_button.setEnabled(
             not running
         )
+        self._manage_parts_button.setEnabled(
+            not running
+        )
+        self._run_parts_button.setEnabled(
+            not running
+        )
         self._progress.setVisible(
             running
         )
@@ -1236,6 +1621,14 @@ class TowerDumpPage(QFrame):
         if source_type not in TOWER_DUMP_SOURCE_TYPES:
             source_type = self.selected_mode
 
+        analysis_mode = str(
+            result.get(
+                "analysis_mode",
+                self._running_analysis_mode,
+            )
+            or self._running_analysis_mode
+        )
+
         paths = [
             str(
                 path
@@ -1259,10 +1652,22 @@ class TowerDumpPage(QFrame):
 
         if paths:
             self._status_label.setText(
-                "Analysis completed. The investigator report is ready."
+                (
+                    "Part-wise analysis completed. "
+                    "The investigator report is ready."
+                    if analysis_mode == "partition"
+                    else (
+                        "Analysis completed. The investigator report "
+                        "is ready."
+                    )
+                )
             )
             self._append_log(
-                "[+] Analysis completed successfully."
+                (
+                    "[+] Part-wise analysis completed successfully."
+                    if analysis_mode == "partition"
+                    else "[+] Analysis completed successfully."
+                )
             )
 
             for report_path in paths:
@@ -1296,6 +1701,7 @@ class TowerDumpPage(QFrame):
     ) -> None:
         self._thread = None
         self._worker = None
+        self._running_analysis_mode = ""
         self._set_running_state(
             False
         )

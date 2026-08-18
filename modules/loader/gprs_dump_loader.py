@@ -773,6 +773,7 @@ def load_gprs_dump_case(
     spot_layout = build_tower_spot_layout(
         root,
         files,
+        identity_files=candidate_files,
     )
     spot_assignments = spot_layout.get(
         "assignments",

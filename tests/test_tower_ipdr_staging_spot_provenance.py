@@ -237,3 +237,48 @@ def test_staging_preserves_spot_provenance(
             event_schema[column]
             == "VARCHAR"
         )
+
+    selected_result = (
+        staging
+        .import_tower_ipdr_folder_to_duckdb(
+            "TEST-CASE",
+            input_root,
+            recursive=True,
+            force_rebuild=True,
+            selected_spot_folders=[
+                "spot_2",
+            ],
+            include_root_files=False,
+        )
+    )
+
+    assert selected_result[
+        "loaded_files"
+    ] == 1
+
+    connection = duckdb.connect(
+        str(database_path),
+        read_only=True,
+    )
+
+    try:
+        selected_rows = connection.execute(
+            """
+            SELECT
+                source_relative_path,
+                spot_id,
+                spot_name
+            FROM tower_ipdr_events
+            ORDER BY source_relative_path
+            """
+        ).fetchall()
+    finally:
+        connection.close()
+
+    assert selected_rows == [
+        (
+            "spot_2/b.csv",
+            "SPOT-02",
+            "spot_2",
+        ),
+    ]

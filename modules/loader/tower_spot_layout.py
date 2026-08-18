@@ -174,8 +174,15 @@ def select_tower_evidence_files(
 def build_tower_spot_layout(
     root_folder: str | Path,
     files: Iterable[str | Path],
+    *,
+    identity_files: Iterable[str | Path] | None = None,
 ) -> dict[str, Any]:
-    """Resolve every input file to one deterministic Spot."""
+    """Resolve every input file to one deterministic Spot.
+
+    ``identity_files`` may contain the complete parent-folder inventory when
+    ``files`` is a selected subset. This keeps Spot IDs stable while summary
+    counts and assignments remain limited to the selected evidence.
+    """
 
     root = Path(root_folder).expanduser().resolve()
     resolved_files = sorted(
@@ -187,7 +194,7 @@ def build_tower_spot_layout(
     )
 
     relative_paths: dict[Path, Path] = {}
-    folder_names: set[str] = set()
+    selected_folder_names: set[str] = set()
     root_level_files: list[Path] = []
 
     for path in resolved_files:
@@ -199,14 +206,49 @@ def build_tower_spot_layout(
         relative_paths[path] = relative
 
         if len(relative.parts) >= 2:
-            folder_names.add(relative.parts[0])
+            selected_folder_names.add(
+                relative.parts[0]
+            )
         else:
             root_level_files.append(path)
 
+    identity_paths = (
+        resolved_files
+        if identity_files is None
+        else sorted(
+            {
+                Path(file_path).expanduser().resolve()
+                for file_path in identity_files
+            },
+            key=lambda path: str(path).casefold(),
+        )
+    )
+    identity_folder_names: set[str] = set(
+        selected_folder_names
+    )
+
+    for path in identity_paths:
+        try:
+            relative = path.relative_to(
+                root
+            )
+        except ValueError:
+            continue
+
+        if len(relative.parts) >= 2:
+            identity_folder_names.add(
+                relative.parts[0]
+            )
+
     ordered_folders = sorted(
-        folder_names,
+        identity_folder_names,
         key=lambda value: (value.casefold(), value),
     )
+    selected_ordered_folders = [
+        folder_name
+        for folder_name in ordered_folders
+        if folder_name in selected_folder_names
+    ]
 
     spot_id_by_folder = {
         folder_name: f"SPOT-{index:02d}"
@@ -264,7 +306,9 @@ def build_tower_spot_layout(
         ),
     )
 
-    folder_spot_count = len(ordered_folders)
+    folder_spot_count = len(
+        selected_ordered_folders
+    )
 
     if folder_spot_count >= 2:
         input_mode = "MULTI_SPOT"
@@ -290,7 +334,7 @@ def build_tower_spot_layout(
     return {
         "input_mode": input_mode,
         "spot_count": folder_spot_count,
-        "spot_names": ordered_folders,
+        "spot_names": selected_ordered_folders,
         "root_level_file_count": len(root_level_files),
         "assignments": assignments,
         "spot_summary": spot_summary,

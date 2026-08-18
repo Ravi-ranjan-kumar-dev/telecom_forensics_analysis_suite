@@ -90,6 +90,11 @@ def test_tower_cdr_loader_uses_only_selected_spots(
     ) == {
         selected_file.name,
     }
+    assert set(
+        result["df"]["spot_id"]
+    ) == {
+        "SPOT-02",
+    }
 
 
 def test_tower_cdr_fingerprint_includes_selection_identity(
@@ -139,3 +144,83 @@ def test_tower_cdr_fingerprint_includes_selection_identity(
     assert first_fingerprint["files"][0]["path"] == (
         "First Spot/first.csv"
     )
+
+
+def test_tower_cdr_loader_enriches_the_combined_batch_once(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    first = tmp_path / "First Spot"
+    second = tmp_path / "Second Spot"
+    first.mkdir()
+    second.mkdir()
+
+    for path in (
+        first / "first.csv",
+        second / "second.csv",
+    ):
+        path.write_text(
+            "header\n",
+            encoding="utf-8",
+        )
+
+    file_enrichment_flags: list[bool] = []
+    batch_sizes: list[int] = []
+
+    def fake_load(
+        path,
+        enrich_cgi=True,
+    ):
+        file_enrichment_flags.append(
+            bool(enrich_cgi)
+        )
+        return _fake_tower_result(
+            path,
+            enrich_cgi=enrich_cgi,
+        )
+
+    def fake_batch_enrichment(
+        dataframe,
+        _warnings,
+    ):
+        batch_sizes.append(
+            len(dataframe)
+        )
+        enriched = dataframe.copy()
+        enriched[
+            "batch_enriched"
+        ] = True
+        return enriched
+
+    monkeypatch.setattr(
+        tower_dump_loader,
+        "load_tower_dump",
+        fake_load,
+    )
+    monkeypatch.setattr(
+        tower_dump_loader,
+        "_safe_cgi_enrichment",
+        fake_batch_enrichment,
+    )
+
+    result = tower_dump_loader.load_tower_dump_case(
+        tmp_path,
+        enrich_cgi=True,
+        include_root_files=False,
+    )
+
+    assert result[
+        "ok"
+    ] is True
+    assert file_enrichment_flags == [
+        False,
+        False,
+    ]
+    assert batch_sizes == [
+        2
+    ]
+    assert result[
+        "df"
+    ][
+        "batch_enriched"
+    ].all()

@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 from typing import Iterable, Optional
+
+import duckdb
 import pandas as pd
 
 from modules.database.cgi_repository import normalize_cgi
@@ -122,7 +124,30 @@ def lookup_cgi_addresses(cgi_values: Iterable) -> pd.DataFrame:
             WHERE cgi IN ({placeholders})
         """
 
-        found = query_dataframe(sql, batch)
+        try:
+            found = query_dataframe(
+                sql,
+                batch,
+            )
+
+        except duckdb.CatalogException as error:
+            message = str(
+                error
+            ).casefold()
+
+            if (
+                "cgi_addresses"
+                in message
+                and "does not exist"
+                in message
+            ):
+                return pd.DataFrame(
+                    columns=(
+                        CGI_LOOKUP_COLUMNS
+                    )
+                )
+
+            raise
 
         if found is not None and not found.empty:
             frames.append(found)

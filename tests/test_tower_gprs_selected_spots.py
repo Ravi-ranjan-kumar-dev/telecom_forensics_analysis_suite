@@ -101,6 +101,11 @@ def test_gprs_loader_uses_only_selected_spots(
     ) == {
         selected_file.name,
     }
+    assert set(
+        result["df"]["spot_id"]
+    ) == {
+        "SPOT-02",
+    }
 
 
 def test_common_fingerprint_uses_selected_gprs_spots(

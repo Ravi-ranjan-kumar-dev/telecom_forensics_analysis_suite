@@ -34,26 +34,35 @@ def test_partwise_menu_has_management_actions():
 
 
 def test_partwise_controller_exports_report():
-    source = inspect.getsource(
+    menu_source = inspect.getsource(
         tower_ipdr_controller
         ._run_partwise_analysis
+    )
+    helper_source = inspect.getsource(
+        tower_ipdr_controller
+        .run_tower_ipdr_saved_parts
+    )
+
+    assert (
+        "run_tower_ipdr_saved_parts"
+        in menu_source
     )
 
     assert (
         "export_tower_ipdr_partwise_range_report"
-        in source
+        in helper_source
     )
     assert (
         "precomputed_results="
-        in source
+        in helper_source
     )
     assert (
         "Excel Report"
-        in source
+        in helper_source
     )
     assert (
         "Latest Report"
-        in source
+        in helper_source
     )
 
 

@@ -910,6 +910,17 @@ def _execute(
                 "selected_spot_folders": selected_spot_folders,
                 "include_root_files": include_root_files,
             },
+            normalized_cache_key=(
+                "tower-gprs-normalized-v1"
+            ),
+            required_cached_columns=(
+                "subscriber_number",
+                "session_start",
+                "session_end",
+                "source_relative_path",
+                "spot_id",
+                "spot_name",
+            ),
             status_title="TOWER GPRS FAST ANALYSIS BACKEND READY",
             print_status=True,
         )
@@ -1139,16 +1150,36 @@ def _execute(
                 ]
             )
 
+        source_files = [
+            result.get(
+                "file",
+                "",
+            )
+            for result in load_result.get(
+                "file_results",
+                [],
+            )
+            if result.get(
+                "ok"
+            )
+        ]
+
+        if not source_files:
+            source_files = [
+                str(path)
+                for path in load_result.get(
+                    "files",
+                    [],
+                )
+                if str(path).strip()
+            ]
+
         saved = save_gprs_run(
             case_id,
             analysis=analysis,
             partition=partition,
             input_folder=input_folder,
-            source_files=[
-                result.get("file", "")
-                for result in load_result.get("file_results", [])
-                if result.get("ok")
-            ],
+            source_files=source_files,
             warnings=load_result.get("warnings", []),
             errors=load_result.get("errors", []),
         )

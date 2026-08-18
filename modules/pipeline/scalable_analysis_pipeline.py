@@ -29,6 +29,12 @@ from modules.loader.tower_spot_layout import (
     normalize_selected_spot_folders,
     select_tower_evidence_files,
 )
+from modules.pipeline.normalized_stage_cache import (
+    load_reusable_normalized_stage,
+    normalized_cache_manifest_path,
+    save_reusable_normalized_stage,
+    validate_normalized_stage,
+)
 from modules.staging.scalable_store import (
     case_staging_root,
     stage_dataframe_to_parquet_and_duckdb,
@@ -315,6 +321,16 @@ def print_pipeline_backend_status(
     print(f"Records indexed : {int(stage.get('record_count', 0)):,}")
     print(f"Columns indexed : {int(stage.get('column_count', 0)):,}")
     print(f"Input files     : {int(fingerprint.get('file_count', 0)):,}")
+    print(
+        "Index status    : "
+        + (
+            "Verified existing index reused"
+            if payload.get(
+                "stage_reused"
+            )
+            else "Index refreshed from normalized data"
+        )
+    )
     print("Speed mode      : DuckDB SQL + Parquet internal backend")
     print("User output     : Excel / GUI report only")
 
@@ -349,6 +365,8 @@ def run_scalable_analysis_pipeline(
     sql_analysis_kwargs: dict[str, Any] | None = None,
     supported_suffixes: set[str] | None = None,
     fingerprint_kwargs: dict[str, Any] | None = None,
+    normalized_cache_key: str | None = None,
+    required_cached_columns: Iterable[str] | None = None,
     status_title: str = "FAST ANALYSIS BACKEND READY",
     print_status: bool = True,
 ) -> dict[str, Any]:
@@ -384,26 +402,256 @@ def run_scalable_analysis_pipeline(
         ),
     )
 
-    load_started = time.perf_counter()
-    load_result = _call_loader(loader, input_folder, loader_kwargs)
-    load_ms = round((time.perf_counter() - load_started) * 1000, 2)
+    normalized_cache_key = str(
+        normalized_cache_key
+        or ""
+    ).strip()
+    required_columns = tuple(
+        str(column)
+        for column in (
+            required_cached_columns
+            or ()
+        )
+    )
 
-    dataframe = _extract_dataframe(load_result, dataframe_key)
+    load_started = time.perf_counter()
+    cache_lookup: dict[str, Any] = {
+        "reused": False,
+        "reason": "CACHE_DISABLED",
+    }
+
+    if normalized_cache_key:
+        cache_lookup = (
+            load_reusable_normalized_stage(
+                case_id=str(
+                    case_id
+                ),
+                workflow=str(
+                    workflow
+                ),
+                table_name=str(
+                    table_name
+                ),
+                dataset_name=str(
+                    dataset_name
+                ),
+                cache_key=(
+                    normalized_cache_key
+                ),
+                input_fingerprint=(
+                    fingerprint
+                ),
+                required_columns=(
+                    required_columns
+                ),
+                dataframe_key=str(
+                    dataframe_key
+                ),
+            )
+        )
+
+    normalized_cache_reused = bool(
+        cache_lookup.get(
+            "reused",
+            False,
+        )
+    )
+    stage_reused = (
+        normalized_cache_reused
+    )
+    stage_payload: dict[str, Any] | None = (
+        dict(
+            cache_lookup.get(
+                "stage",
+                {},
+            )
+        )
+        if normalized_cache_reused
+        else None
+    )
+
+    if normalized_cache_reused:
+        load_result = cache_lookup[
+            "load_result"
+        ]
+        dataframe = cache_lookup[
+            "dataframe"
+        ]
+        print(
+            "[+] Raw input files unchanged; "
+            "normalized cache reused."
+        )
+        print(
+            "[+] Raw parsing and backend index rewrite skipped."
+        )
+
+    else:
+        cache_reason = str(
+            cache_lookup.get(
+                "reason",
+                "CACHE_NOT_REUSED",
+            )
+        )
+
+        if (
+            normalized_cache_key
+            and cache_reason
+            != "CACHE_MANIFEST_NOT_FOUND"
+        ):
+            print(
+                "[=] Normalized cache not reused: "
+                f"{cache_reason}"
+            )
+
+        load_result = _call_loader(
+            loader,
+            input_folder,
+            loader_kwargs,
+        )
+        dataframe = _extract_dataframe(
+            load_result,
+            dataframe_key,
+        )
+
+        if dataframe.empty:
+            raise ValueError(
+                "Loaded DataFrame is empty. Nothing to stage or analyze."
+            )
+
+        if (
+            isinstance(
+                load_result,
+                dict,
+            )
+            and bool(
+                load_result.get(
+                    "cache_reused",
+                    False,
+                )
+            )
+        ):
+            try:
+                stage_payload = (
+                    validate_normalized_stage(
+                        case_id=str(
+                            case_id
+                        ),
+                        workflow=str(
+                            workflow
+                        ),
+                        table_name=str(
+                            table_name
+                        ),
+                        dataset_name=str(
+                            dataset_name
+                        ),
+                        dataframe=dataframe,
+                        required_columns=(
+                            required_columns
+                        ),
+                    )
+                )
+                stage_reused = True
+                print(
+                    "[+] Verified backend index already matches "
+                    "the cached normalized data."
+                )
+                print(
+                    "[+] Duplicate Parquet and DuckDB rewrite skipped."
+                )
+
+            except Exception as error:
+                print(
+                    "[=] Existing backend index could not be reused: "
+                    f"{type(error).__name__}: {error}"
+                )
 
     if dataframe.empty:
-        raise ValueError("Loaded DataFrame is empty. Nothing to stage or analyze.")
+        raise ValueError(
+            "Loaded DataFrame is empty. Nothing to stage or analyze."
+        )
 
-    stage_started = time.perf_counter()
-    stage_result = stage_dataframe_to_parquet_and_duckdb(
-        case_id=case_id,
-        workflow=workflow,
-        dataframe=dataframe,
-        table_name=table_name,
-        dataset_name=dataset_name,
+    load_ms = round(
+        (
+            time.perf_counter()
+            - load_started
+        )
+        * 1000,
+        2,
     )
-    stage_ms = round((time.perf_counter() - stage_started) * 1000, 2)
 
-    stage_payload = asdict(stage_result)
+    if stage_payload is None:
+        stage_started = time.perf_counter()
+        stage_result = (
+            stage_dataframe_to_parquet_and_duckdb(
+                case_id=case_id,
+                workflow=workflow,
+                dataframe=dataframe,
+                table_name=table_name,
+                dataset_name=dataset_name,
+            )
+        )
+        stage_ms = round(
+            (
+                time.perf_counter()
+                - stage_started
+            )
+            * 1000,
+            2,
+        )
+        stage_payload = asdict(
+            stage_result
+        )
+
+    else:
+        stage_ms = 0.0
+
+    cache_manifest_path = (
+        str(
+            normalized_cache_manifest_path(
+                str(
+                    case_id
+                ),
+                str(
+                    workflow
+                ),
+            )
+        )
+        if normalized_cache_reused
+        else ""
+    )
+
+    if (
+        normalized_cache_key
+        and not normalized_cache_reused
+    ):
+        try:
+            cache_manifest_path = str(
+                save_reusable_normalized_stage(
+                    case_id=str(
+                        case_id
+                    ),
+                    workflow=str(
+                        workflow
+                    ),
+                    cache_key=(
+                        normalized_cache_key
+                    ),
+                    input_fingerprint=(
+                        fingerprint
+                    ),
+                    load_result=(
+                        load_result
+                    ),
+                )
+            )
+
+        except Exception as error:
+            print(
+                "[!] Normalized reuse cache could not be saved. "
+                "Current analysis will continue: "
+                f"{type(error).__name__}: {error}"
+            )
 
     sql_result: Any = {}
     sql_ms = 0.0
@@ -443,6 +691,21 @@ def run_scalable_analysis_pipeline(
         "input_folder": str(input_folder),
         "input_fingerprint": fingerprint,
         "stage": stage_payload,
+        "stage_reused": bool(
+            stage_reused
+        ),
+        "normalized_cache_reused": bool(
+            normalized_cache_reused
+        ),
+        "normalized_cache_reason": str(
+            cache_lookup.get(
+                "reason",
+                "",
+            )
+        ),
+        "normalized_cache_manifest_path": (
+            cache_manifest_path
+        ),
         "sql_result_rows": _row_summary(sql_result),
         "timings": timings,
         "updated_at": datetime.now().isoformat(timespec="seconds"),

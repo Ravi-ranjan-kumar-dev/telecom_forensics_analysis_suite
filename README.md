@@ -9,7 +9,7 @@ A case-oriented analysis suite for CDR, Tower CDR Dump, Airtel GPRS Dump, Jio To
 ## Main workflows
 
 - Single and Multiple CDR analysis
-- Tower CDR Dump analysis and CCTV-window partitioning
+- Tower CDR, GPRS and IPDR Dump analysis with exact Date-Time Partitioning
 - Airtel GPRS session-dump analysis
 - Jio Tower IPDR/NAT multi-cell analysis
 - Target/subscriber IPDR analysis
@@ -51,6 +51,24 @@ python -m pytest -q
 ```bash
 python main.py
 ```
+
+Desktop GUI:
+
+```bash
+python3 -u run_gui.py
+```
+
+In **Tower Dump Analysis**, select the source type, parent evidence folder
+and required Spot folders. Use **Create / Manage Date-Time Parts** to save
+one Spot-aware Start/End pair per Part, then use **Run Part-wise Analysis**.
+The range rule is `start_time <= event_time < end_time`.
+
+The first Tower CDR or GPRS run parses and indexes the selected evidence.
+Later Complete or Part-wise runs reuse the verified normalized Parquet and
+DuckDB stage when the input files and Spot selection are unchanged. Any file,
+size, modification-time or selection change invalidates the cache and safely
+refreshes the backend. The GUI log reports whether the index was reused or
+refreshed.
 
 ## Safe upgrade from an older project
 

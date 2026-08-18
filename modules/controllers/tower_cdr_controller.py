@@ -551,6 +551,81 @@ def _cached_tower_cdr_load_result(
         "ok": True,
     }
 
+
+def _load_tower_cdr_with_reuse(
+    case_id: str,
+    input_folder: str | Path,
+    *,
+    selected_spot_folders: Iterable[str] | None,
+    include_root_files: bool,
+) -> dict[str, Any]:
+    """Load Tower CDR data from a verified stage or the raw evidence."""
+
+    from modules.loader.tower_dump_loader import (
+        load_tower_dump_case,
+    )
+    from modules.staging.tower_cdr_staging import (
+        load_reusable_tower_cdr_stage,
+    )
+
+    folder = Path(
+        input_folder
+    ).expanduser().resolve()
+    cache_payload = load_reusable_tower_cdr_stage(
+        case_id,
+        folder,
+        selected_spot_folders=(
+            selected_spot_folders
+        ),
+        include_root_files=(
+            include_root_files
+        ),
+    )
+
+    if cache_payload.get(
+        "reused"
+    ):
+        cached_dataframe = cache_payload.get(
+            "dataframe"
+        )
+        print(
+            "[+] Existing Tower CDR normalized data reused."
+        )
+        print(
+            "[+] Raw CSV/Excel parsing skipped because "
+            "the selected evidence is unchanged."
+        )
+        print(
+            "[+] Cached records: "
+            f"{len(cached_dataframe):,}"
+        )
+        return _cached_tower_cdr_load_result(
+            cache_payload,
+            folder,
+        )
+
+    print(
+        "[=] Tower CDR cache not reused: "
+        f"{cache_payload.get('reason', 'UNKNOWN')}"
+    )
+    print(
+        "[+] Raw files will be loaded once and the "
+        "verified cache will be refreshed."
+    )
+
+    return load_tower_dump_case(
+        folder,
+        enrich_cgi=True,
+        recursive=True,
+        remove_exact_duplicates=False,
+        selected_spot_folders=(
+            selected_spot_folders
+        ),
+        include_root_files=(
+            include_root_files
+        ),
+    )
+
 def _run_complete_analysis(
     case: dict[str, Any],
     *,
@@ -558,11 +633,12 @@ def _run_complete_analysis(
     selected_spot_folders: Iterable[str] | None = None,
     include_root_files: bool = True,
 ) -> dict[str, Any] | None:
+    from time import perf_counter
+
     from modules.analysis.towerdump import build_tower_dump_analysis_bundle
     from modules.analysis.towerdump.duckdb_presence import (
         build_tower_cdr_duckdb_presence,
     )
-    from modules.loader.tower_dump_loader import load_tower_dump_case
     from modules.pipeline.scalable_analysis_pipeline import (
         run_scalable_analysis_pipeline,
     )
@@ -574,7 +650,6 @@ def _run_complete_analysis(
         TOWER_CDR_DATASET,
         TOWER_CDR_TABLE,
         TOWER_CDR_WORKFLOW,
-        load_reusable_tower_cdr_stage,
         save_tower_cdr_reuse_manifest,
     )
 
@@ -604,62 +679,27 @@ def _run_complete_analysis(
         action="TOWER_CDR_DUMP_ANALYSIS_STARTED",
         details={"input_folder": str(input_folder)},
     )
+    workflow_started = perf_counter()
 
     def _pipeline_loader(
         folder,
-        **loader_kwargs,
+        **_loader_kwargs,
     ):
-        cache_payload = (
-            load_reusable_tower_cdr_stage(
-                case_id,
-                folder,
-                selected_spot_folders=selected_spot_folders,
-                include_root_files=include_root_files,
-            )
-        )
-
-        if cache_payload.get("reused"):
-            cached_dataframe = (
-                cache_payload.get(
-                    "dataframe"
-                )
-            )
-
-            print(
-                "[+] Existing Tower CDR indexed "
-                "data reused."
-            )
-            print(
-                "[+] Raw input files unchanged; "
-                "CSV/Excel parsing skipped."
-            )
-            print(
-                f"[+] Cached records: "
-                f"{len(cached_dataframe):,}"
-            )
-
-            return (
-                _cached_tower_cdr_load_result(
-                    cache_payload,
-                    Path(folder),
-                )
-            )
-
-        print(
-            "[=] Tower CDR cache not reused: "
-            f"{cache_payload.get('reason', 'UNKNOWN')}"
-        )
-        print(
-            "[+] Raw files will be loaded and "
-            "the cache will be refreshed."
-        )
-
-        return load_tower_dump_case(
+        return _load_tower_cdr_with_reuse(
+            case_id,
             folder,
-            **loader_kwargs,
+            selected_spot_folders=(
+                selected_spot_folders
+            ),
+            include_root_files=(
+                include_root_files
+            ),
         )
 
     try:
+        print(
+            "[+] Phase 1/4: loading and verifying the scalable backend..."
+        )
         pipeline_result = run_scalable_analysis_pipeline(
             case_id=case_id,
             workflow=TOWER_CDR_WORKFLOW,
@@ -677,6 +717,21 @@ def _run_complete_analysis(
             dataframe_key="df",
             sql_analysis=build_tower_cdr_duckdb_presence,
             sql_analysis_kwargs={"top_limit": 200},
+            fingerprint_kwargs={
+                "selected_spot_folders": selected_spot_folders,
+                "include_root_files": include_root_files,
+            },
+            normalized_cache_key=(
+                "tower-cdr-normalized-v2"
+            ),
+            required_cached_columns=(
+                "subscriber_number",
+                "call_datetime",
+                "searched_cell_id",
+                "source_relative_path",
+                "spot_id",
+                "spot_name",
+            ),
             status_title="TOWER CDR FAST ANALYSIS BACKEND READY",
             print_status=True,
         )
@@ -714,9 +769,22 @@ def _run_complete_analysis(
 
         sql_presence_tables = pipeline_result.get("sql_analysis", {}) or {}
 
+        print(
+            "[+] Phase 2/4: running Tower CDR investigation analyses..."
+        )
+        analysis_started = perf_counter()
         analysis = build_tower_dump_analysis_bundle(
             dataframe,
             presence_tables_override=sql_presence_tables,
+        )
+        analysis_seconds = round(
+            perf_counter()
+            - analysis_started,
+            3,
+        )
+        print(
+            "[+] Investigation analyses completed in "
+            f"{analysis_seconds:.3f} seconds."
         )
 
         status = analysis.get("status")
@@ -759,6 +827,10 @@ def _run_complete_analysis(
             analysis_results,
             dict,
         ):
+            print(
+                "[+] Phase 3/4: enriching investigation tables..."
+            )
+            enrichment_started = perf_counter()
             master_enrichment = enrich_analysis_bundle(
                 analysis_results,
                 table_specs=TOWER_CDR_TABLE_SPECS,
@@ -810,6 +882,15 @@ def _run_complete_analysis(
                     ]
                 )
 
+            enrichment_seconds = round(
+                perf_counter()
+                - enrichment_started,
+                3,
+            )
+
+        else:
+            enrichment_seconds = 0.0
+
         result = {
             **load_result,
             "df": dataframe,
@@ -822,15 +903,38 @@ def _run_complete_analysis(
                     "pipeline_state_path",
                     "",
                 ),
+                "stage_reused": pipeline_result.get(
+                    "stage_reused",
+                    False,
+                ),
+                "normalized_cache_reused": (
+                    pipeline_result.get(
+                        "normalized_cache_reused",
+                        False,
+                    )
+                ),
+            },
+            "performance_timings": {
+                "analysis_seconds": analysis_seconds,
+                "enrichment_seconds": enrichment_seconds,
             },
         }
 
         print_tower_dump_report(result, row_limit=25)
 
+        print(
+            "[+] Phase 4/4: generating the compact Excel report..."
+        )
+        report_started = perf_counter()
         excel_path = generate_tower_dump_excel_report(
             result,
             output_dir=case_report_dir(case_id, "tower_cdr_dump"),
             case_name=case_id,
+        )
+        report_seconds = round(
+            perf_counter()
+            - report_started,
+            3,
         )
 
         register_report(
@@ -864,7 +968,26 @@ def _run_complete_analysis(
         )
 
         result["excel_report"] = str(excel_path)
+        total_seconds = round(
+            perf_counter()
+            - workflow_started,
+            3,
+        )
+        result[
+            "performance_timings"
+        ][
+            "report_seconds"
+        ] = report_seconds
+        result[
+            "performance_timings"
+        ][
+            "total_seconds"
+        ] = total_seconds
         print(f"\n[+] Case report: {excel_path}")
+        print(
+            "[+] Total Tower CDR analysis time: "
+            f"{total_seconds:.3f} seconds."
+        )
         return result
 
     except Exception as error:
@@ -879,9 +1002,11 @@ def _run_complete_analysis(
 
 def _run_partition_analysis(
     case: dict[str, Any],
+    *,
+    input_folder: str | Path | None = None,
+    selected_spot_folders: Iterable[str] | None = None,
+    include_root_files: bool = True,
 ) -> dict[str, Any] | None:
-    from modules.loader.tower_dump_loader import load_tower_dump_case
-
     case_id = str(case["case_id"])
     parts = list_date_time_parts(
         case_id,
@@ -893,14 +1018,34 @@ def _run_partition_analysis(
         print("[-] Pehle date-time part enter karein.")
         return None
 
-    input_folder = _input_folder(case_id)
+    input_folder = (
+        Path(
+            input_folder
+        ).expanduser().resolve()
+        if input_folder is not None
+        else _input_folder(
+            case_id
+        )
+    )
+    selected_spot_folders = (
+        None
+        if selected_spot_folders is None
+        else tuple(
+            str(value)
+            for value in selected_spot_folders
+        )
+    )
     print(f"[+] Loading Tower CDR Dump: {input_folder}")
 
-    load_result = load_tower_dump_case(
+    load_result = _load_tower_cdr_with_reuse(
+        case_id,
         input_folder,
-        enrich_cgi=True,
-        recursive=True,
-        remove_exact_duplicates=False,
+        selected_spot_folders=(
+            selected_spot_folders
+        ),
+        include_root_files=(
+            include_root_files
+        ),
     )
 
     dataframe = load_result.get("df")
@@ -921,15 +1066,53 @@ def _run_partition_analysis(
     try:
         from modules.staging.tower_cdr_staging import (
             print_tower_cdr_stage_summary,
+            save_tower_cdr_reuse_manifest,
             stage_tower_cdr_dataframe,
         )
 
-        stage_payload = stage_tower_cdr_dataframe(
-            case_id=case_id,
-            dataframe=dataframe,
-            input_folder=input_folder,
-            stage_reason="tower_cdr_partition_analysis",
-        )
+        if load_result.get(
+            "cache_reused"
+        ):
+            stage_payload = dict(
+                load_result.get(
+                    "scalable_stage",
+                    {},
+                )
+            )
+            print(
+                "[+] Verified Tower CDR backend index reused."
+            )
+            print(
+                "[+] Duplicate Parquet and DuckDB rewrite skipped."
+            )
+
+        else:
+            stage_payload = stage_tower_cdr_dataframe(
+                case_id=case_id,
+                dataframe=dataframe,
+                input_folder=input_folder,
+                stage_reason=(
+                    "tower_cdr_partition_analysis"
+                ),
+                selected_spot_folders=(
+                    selected_spot_folders
+                ),
+                include_root_files=(
+                    include_root_files
+                ),
+            )
+            save_tower_cdr_reuse_manifest(
+                case_id,
+                input_folder,
+                dataframe,
+                selected_spot_folders=(
+                    selected_spot_folders
+                ),
+                include_root_files=(
+                    include_root_files
+                ),
+            )
+
         load_result["scalable_stage"] = stage_payload
         print_tower_cdr_stage_summary(stage_payload)
 

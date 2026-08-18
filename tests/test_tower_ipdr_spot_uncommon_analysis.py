@@ -283,9 +283,18 @@ def test_three_level_uncommon_classification(
 
 
 def test_partwise_controller_passes_spot_scope():
-    source = inspect.getsource(
+    menu_source = inspect.getsource(
         tower_ipdr_controller
         ._run_partwise_analysis
+    )
+    helper_source = inspect.getsource(
+        tower_ipdr_controller
+        .run_tower_ipdr_saved_parts
+    )
+
+    assert (
+        "run_tower_ipdr_saved_parts"
+        in menu_source
     )
 
     for token in (
@@ -294,4 +303,4 @@ def test_partwise_controller_passes_spot_scope():
         "comparison_parts=parts",
         "current_part_no=",
     ):
-        assert token in source
+        assert token in helper_source
