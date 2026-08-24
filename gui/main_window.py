@@ -22,8 +22,12 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from gui.pages.cdr_page import CdrPage
+from gui.pages.case_details_page import CaseDetailsPage
 from gui.pages.case_reports_page import CaseReportsPage
+from gui.pages.cdr_page import CdrPage
+from gui.pages.imei_page import ImeiPage
+from gui.pages.ipdr_page import IpdrPage
+from gui.pages.lookup_page import LookupPage
 from gui.pages.tower_dump_page import TowerDumpPage
 
 
@@ -87,210 +91,6 @@ NAVIGATION_ITEMS = (
         ),
     ),
 )
-
-
-class ModulePage(QFrame):
-    """Display the foundation screen for one application module."""
-
-    def __init__(
-        self,
-        item: NavigationItem,
-        parent: QWidget | None = None,
-    ) -> None:
-        super().__init__(
-            parent
-        )
-
-        self.setObjectName(
-            "pageSurface"
-        )
-
-        layout = QVBoxLayout(
-            self
-        )
-        layout.setContentsMargins(
-            32,
-            30,
-            32,
-            30,
-        )
-        layout.setSpacing(
-            22
-        )
-
-        heading_row = QHBoxLayout()
-        heading_row.setSpacing(
-            12
-        )
-
-        module_title = QLabel(
-            item.title
-        )
-        module_title.setObjectName(
-            "moduleTitle"
-        )
-
-        status_badge = QLabel(
-            "BACKEND READY"
-        )
-        status_badge.setObjectName(
-            "statusBadge"
-        )
-        status_badge.setAlignment(
-            Qt.AlignmentFlag.AlignCenter
-        )
-
-        heading_row.addWidget(
-            module_title
-        )
-        heading_row.addStretch()
-        heading_row.addWidget(
-            status_badge
-        )
-
-        description = QLabel(
-            item.description
-        )
-        description.setObjectName(
-            "moduleDescription"
-        )
-        description.setWordWrap(
-            True
-        )
-
-        information_card = QFrame()
-        information_card.setObjectName(
-            "infoCard"
-        )
-
-        card_layout = QVBoxLayout(
-            information_card
-        )
-        card_layout.setContentsMargins(
-            22,
-            20,
-            22,
-            20,
-        )
-        card_layout.setSpacing(
-            14
-        )
-
-        card_heading = QLabel(
-            "GUI Foundation Status"
-        )
-        card_heading.setObjectName(
-            "cardHeading"
-        )
-
-        card_text = QLabel(
-            "The screen is ready. Evidence selection, analysis "
-            "controls and report actions will be connected to the "
-            "existing backend in the next milestone."
-        )
-        card_text.setObjectName(
-            "cardText"
-        )
-        card_text.setWordWrap(
-            True
-        )
-
-        card_layout.addWidget(
-            card_heading
-        )
-        card_layout.addWidget(
-            card_text
-        )
-
-        workflow_card = QFrame()
-        workflow_card.setObjectName(
-            "infoCard"
-        )
-
-        workflow_layout = QVBoxLayout(
-            workflow_card
-        )
-        workflow_layout.setContentsMargins(
-            22,
-            20,
-            22,
-            20,
-        )
-        workflow_layout.setSpacing(
-            14
-        )
-
-        workflow_heading = QLabel(
-            "Planned Investigator Workflow"
-        )
-        workflow_heading.setObjectName(
-            "cardHeading"
-        )
-
-        workflow_layout.addWidget(
-            workflow_heading
-        )
-
-        workflow_steps = (
-            "Select evidence or open the active case.",
-            "Run the required analysis.",
-            "Review findings and open the report.",
-        )
-
-        for number, text in enumerate(
-            workflow_steps,
-            start=1,
-        ):
-            step_row = QHBoxLayout()
-            step_row.setSpacing(
-                12
-            )
-
-            step_number = QLabel(
-                str(number)
-            )
-            step_number.setObjectName(
-                "stepNumber"
-            )
-            step_number.setAlignment(
-                Qt.AlignmentFlag.AlignCenter
-            )
-
-            step_text = QLabel(
-                text
-            )
-            step_text.setObjectName(
-                "cardText"
-            )
-            step_text.setWordWrap(
-                True
-            )
-
-            step_row.addWidget(
-                step_number
-            )
-            step_row.addWidget(
-                step_text,
-                stretch=1,
-            )
-
-            workflow_layout.addLayout(
-                step_row
-            )
-
-        layout.addLayout(
-            heading_row
-        )
-        layout.addWidget(
-            description
-        )
-        layout.addWidget(
-            information_card
-        )
-        layout.addWidget(
-            workflow_card
-        )
-        layout.addStretch()
 
 
 class MainWindow(QMainWindow):
@@ -372,7 +172,7 @@ class MainWindow(QMainWindow):
             self
         )
         status_bar.showMessage(
-            "Backend freeze active | GUI foundation"
+            "Backend connected | Direct analysis workspace"
         )
         self.setStatusBar(
             status_bar
@@ -631,17 +431,25 @@ class MainWindow(QMainWindow):
             self._page_subtitle
         )
 
+        page_factories = {
+            "cdr": CdrPage,
+            "tower_dump": TowerDumpPage,
+            "ipdr": IpdrPage,
+            "imei": ImeiPage,
+            "lookup": LookupPage,
+            "case_details": CaseDetailsPage,
+            "case_reports": CaseReportsPage,
+        }
+
         for item in NAVIGATION_ITEMS:
-            if item.key == "cdr":
-                page = CdrPage()
-            elif item.key == "tower_dump":
-                page = TowerDumpPage()
-            elif item.key == "case_reports":
-                page = CaseReportsPage()
-            else:
-                page = ModulePage(
-                    item
-                )
+            try:
+                page_factory = page_factories[item.key]
+            except KeyError as error:
+                raise RuntimeError(
+                    f"No GUI page is registered for: {item.key}"
+                ) from error
+
+            page = page_factory()
             self._page_stack.addWidget(
                 page
             )

@@ -6,7 +6,6 @@ import hashlib
 import json
 from pathlib import Path
 from typing import Any
-from uuid import uuid4
 
 from modules.core.hashing import file_fingerprint, sha256_file
 from modules.core.time_utils import new_run_id, utc_date_compact, utc_now_iso
@@ -536,6 +535,80 @@ def list_case_reports(case_id: str) -> list[dict[str, Any]]:
 
 def verify_case_audit(case_id: str) -> dict[str, Any]:
     return verify_audit_log(case_directory(case_id) / "logs" / "audit.jsonl")
+
+
+def get_case_overview(case_id: str) -> dict[str, Any]:
+    """Return a read-only investigator-facing overview of one case."""
+
+    metadata = open_case(case_id, include_archived=True)
+
+    def read_records(name: str) -> list[dict[str, Any]]:
+        value = read_json(_config_file(case_id, name), default=[])
+
+        if not isinstance(value, list):
+            return []
+
+        return [
+            dict(item)
+            for item in value
+            if isinstance(item, dict)
+        ]
+
+    targets = read_records("targets.json")
+    evidence_history = read_records("evidence.json")
+    reports = read_records("reports.json")
+    analysis_runs = read_records("analysis_runs.json")
+
+    latest_evidence: dict[str, dict[str, Any]] = {}
+
+    for index, record in enumerate(evidence_history):
+        identity = str(
+            record.get("source_path_id")
+            or record.get("source_file")
+            or record.get("evidence_id")
+            or f"ledger-{index}"
+        )
+        latest_evidence[identity] = record
+
+    evidence = sorted(
+        latest_evidence.values(),
+        key=lambda record: str(record.get("registered_at", "")),
+        reverse=True,
+    )
+    recent_runs = sorted(
+        analysis_runs,
+        key=lambda record: str(record.get("recorded_at", "")),
+        reverse=True,
+    )
+
+    try:
+        audit = verify_case_audit(case_id)
+    except Exception as error:  # noqa: BLE001 - audit status must remain visible.
+        audit = {
+            "valid": False,
+            "event_count": 0,
+            "errors": [f"{type(error).__name__}: {error}"],
+        }
+
+    return {
+        "case": metadata,
+        "summary": {
+            "target_count": len(targets),
+            "evidence_file_count": len(evidence),
+            "evidence_registration_count": len(evidence_history),
+            "report_count": len(reports),
+            "analysis_run_count": len(analysis_runs),
+            "completed_run_count": sum(
+                str(record.get("status", "")).upper() == "COMPLETED"
+                for record in analysis_runs
+            ),
+        },
+        "targets": targets,
+        "evidence": evidence,
+        "reports": reports,
+        "analysis_runs": recent_runs,
+        "audit": audit,
+    }
 
 
 def log_case_event(

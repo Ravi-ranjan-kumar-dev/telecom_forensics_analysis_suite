@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import importlib
 import os
+import time
 import traceback
 from pathlib import Path
 from typing import Any
@@ -463,7 +464,16 @@ def handle_multiple_cdr(
     case: dict[str, Any],
     *,
     input_folder: str | Path | None = None,
+    generate_individual_reports: bool = False,
 ) -> dict[str, Any] | None:
+    """Run common-first Multiple CDR analysis.
+
+    Full per-target workbooks remain available as an explicit option.  They
+    are disabled by default because Single CDR analysis already provides that
+    report and repeating every analysis and workbook for every target can
+    dominate large multi-target runs.
+    """
+
     run_multiple = safe_import(
         "modules.controllers.cdr_controller",
         "run_multiple",
@@ -478,8 +488,12 @@ def handle_multiple_cdr(
         case_id,
         action="MULTIPLE_CDR_ANALYSIS_STARTED",
     )
+    workflow_started = time.perf_counter()
+    stage_durations: dict[str, float] = {}
 
     try:
+        print("\n[1/4] Loading and normalizing Multiple CDR evidence...")
+        stage_started = time.perf_counter()
         controller_result = (
             run_multiple(input_folder)
             if input_folder is not None
@@ -488,17 +502,42 @@ def handle_multiple_cdr(
         loaded_cdrs = _normalise_multiple(
             controller_result
         )
+        stage_durations[
+            "load_and_normalize"
+        ] = time.perf_counter() - stage_started
 
         if not loaded_cdrs:
             raise ValueError("Koi valid Multiple CDR target load nahi hua.")
 
-        reporting = _reporting_functions()
-        individual_results: dict[str, Any] = {}
-        individual_dir = case_report_dir(
-            case_id,
-            "cdr_multiple_individual",
-        )
+        if len(
+            loaded_cdrs
+        ) < 2:
+            raise ValueError(
+                "Multiple CDR common analysis ke liye kam se kam "
+                "do alag target numbers chahiye."
+            )
 
+        individual_results: dict[str, Any] = {}
+        individual_dir: Path | None = None
+
+        if generate_individual_reports:
+            reporting = _reporting_functions()
+            individual_dir = case_report_dir(
+                case_id,
+                "cdr_multiple_individual",
+            )
+            print(
+                "[+] Optional individual reports enabled. "
+                "This performs the full Single CDR pipeline for every target."
+            )
+        else:
+            reporting = {}
+            print(
+                "[+] Fast common-report mode enabled. Individual 23-sheet "
+                "target reports are skipped."
+            )
+
+        stage_started = time.perf_counter()
         for target, info in loaded_cdrs.items():
             df = info.get("df")
 
@@ -512,14 +551,26 @@ def handle_multiple_cdr(
                 description="Multiple CDR target",
             )
 
-            result = _run_target_pipeline(
-                df=df,
-                target=target,
-                metadata=build_metadata(target, df, case, info),
-                output_dir=individual_dir,
-                reporting=reporting,
-            )
-            individual_results[target] = result
+            if (
+                generate_individual_reports
+                and individual_dir is not None
+            ):
+                print(
+                    "[+] Building optional individual report for "
+                    f"target {target}..."
+                )
+                result = _run_target_pipeline(
+                    df=df,
+                    target=target,
+                    metadata=build_metadata(target, df, case, info),
+                    output_dir=individual_dir,
+                    reporting=reporting,
+                )
+                individual_results[target] = result
+
+        stage_durations[
+            "individual_reports"
+        ] = time.perf_counter() - stage_started
 
         cross_builder = safe_import(
             "modules.analysis.cdr.cross_target",
@@ -530,15 +581,22 @@ def handle_multiple_cdr(
             "generate_multi_cdr_report",
         )
 
+        print("[2/4] Building cross-target matrices and common intelligence...")
+        stage_started = time.perf_counter()
         cross_bundle = (
             cross_builder(loaded_cdrs, min_targets=2)
-            if len(loaded_cdrs) >= 2 and callable(cross_builder)
+            if callable(cross_builder)
             else None
         )
+        stage_durations[
+            "cross_target_analysis"
+        ] = time.perf_counter() - stage_started
 
         common_path = None
 
-        if len(loaded_cdrs) >= 2 and callable(multi_excel):
+        print("[3/4] Writing common Excel report and map sidecars...")
+        stage_started = time.perf_counter()
+        if callable(multi_excel):
             common_path = multi_excel(
                 loaded_cdrs=loaded_cdrs,
                 metadata=_case_metadata(case),
@@ -549,12 +607,17 @@ def handle_multiple_cdr(
                 ),
                 min_targets=2,
             )
+        stage_durations[
+            "common_report"
+        ] = time.perf_counter() - stage_started
 
         from modules.reporting.cdr_report_source import (
             create_cdr_source_run,
             link_report_to_source,
         )
 
+        print("[4/4] Saving immutable report-source links...")
+        stage_started = time.perf_counter()
         source_run = create_cdr_source_run(
             case_id=case_id,
             analysis_run_id=analysis_run_id,
@@ -565,7 +628,6 @@ def handle_multiple_cdr(
                 and not info["df"].empty
             },
         )
-
         for target, result in individual_results.items():
             report_path = result.get("excel") if isinstance(result, dict) else None
             if not report_path:
@@ -595,6 +657,10 @@ def handle_multiple_cdr(
                 analysis_run_id=analysis_run_id,
             )
 
+        stage_durations[
+            "source_link"
+        ] = time.perf_counter() - stage_started
+
         total_records = sum(
             len(info.get("df"))
             for info in loaded_cdrs.values()
@@ -606,18 +672,52 @@ def handle_multiple_cdr(
             analysis_type="MULTIPLE_CDR",
             status="COMPLETED",
             input_records=total_records,
-            output_records=len(individual_results),
+            output_records=len(loaded_cdrs),
             report_path=str(common_path or ""),
             analysis_run_id=analysis_run_id,
         )
 
-        print(f"\n[+] Individual reports: {individual_dir}")
+        total_duration = time.perf_counter() - workflow_started
+        stage_durations[
+            "total"
+        ] = total_duration
+
+        if individual_dir is not None:
+            print(f"\n[+] Individual reports: {individual_dir}")
+        else:
+            print(
+                "\n[+] Individual reports: Skipped by fast common-report mode"
+            )
         print(f"[+] Common report: {common_path or 'Unavailable'}")
+        print(
+            "[+] Multiple CDR completed in "
+            f"{total_duration:.2f} sec | "
+            "load "
+            f"{stage_durations['load_and_normalize']:.2f}s | "
+            "individual "
+            f"{stage_durations['individual_reports']:.2f}s | "
+            "cross "
+            f"{stage_durations['cross_target_analysis']:.2f}s | "
+            "report "
+            f"{stage_durations['common_report']:.2f}s | "
+            "source link "
+            f"{stage_durations['source_link']:.2f}s"
+        )
 
         return {
             "individual_reports": individual_results,
+            "individual_reports_generated": bool(
+                generate_individual_reports
+            ),
             "cross_target_analysis": cross_bundle,
             "multiple_common_report": common_path,
+            "stage_durations": {
+                key: round(
+                    value,
+                    4,
+                )
+                for key, value in stage_durations.items()
+            },
         }
 
     except Exception as error:

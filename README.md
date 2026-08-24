@@ -70,6 +70,58 @@ size, modification-time or selection change invalidates the cache and safely
 refreshes the backend. The GUI log reports whether the index was reused or
 refreshed.
 
+In **IPDR Analysis**, select Single or Multiple Subscriber IPDR Analysis and
+choose the folder containing the related CSV, TXT, XLSX or XLS evidence. The
+workflow runs in the background and returns the generated Excel report to the
+GUI. CELL ID_IPDRNAT tower evidence remains under **Tower Dump Analysis**.
+
+In **IMEI / Device Analysis**, select dedicated CDR, IPDR, GPRS or unified
+IMEI evidence. The GUI reads report-query IMEI/IMEISV values from the evidence
+headers, runs one analysis per detected identifier, and creates a common
+cross-device report where the backend supports it. No manual identifier entry
+is required when the evidence contains a valid query identifier.
+
+In **Lookup Services**, use the SDR and CGI tabs for exact master-data lookups.
+The Master Data Import tab accepts one SDR or CGI file and uses the existing
+validated backup, type detection, duplicate handling and import-log workflow.
+
+**Case Details** is a read-only view of the active case metadata, audit status,
+registered targets, current evidence files and recent analysis runs.
+
+### CDR report outputs
+
+- Single CDR reports use separate sheets for incoming/outgoing voice, incoming/
+  outgoing SMS, tower intelligence, probable home/work towers, each movement
+  function and each activity-period function. The Executive Summary contains
+  roaming plus normalized Top 10 and Bottom 10 Indian mobile contacts. Bottom
+  contacts include batched SDR details, and Bottom 10 CGI/Towers include
+  batched CGI site and address details. The Device & SIM sheet separates
+  device groups, SIM identities and unconfirmed change indicators.
+- Multiple CDR reports contain the 12 investigator sheets from Cross Summary
+  through Source Files. Common Numbers, Direct Links and Contact Matrix include
+  SDR profiles; Common Towers includes CGI details; Tower Matrix includes CGI
+  details plus the linked targets' SDR profiles.
+- Multiple CDR uses a common-report fast mode by default. The GUI can optionally
+  generate the full 23-sheet individual report for every target when required.
+  Stage timings are printed in Live Progress for large-case diagnosis.
+- Single and Multiple CDR runs create deterministic `_contact_map.html` and
+  `_movement_route.html` sidecars when the required CGI coordinates are
+  available. The GUI discovers these beside the generated Excel workbook.
+
+### Tower CDR Dump report outputs
+
+- Tower CDR Dump reports contain 15 investigator sheets. Rare/Uncommon,
+  Repeat Visitors, every Multi-Spot function, Device Consistency, Shared IMEI
+  and Shared IMSI are separate sheets.
+- Priority, Rare/Uncommon, Repeat Visitor and Device/SIM mobile numbers include
+  bounded batch SDR details. Multi-Spot sheets also show the highest-event
+  searched CGI for each row with its batch CGI address details.
+- The Normalized Sample excludes source-row and potential-duplicate technical
+  columns and includes subscriber SDR plus searched-CGI address details.
+- Data Quality, Backend Data Guide, Analysis Status and Methodology sheets are
+  excluded from the investigator workbook. Technical diagnostics remain in
+  logs and the indexed backend.
+
 ## Safe upgrade from an older project
 
 Extract this release to a separate directory, then run:
@@ -80,6 +132,10 @@ python tools/install_or_upgrade.py \
 ```
 
 The tool creates a dated full backup beside the destination and preserves runtime evidence, cases, reports and database data. Read `docs/INSTALL_UPGRADE_HINDI.md` before upgrading.
+
+The full installer needs enough free space for backup and staging copies. For a
+verified source-only release and a project with a very large local database,
+use the documented source-overlay procedure instead.
 
 ## Management commands
 

@@ -182,25 +182,12 @@ def test_tower_compact_report_quality_v3(
         data_only=False,
     )
 
-    quality = workbook[
-        "2. Data Quality"
-    ]
-
-    quality_rows = {
-        row[0].value: row
-        for row in quality.iter_rows()
-        if row[0].value
-    }
-
-    assert (
-        quality_rows[
-            "Canonical Subscriber Role Mapping"
-        ][2].value
-        == "INFO"
+    assert "2. Data Quality" not in (
+        workbook.sheetnames
     )
 
     priority = workbook[
-        "4. Priority Review Queue"
+        "3. Priority Review Queue"
     ]
 
     priority_values = [
@@ -211,14 +198,31 @@ def test_tower_compact_report_quality_v3(
 
     assert (
         "RARE / UNCOMMON SHORTLIST"
-        in priority_values
+        not in priority_values
     )
 
-    assert "9000000002" in priority_values
+    assert "next_action" not in priority_values
+    assert (
+        "LEAD CATEGORY COVERAGE"
+        not in priority_values
+    )
     assert "rare_uncommon" not in priority_values
 
+    rare = workbook[
+        "4. Rare Uncommon"
+    ]
+
+    rare_values = [
+        cell.value
+        for row in rare.iter_rows()
+        for cell in row
+    ]
+
+    assert "9000000002" in rare_values
+    assert "sdr_lookup_status" in rare_values
+
     device = workbook[
-        "7. Device SIM Alerts"
+        "12. Device Consistency Alerts"
     ]
 
     device_headers = [
@@ -229,6 +233,7 @@ def test_tower_compact_report_quality_v3(
     assert "subscriber_number" in device_headers
     assert "searched_cells" not in device_headers
     assert "first_cells" not in device_headers
+    assert "sdr_lookup_status" in device_headers
 
     executive_values = [
         cell.value
@@ -240,7 +245,11 @@ def test_tower_compact_report_quality_v3(
 
     assert not any(
         isinstance(value, str)
-        and "Full analytical tables are retained"
-        in value
+        and (
+            "Full analytical tables are retained"
+            in value
+            or "Detailed Data Availability"
+            in value
+        )
         for value in executive_values
     )

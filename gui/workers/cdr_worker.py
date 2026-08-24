@@ -191,6 +191,7 @@ class CdrWorker(QObject):
         *,
         mode: str,
         input_folder: str | Path,
+        generate_individual_reports: bool = False,
     ) -> None:
         super().__init__()
 
@@ -210,6 +211,9 @@ class CdrWorker(QObject):
         self.input_folder = Path(
             input_folder
         ).expanduser().resolve()
+        self.generate_individual_reports = bool(
+            generate_individual_reports
+        )
 
     @Slot()
     def run(
@@ -241,10 +245,19 @@ class CdrWorker(QObject):
             ):
                 case = get_direct_analysis_workspace()
 
-                result = handler(
-                    case,
-                    input_folder=self.input_folder,
-                )
+                if self.mode == "multiple":
+                    result = handler(
+                        case,
+                        input_folder=self.input_folder,
+                        generate_individual_reports=(
+                            self.generate_individual_reports
+                        ),
+                    )
+                else:
+                    result = handler(
+                        case,
+                        input_folder=self.input_folder,
+                    )
 
             output_stream.flush()
 

@@ -207,12 +207,15 @@ def resolve_imei_unified_input_folder(
 
 def _load_dedicated_imei_cdr_inventory(
     case_id: str,
+    input_folder: str | Path | None = None,
 ) -> dict[str, Any]:
     """Load dedicated CDR evidence through the reusable inventory layer."""
 
     inventory = load_dedicated_evidence_inventory(
-        folder=resolve_imei_cdr_input_folder(
-            case_id
+        folder=(
+            Path(input_folder).expanduser().resolve(strict=False)
+            if input_folder is not None
+            else resolve_imei_cdr_input_folder(case_id)
         ),
         expected_source_type="CDR",
         supported_suffixes=IMEI_EVIDENCE_SUFFIXES,
@@ -236,12 +239,15 @@ def _load_dedicated_imei_cdr_inventory(
 
 def _load_dedicated_imei_ipdr_inventory(
     case_id: str,
+    input_folder: str | Path | None = None,
 ) -> dict[str, Any]:
     """Load dedicated IPDR evidence through the reusable inventory layer."""
 
     inventory = load_dedicated_evidence_inventory(
-        folder=resolve_imei_ipdr_input_folder(
-            case_id
+        folder=(
+            Path(input_folder).expanduser().resolve(strict=False)
+            if input_folder is not None
+            else resolve_imei_ipdr_input_folder(case_id)
         ),
         expected_source_type="IPDR",
         supported_suffixes=IMEI_EVIDENCE_SUFFIXES,
@@ -265,12 +271,15 @@ def _load_dedicated_imei_ipdr_inventory(
 
 def _load_dedicated_imei_gprs_inventory(
     case_id: str,
+    input_folder: str | Path | None = None,
 ) -> dict[str, Any]:
     """Load dedicated GPRS evidence through the reusable inventory layer."""
 
     inventory = load_dedicated_evidence_inventory(
-        folder=resolve_imei_gprs_input_folder(
-            case_id
+        folder=(
+            Path(input_folder).expanduser().resolve(strict=False)
+            if input_folder is not None
+            else resolve_imei_gprs_input_folder(case_id)
         ),
         expected_source_type="GPRS",
         supported_suffixes=IMEI_EVIDENCE_SUFFIXES,
@@ -294,12 +303,15 @@ def _load_dedicated_imei_gprs_inventory(
 
 def _load_unified_imei_inventory(
     case_id: str,
+    input_folder: str | Path | None = None,
 ) -> dict[str, Any]:
     """Load CDR, IPDR and GPRS evidence from the IMEI root folder."""
 
     return load_unified_device_inventory(
-        folder=resolve_imei_unified_input_folder(
-            case_id
+        folder=(
+            Path(input_folder).expanduser().resolve(strict=False)
+            if input_folder is not None
+            else resolve_imei_unified_input_folder(case_id)
         ),
         supported_suffixes=IMEI_EVIDENCE_SUFFIXES,
         inspect_file=inspect_imei_evidence_file,
@@ -1565,6 +1577,9 @@ def _run_auto_single_imei_unified(
 
 def _execute_auto_detected_imei_cdr(
     case: dict[str, Any],
+    *,
+    input_folder: str | Path | None = None,
+    allow_manual_fallback: bool = True,
 ) -> dict[str, Any]:
     """Run all single analyses and common analysis when applicable."""
 
@@ -1575,8 +1590,13 @@ def _execute_auto_detected_imei_cdr(
         )
     ).strip()
 
-    inventory = _load_dedicated_imei_cdr_inventory(
-        case_id
+    inventory = (
+        _load_dedicated_imei_cdr_inventory(case_id)
+        if input_folder is None
+        else _load_dedicated_imei_cdr_inventory(
+            case_id,
+            input_folder,
+        )
     )
 
     identifiers = inventory[
@@ -1641,10 +1661,25 @@ def _execute_auto_detected_imei_cdr(
             "[INFO] Manual entry will be used only as fallback."
         )
 
-        return _execute(
-            case,
-            mode="cdr",
-        )
+        if allow_manual_fallback:
+            return _execute(
+                case,
+                mode="cdr",
+            )
+
+        return {
+            "mode": "cdr",
+            "automatic_detection": True,
+            "identifiers": [],
+            "inventory": inventory,
+            "single_results": [],
+            "common_result": None,
+            "input_records": inventory["analytical_records"],
+            "status": "NO_IDENTIFIERS",
+            "message": (
+                "No supported report-query IMEI or IMEISV was detected."
+            ),
+        }
 
     if len(
         identifiers
@@ -1800,6 +1835,9 @@ def _execute_auto_detected_imei_cdr(
 
 def _execute_auto_detected_imei_ipdr(
     case: dict[str, Any],
+    *,
+    input_folder: str | Path | None = None,
+    allow_manual_fallback: bool = True,
 ) -> dict[str, Any]:
     """Run automatic single and common IMEI IPDR analyses."""
 
@@ -1810,8 +1848,13 @@ def _execute_auto_detected_imei_ipdr(
         )
     ).strip()
 
-    inventory = _load_dedicated_imei_ipdr_inventory(
-        case_id
+    inventory = (
+        _load_dedicated_imei_ipdr_inventory(case_id)
+        if input_folder is None
+        else _load_dedicated_imei_ipdr_inventory(
+            case_id,
+            input_folder,
+        )
     )
 
     identifiers = inventory[
@@ -1876,10 +1919,25 @@ def _execute_auto_detected_imei_ipdr(
             "[INFO] Manual entry will be used only as fallback."
         )
 
-        return _execute(
-            case,
-            mode="ipdr",
-        )
+        if allow_manual_fallback:
+            return _execute(
+                case,
+                mode="ipdr",
+            )
+
+        return {
+            "mode": "ipdr",
+            "automatic_detection": True,
+            "identifiers": [],
+            "inventory": inventory,
+            "single_results": [],
+            "common_result": None,
+            "input_records": inventory["analytical_records"],
+            "status": "NO_IDENTIFIERS",
+            "message": (
+                "No supported IPDR report-query IMEI or IMEISV was detected."
+            ),
+        }
 
     if len(
         identifiers
@@ -2092,6 +2150,9 @@ def _execute_auto_detected_imei_ipdr(
 
 def _execute_auto_detected_imei_gprs(
     case: dict[str, Any],
+    *,
+    input_folder: str | Path | None = None,
+    allow_manual_fallback: bool = True,
 ) -> dict[str, Any]:
     """Run automatic single IMEI GPRS analyses."""
 
@@ -2102,8 +2163,13 @@ def _execute_auto_detected_imei_gprs(
         )
     ).strip()
 
-    inventory = _load_dedicated_imei_gprs_inventory(
-        case_id
+    inventory = (
+        _load_dedicated_imei_gprs_inventory(case_id)
+        if input_folder is None
+        else _load_dedicated_imei_gprs_inventory(
+            case_id,
+            input_folder,
+        )
     )
 
     identifiers = inventory[
@@ -2169,10 +2235,25 @@ def _execute_auto_detected_imei_gprs(
             "[INFO] Manual entry will be used only as fallback."
         )
 
-        return _execute(
-            case,
-            mode="gprs",
-        )
+        if allow_manual_fallback:
+            return _execute(
+                case,
+                mode="gprs",
+            )
+
+        return {
+            "mode": "gprs",
+            "automatic_detection": True,
+            "identifiers": [],
+            "inventory": inventory,
+            "single_results": [],
+            "common_result": None,
+            "input_records": inventory["analytical_records"],
+            "status": "NO_IDENTIFIERS",
+            "message": (
+                "No supported GPRS report-query IMEI or IMEISV was detected."
+            ),
+        }
 
     if len(
         identifiers
@@ -2242,6 +2323,9 @@ def _execute_auto_detected_imei_gprs(
 
 def _execute_auto_detected_imei_unified(
     case: dict[str, Any],
+    *,
+    input_folder: str | Path | None = None,
+    allow_manual_fallback: bool = True,
 ) -> dict[str, Any]:
     """Run one unified analysis per detected report-query identifier."""
 
@@ -2252,8 +2336,13 @@ def _execute_auto_detected_imei_unified(
         )
     ).strip()
 
-    inventory = _load_unified_imei_inventory(
-        case_id
+    inventory = (
+        _load_unified_imei_inventory(case_id)
+        if input_folder is None
+        else _load_unified_imei_inventory(
+            case_id,
+            input_folder,
+        )
     )
 
     identifiers = inventory[
@@ -2328,10 +2417,25 @@ def _execute_auto_detected_imei_unified(
             "only as fallback."
         )
 
-        return _execute(
-            case,
-            mode="unified",
-        )
+        if allow_manual_fallback:
+            return _execute(
+                case,
+                mode="unified",
+            )
+
+        return {
+            "mode": "unified",
+            "automatic_detection": True,
+            "identifiers": [],
+            "inventory": inventory,
+            "single_results": [],
+            "common_result": None,
+            "source_record_counts": source_counts,
+            "status": "NO_IDENTIFIERS",
+            "message": (
+                "No supported unified report-query IMEI or IMEISV was detected."
+            ),
+        }
 
     print(
         f"[+] {len(identifiers)} report-query "
@@ -3178,6 +3282,51 @@ def _execute(
             "report": None,
             "input_records": 0,
         }
+
+
+def run_imei_device_analysis(
+    case: dict[str, Any],
+    *,
+    mode: str,
+    input_folder: str | Path | None = None,
+) -> dict[str, Any]:
+    """Run one automatic IMEI workflow without interactive prompts."""
+
+    normalized_mode = str(mode).strip().casefold()
+
+    handlers = {
+        "cdr": _execute_auto_detected_imei_cdr,
+        "ipdr": _execute_auto_detected_imei_ipdr,
+        "gprs": _execute_auto_detected_imei_gprs,
+        "unified": _execute_auto_detected_imei_unified,
+    }
+
+    handler = handlers.get(normalized_mode)
+
+    if handler is None:
+        raise ValueError(
+            f"Unsupported IMEI analysis mode: {mode}"
+        )
+
+    selected_folder: Path | None = None
+
+    if input_folder is not None:
+        selected_folder = (
+            Path(input_folder)
+            .expanduser()
+            .resolve(strict=False)
+        )
+
+        if not selected_folder.is_dir():
+            raise FileNotFoundError(
+                f"IMEI evidence folder was not found: {selected_folder}"
+            )
+
+    return handler(
+        case,
+        input_folder=selected_folder,
+        allow_manual_fallback=False,
+    )
 
 
 def handle_imei_device_workspace(

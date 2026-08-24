@@ -99,6 +99,42 @@ def _log_lookup_event(
         return
 
 
+def run_sdr_lookup(
+    case: dict[str, Any] | None,
+    number: object,
+) -> dict[str, Any]:
+    """Run one structured SDR lookup and record minimal audit metadata."""
+
+    result = lookup_sdr_profile(number)
+
+    _log_lookup_event(
+        case,
+        lookup_type="SDR",
+        query=str(number or ""),
+        status=str(result.get("status", "")),
+    )
+
+    return result
+
+
+def run_cgi_lookup(
+    case: dict[str, Any] | None,
+    cgi_value: object,
+) -> dict[str, Any]:
+    """Run one structured CGI lookup and record minimal audit metadata."""
+
+    result = lookup_cgi_profile(cgi_value)
+
+    _log_lookup_event(
+        case,
+        lookup_type="CGI",
+        query=str(cgi_value or ""),
+        status=str(result.get("status", "")),
+    )
+
+    return result
+
+
 def _run_sdr_lookup(
     case: dict[str, Any] | None,
 ) -> None:
@@ -110,7 +146,8 @@ def _run_sdr_lookup(
         "Mobile Number: "
     ).strip()
 
-    result = lookup_sdr_profile(
+    result = run_sdr_lookup(
+        case,
         number
     )
 
@@ -119,13 +156,6 @@ def _run_sdr_lookup(
             "status",
             "",
         )
-    )
-
-    _log_lookup_event(
-        case,
-        lookup_type="SDR",
-        query=number,
-        status=status,
     )
 
     if status == INVALID_INPUT:
@@ -252,7 +282,8 @@ def _run_cgi_lookup(
         "CGI / Cell ID: "
     ).strip()
 
-    result = lookup_cgi_profile(
+    result = run_cgi_lookup(
+        case,
         value
     )
 
@@ -261,13 +292,6 @@ def _run_cgi_lookup(
             "status",
             "",
         )
-    )
-
-    _log_lookup_event(
-        case,
-        lookup_type="CGI",
-        query=value,
-        status=status,
     )
 
     if status == INVALID_INPUT:

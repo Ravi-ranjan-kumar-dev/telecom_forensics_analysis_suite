@@ -161,6 +161,11 @@ def build_contact_map_points(
     for record in contact_summary.to_dict(
         orient="records"
     ):
+        source_target = _text(
+            record.get(
+                "Target"
+            )
+        )
         contact = _text(
             record.get(
                 "Other Party"
@@ -259,6 +264,7 @@ def build_contact_map_points(
                 "contacts"
             ].append(
                 {
+                    "target": source_target,
                     "contact": contact,
                     "name": name,
                     "sdr_status": _text(
@@ -500,7 +506,7 @@ function filterPoints() {{
             point.cgi,
             point.site_name,
             point.address,
-            ...contacts.map((item) => `${{item.contact ?? ""}} ${{item.name ?? ""}}`),
+            ...contacts.map((item) => `${{item.target ?? ""}} ${{item.contact ?? ""}} ${{item.name ?? ""}}`),
         ].join(" ").toLowerCase();
 
         return !query || text.includes(query);
@@ -511,6 +517,7 @@ function popup(point) {{
     const contacts = Array.isArray(point.contacts) ? point.contacts : [];
     const visible = contacts.slice(0, 25).map((item) => `
         <div class="popup-contact">
+        ${{item.target ? `<strong>Target: ${{esc(item.target)}}</strong><br>` : ""}}
         <strong>${{esc(item.contact || "Contact not available")}}</strong>
         ${{item.name ? `<br>${{esc(item.name)}}` : ""}}
         <br>Events: ${{esc(item.events ?? 0)}}

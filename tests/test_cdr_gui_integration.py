@@ -212,6 +212,8 @@ def test_cdr_page_validates_single_and_multiple_folders(
     page.set_mode(
         "multiple"
     )
+    assert not page._individual_reports_box.isHidden()
+    assert not page._individual_reports_box.isChecked()
     page.set_selected_folder(
         multiple_folder
     )

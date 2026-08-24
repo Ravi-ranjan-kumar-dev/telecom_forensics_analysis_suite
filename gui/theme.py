@@ -244,4 +244,113 @@ QProgressBar#analysisProgress::chunk {
     background-color: #2563eb;
     border-radius: 5px;
 }
+
+QLabel#noticeText {
+    background-color: #172554;
+    color: #bfdbfe;
+    border: 1px solid #1e40af;
+    border-radius: 7px;
+    padding: 8px 10px;
+    font-size: 11px;
+}
+
+QLabel#warningBadge {
+    background-color: #422006;
+    color: #fde68a;
+    border: 1px solid #a16207;
+    border-radius: 10px;
+    padding: 5px 10px;
+    font-size: 10px;
+    font-weight: 700;
+}
+
+QFrame#metricCard {
+    background-color: #0f1a2b;
+    border: 1px solid #2a394f;
+    border-radius: 9px;
+}
+
+QLabel#metricValue {
+    color: #f8fafc;
+    font-size: 21px;
+    font-weight: 700;
+}
+
+QLabel#metricLabel {
+    color: #94a3b8;
+    font-size: 11px;
+}
+
+QTabWidget#lookupTabs::pane {
+    background-color: #0f1a2b;
+    border: 1px solid #2a394f;
+    border-radius: 8px;
+    top: -1px;
+}
+
+QTabBar::tab {
+    background-color: #111827;
+    color: #94a3b8;
+    border: 1px solid #2a394f;
+    padding: 9px 14px;
+    margin-right: 3px;
+    min-width: 110px;
+}
+
+QTabBar::tab:selected {
+    background-color: #1d4ed8;
+    color: #ffffff;
+    border-color: #2563eb;
+}
+
+QTabBar::tab:hover:!selected {
+    background-color: #1e293b;
+    color: #e2e8f0;
+}
+
+QTableWidget#dataTable {
+    background-color: #08101d;
+    alternate-background-color: #0d1726;
+    color: #dbeafe;
+    border: 1px solid #263449;
+    border-radius: 7px;
+    gridline-color: #263449;
+    selection-background-color: #1d4ed8;
+    selection-color: #ffffff;
+}
+
+QTableWidget#dataTable QHeaderView::section {
+    background-color: #172033;
+    color: #cbd5e1;
+    border: 0;
+    border-right: 1px solid #334155;
+    border-bottom: 1px solid #334155;
+    padding: 8px;
+    font-weight: 700;
+}
+
+QTableWidget#dataTable::item {
+    padding: 5px;
+}
+
+QScrollBar:vertical {
+    background-color: #0b1220;
+    width: 12px;
+    margin: 0;
+}
+
+QScrollBar::handle:vertical {
+    background-color: #334155;
+    border-radius: 6px;
+    min-height: 28px;
+}
+
+QScrollBar::handle:vertical:hover {
+    background-color: #475569;
+}
+
+QScrollBar::add-line:vertical,
+QScrollBar::sub-line:vertical {
+    height: 0;
+}
 """

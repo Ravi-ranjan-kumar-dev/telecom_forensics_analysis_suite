@@ -27,6 +27,7 @@ from modules.analysis.cdr.contact_report import (
 from modules.analysis.cdr.device_quality import (
     device_change_review,
     device_summary,
+    sim_summary,
     split_change_review,
 )
 
@@ -34,14 +35,27 @@ from modules.analysis.cdr.device_quality import (
 SINGLE_CDR_COMPACT_SHEETS = (
     "1. Executive Summary",
     "2. Full Contact Summary",
-    "3. Communication Intel",
-    "4. Network Intelligence",
-    "5. Location & Roaming",
-    "6. Movement & Daily Routine",
-    "7. Device & SIM Intel",
-    "8. Activity & Timing",
-    "9. Priority Review Queue",
-    "10. Data Quality & Guide",
+    "3. Outgoing Voice Calls",
+    "4. Incoming Voice Calls",
+    "5. Outgoing SMS",
+    "6. Incoming SMS",
+    "7. Network Intelligence",
+    "8. Location Overview",
+    "9. Tower Intelligence",
+    "10. Probable Home Tower",
+    "11. Probable Work Tower",
+    "12. Daily First Last FCLC",
+    "13. FCLC Location Summary",
+    "14. FCLC Contact Summary",
+    "15. Moving Calls",
+    "16. Movement Events",
+    "17. Tower Transitions",
+    "18. Movement Patterns",
+    "19. Device & SIM Intel",
+    "20. Hourly Activity",
+    "21. Daily Activity",
+    "22. Weekly Activity",
+    "23. Monthly Activity",
 )
 
 TECHNICAL_COLUMNS = {
@@ -68,7 +82,6 @@ SECTION_COLUMN_PROFILES = {
         "SDR Address",
         "SDR Operator",
         "SDR Circle",
-        "SDR Lookup Status",
         "Total Calls",
         "Total Duration",
         "Avg. Call Duration",
@@ -87,7 +100,6 @@ SECTION_COLUMN_PROFILES = {
         "Most Used Latitude",
         "Most Used Longitude",
         "Last Interaction CGI",
-        "Last Interaction CGI Lookup Status",
         "Last Interaction Site Name",
         "Last Interaction Tower Address",
         "Last Interaction Latitude",
@@ -99,10 +111,19 @@ SECTION_COLUMN_PROFILES = {
         "Father Name",
         "Address",
         "Operator",
+        "Circle",
         "Total Calls",
-        "SDR Found",
-        "SDR Lookup Status",
-        "Match Confidence",
+    ),
+    "BOTTOM 10 CGI / TOWERS": (
+        "Cell ID",
+        "Total Events",
+        "CGI Town",
+        "CGI District",
+        "CGI Site Name",
+        "CGI Address",
+        "CGI Latitude",
+        "CGI Longitude",
+        "CGI Lookup Status",
     ),
     "CONTACT RANKING": (
         "Contact",
@@ -140,10 +161,6 @@ SECTION_COLUMN_PROFILES = {
         "Date",
         "Time",
         "Duration",
-        "Cell ID",
-        "Address",
-        "End Cell ID",
-        "End Address",
         "SDR Lookup Status",
     ),
     "OUTGOING SMS": (
@@ -192,7 +209,6 @@ SECTION_COLUMN_PROFILES = {
         "Address",
         "Start Tower Town",
         "Start Tower District",
-        "Start Tower Lookup Status",
     ),
     "FREQUENT TOWERS": (
         "Cell ID",
@@ -326,10 +342,7 @@ SECTION_COLUMN_PROFILES = {
     ),
     "DEVICE SUMMARY": (
         "Device Key",
-        "IMEI",
         "Observed IMEI Values",
-        "Valid IMEI",
-        "Invalid IMEI Values",
         "IMEI Status",
         "First Seen",
         "Last Seen",
@@ -340,7 +353,15 @@ SECTION_COLUMN_PROFILES = {
         "Most Used Valid Tower",
         "Most Human Contacted",
     ),
-    "CONFIRMED DEVICE OR SIM CHANGES": (
+    "SIM SUMMARY": (
+        "IMSI",
+        "First Seen",
+        "Last Seen",
+        "Total Events",
+        "Unique Device Groups",
+        "Most Used Device Key",
+    ),
+    "DEVICE / SIM CHANGE INDICATORS": (
         "Date",
         "Time",
         "Change Type",
@@ -409,6 +430,12 @@ SECTION_COLUMN_PROFILES["CC SUMMARY"] = (
     "In SMS Count",
     "First Call Time",
     "Last Call Time",
+)
+
+SECTION_COLUMN_PROFILES["BOTTOM 10 HUMAN CONTACTS"] = (
+    *SECTION_COLUMN_PROFILES[
+        "TOP HUMAN CONTACTS"
+    ],
     "SDR Lookup Status",
 )
 
@@ -904,6 +931,7 @@ def _build_sdr_contact_index(
     for key in (
         "contact_ranking",
         "top_contacts",
+        "bottom_contacts",
         "social_network",
     ):
         frame = _as_frame(
@@ -1109,6 +1137,7 @@ def _build_cgi_location_index(
     for key in (
         "tower_intelligence",
         "frequent_locations",
+        "bottom_cgi",
         "home_tower",
         "work_tower",
     ):
@@ -1642,6 +1671,7 @@ def _write_sheet_title(
     *,
     title: str,
     metadata: dict[str, Any],
+    include_sdr_match: bool = True,
 ) -> int:
     """Write the report title and compact target metadata."""
 
@@ -1673,7 +1703,7 @@ def _write_sheet_title(
         1
     ].height = 26
 
-    metadata_rows = (
+    metadata_rows = [
         (
             "Target",
             metadata.get(
@@ -1695,14 +1725,18 @@ def _write_sheet_title(
                 f"to {metadata.get('to_date', '')}"
             ).strip(),
         ),
-        (
-            "SDR Match",
-            metadata.get(
-                "target_sdr_found",
-                "No",
-            ),
-        ),
-    )
+    ]
+
+    if include_sdr_match:
+        metadata_rows.append(
+            (
+                "SDR Match",
+                metadata.get(
+                    "target_sdr_found",
+                    "No",
+                ),
+            )
+        )
 
     row = 2
 
@@ -2353,6 +2387,43 @@ def _review_checklist() -> pd.DataFrame:
     )
 
 
+def _write_single_section_sheet(
+    workbook: Workbook,
+    *,
+    sheet_name: str,
+    title: str,
+    metadata: dict[str, Any],
+    section_title: str,
+    frame: pd.DataFrame,
+    guidance: str = "",
+    display_context: str = "",
+    preferred_columns: tuple[str, ...] | list[str] | None = None,
+) -> None:
+    """Write one investigator function on its own worksheet."""
+
+    worksheet = workbook.create_sheet(
+        sheet_name
+    )
+    row = _write_sheet_title(
+        worksheet,
+        title=title,
+        metadata=metadata,
+    )
+    _write_section(
+        worksheet,
+        row,
+        title=section_title,
+        frame=frame,
+        max_rows=None,
+        guidance=guidance,
+        display_context=display_context,
+        preferred_columns=preferred_columns,
+    )
+    _finish_sheet(
+        worksheet
+    )
+
+
 def generate_single_cdr_compact_report(
     df: pd.DataFrame,
     target: str,
@@ -2360,7 +2431,7 @@ def generate_single_cdr_compact_report(
     analysis_bundle: dict[str, Any] | None = None,
     output_dir: str | Path | None = None,
 ) -> str | None:
-    """Generate the canonical 10-sheet Single CDR investigator report."""
+    """Generate the canonical investigator-facing Single CDR workbook."""
 
     if (
         df is None
@@ -2589,6 +2660,7 @@ def generate_single_cdr_compact_report(
             worksheet,
             title="Single CDR Investigation Summary",
             metadata=report_metadata,
+            include_sdr_match=False,
         )
         row = _write_section(
             worksheet,
@@ -2605,13 +2677,24 @@ def generate_single_cdr_compact_report(
         row = _write_section(
             worksheet,
             row,
-            title="TOP FIVE HUMAN CONTACTS",
+            title="ROAMING SUMMARY",
+            frame=roaming_summary,
+            max_rows=None,
+            guidance=(
+                "Review home-circle and roaming activity at the start of "
+                "the report. Roaming labels depend on the source record."
+            ),
+        )
+        row = _write_section(
+            worksheet,
+            row,
+            title="TOP 10 HUMAN CONTACTS",
             frame=_as_frame(
                 results.get(
                     "top_contacts"
                 )
             ),
-            max_rows=5,
+            max_rows=10,
             preferred_columns=(
                 "Contact",
                 "Name",
@@ -2619,25 +2702,71 @@ def generate_single_cdr_compact_report(
                 "Address",
                 "Operator",
                 "Circle",
-                "SDR Found",
-                "SDR Lookup Status",
-                "Match Confidence",
                 "Total Calls",
             ),
             display_context="16. Top Human Contacts",
             guidance=(
-                "Automated sender IDs and short codes are excluded "
-                "from this human-contact list."
+                "Only valid Indian mobile numbers are included. Common "
+                "91 and leading-zero prefixes are normalized before counting."
             ),
         )
         row = _write_section(
             worksheet,
             row,
-            title="TOP FIVE TOWERS",
-            frame=cell_summary.head(
-                5
+            title="BOTTOM 10 HUMAN CONTACTS",
+            frame=_as_frame(
+                results.get(
+                    "bottom_contacts"
+                )
             ),
-            max_rows=5,
+            max_rows=10,
+            preferred_columns=(
+                "Contact",
+                "Name",
+                "Father Name",
+                "Address",
+                "Operator",
+                "Circle",
+                "Total Calls",
+                "SDR Lookup Status",
+            ),
+            display_context="Bottom Human Contacts",
+            guidance=(
+                "Least-frequent valid Indian mobile contacts are shown. "
+                "Invalid numeric IDs, sender IDs and short codes are excluded."
+            ),
+        )
+        row = _write_section(
+            worksheet,
+            row,
+            title="BOTTOM 10 CGI / TOWERS",
+            frame=_as_frame(
+                results.get(
+                    "bottom_cgi"
+                )
+            ),
+            max_rows=10,
+            guidance=(
+                "Least-frequent valid serving towers are shown with batched "
+                "CGI master-data address details. Low frequency alone does "
+                "not prove travel or physical presence."
+            ),
+        )
+        row = _write_section(
+            worksheet,
+            row,
+            title="TOP 10 TOWERS",
+            frame=cell_summary.head(
+                10
+            ),
+            max_rows=10,
+            preferred_columns=(
+                "Cell ID",
+                "Total Calls",
+                "Address",
+                "Start Tower Town",
+                "Start Tower District",
+            ),
         )
         _finish_sheet(
             worksheet
@@ -2671,85 +2800,57 @@ def generate_single_cdr_compact_report(
             worksheet
         )
 
-        # 3. Communication Intelligence
-        worksheet = workbook.create_sheet(
-            SINGLE_CDR_COMPACT_SHEETS[
-                2
-            ]
-        )
-        row = _write_sheet_title(
-            worksheet,
-            title="Communication Intelligence",
-            metadata=report_metadata,
-        )
-        for title, key, limit in (
+        # 3-6. Independent call and SMS evidence sheets
+        for (
+            sheet_name,
+            sheet_title,
+            section_title,
+            frame,
+            guidance,
+        ) in (
             (
-                "CONTACT CATEGORY SUMMARY",
-                "contact_category_summary",
-                30,
+                SINGLE_CDR_COMPACT_SHEETS[2],
+                "Outgoing Voice Calls",
+                "OUTGOING VOICE CALLS",
+                outgoing_voice,
+                "Every outgoing voice record is retained for investigator review.",
             ),
             (
-                "SERVICE SENDER IDS",
-                "top_service_sender_ids",
-                30,
+                SINGLE_CDR_COMPACT_SHEETS[3],
+                "Incoming Voice Calls",
+                "INCOMING VOICE CALLS",
+                incoming_voice,
+                "Every incoming voice record is retained for investigator review.",
             ),
             (
-                "SHORT CODES",
-                "top_short_codes",
-                30,
+                SINGLE_CDR_COMPACT_SHEETS[4],
+                "Outgoing SMS",
+                "OUTGOING SMS",
+                outgoing_sms,
+                "Review person-to-person and automated SMS identifiers separately.",
             ),
             (
-                "CALL TYPE SUMMARY",
-                "incoming_outgoing",
-                30,
-            ),
-            (
-                "OTHER OR UNKNOWN CALL TYPES",
-                "other_call_type_summary",
-                30,
+                SINGLE_CDR_COMPACT_SHEETS[5],
+                "Incoming SMS",
+                "INCOMING SMS",
+                incoming_sms,
+                "Review person-to-person and automated SMS identifiers separately.",
             ),
         ):
-            row = _write_section(
-                worksheet,
-                row,
-                title=title,
-                frame=_as_frame(
-                    results.get(
-                        key
-                    )
-                ),
-                max_rows=limit,
+            _write_single_section_sheet(
+                workbook,
+                sheet_name=sheet_name,
+                title=sheet_title,
+                metadata=report_metadata,
+                section_title=section_title,
+                frame=frame,
+                guidance=guidance,
             )
 
-        row = _write_section(
-            worksheet,
-            row,
-            title="OUTGOING SMS",
-            frame=outgoing_sms,
-            max_rows=100,
-            guidance=(
-                "This section is retained as substantive communication evidence. "
-                "The compact report shows a review preview."
-            ),
-        )
-        row = _write_section(
-            worksheet,
-            row,
-            title="INCOMING SMS",
-            frame=incoming_sms,
-            max_rows=100,
-            guidance=(
-                "Review automated sender IDs separately from normal human contacts."
-            ),
-        )
-        _finish_sheet(
-            worksheet
-        )
-
-        # 4. Network Intelligence
+        # 7. Network Intelligence
         worksheet = workbook.create_sheet(
             SINGLE_CDR_COMPACT_SHEETS[
-                3
+                6
             ]
         )
         row = _write_sheet_title(
@@ -2777,15 +2878,15 @@ def generate_single_cdr_compact_report(
             worksheet
         )
 
-        # 5. Location and Roaming
+        # 8. Location Overview
         worksheet = workbook.create_sheet(
             SINGLE_CDR_COMPACT_SHEETS[
-                4
+                7
             ]
         )
         row = _write_sheet_title(
             worksheet,
-            title="Location and Roaming Intelligence",
+            title="Location Overview",
             metadata=report_metadata,
         )
         for title, frame, limit in (
@@ -2801,48 +2902,7 @@ def generate_single_cdr_compact_report(
             (
                 "CELL ID SUMMARY",
                 cell_summary,
-                50,
-            ),
-            (
-                "FREQUENT TOWERS",
-                _as_frame(
-                    results.get(
-                        "frequent_locations"
-                    )
-                ),
-                30,
-            ),
-            (
-                "TOWER INTELLIGENCE",
-                _as_frame(
-                    results.get(
-                        "tower_intelligence"
-                    )
-                ),
-                30,
-            ),
-            (
-                "PROBABLE HOME TOWER INDICATORS",
-                _as_frame(
-                    results.get(
-                        "home_tower"
-                    )
-                ),
-                20,
-            ),
-            (
-                "PROBABLE WORK TOWER INDICATORS",
-                _as_frame(
-                    results.get(
-                        "work_tower"
-                    )
-                ),
-                20,
-            ),
-            (
-                "ROAMING SUMMARY",
-                roaming_summary,
-                50,
+                None,
             ),
         ):
             row = _write_section(
@@ -2857,78 +2917,122 @@ def generate_single_cdr_compact_report(
             worksheet
         )
 
-        # 6. Movement and Daily Routine
-        worksheet = workbook.create_sheet(
-            SINGLE_CDR_COMPACT_SHEETS[
-                5
-            ]
-        )
-        row = _write_sheet_title(
-            worksheet,
-            title="Movement and Daily Routine",
-            metadata=report_metadata,
-        )
-        row = _write_section(
-            worksheet,
-            row,
-            title="FIRST AND LAST COMMUNICATION BY DAY (FCLC)",
-            frame=fclc,
-            max_rows=100,
-        )
-        row = _write_section(
-            worksheet,
-            row,
-            title="FIRST/LAST LOCATION SUMMARY (FCLC SUMMARY)",
-            frame=fclc_summary,
-            max_rows=50,
-        )
-        row = _write_section(
-            worksheet,
-            row,
-            title="FIRST/LAST CONTACT SUMMARY (FCLC OP)",
-            frame=fclc_op,
-            max_rows=50,
-        )
-        row = _write_section(
-            worksheet,
-            row,
-            title="MOVING CALLS",
-            frame=moving_calls,
-            max_rows=100,
-            guidance=(
-                "A changing first and last Cell ID is a network movement indicator. "
-                "Verify important events against source records."
+        # 9-11. Independent tower intelligence sheets
+        for (
+            sheet_name,
+            sheet_title,
+            section_title,
+            result_key,
+            guidance,
+        ) in (
+            (
+                SINGLE_CDR_COMPACT_SHEETS[8],
+                "Tower Intelligence",
+                "TOWER INTELLIGENCE",
+                "tower_intelligence",
+                "Frequent-tower counts are already included in this complete tower table.",
             ),
-        )
-        row = _write_section(
-            worksheet,
-            row,
-            title="MOVEMENT EVENTS",
-            frame=movements,
-            max_rows=100,
-        )
-        row = _write_section(
-            worksheet,
-            row,
-            title="TOWER TRANSITIONS",
-            frame=tower_transition,
-            max_rows=50,
-        )
-        row = _write_section(
-            worksheet,
-            row,
-            title="MOVEMENT PATTERNS",
-            frame=movement_pattern,
-            max_rows=30,
-        )
-        _finish_sheet(
-            worksheet
-        )
+            (
+                SINGLE_CDR_COMPACT_SHEETS[9],
+                "Probable Home Tower Indicators",
+                "PROBABLE HOME TOWER INDICATORS",
+                "home_tower",
+                "Night-time tower patterns are indicators and require independent verification.",
+            ),
+            (
+                SINGLE_CDR_COMPACT_SHEETS[10],
+                "Probable Work Tower Indicators",
+                "PROBABLE WORK TOWER INDICATORS",
+                "work_tower",
+                "Office-hour tower patterns are indicators and require independent verification.",
+            ),
+        ):
+            _write_single_section_sheet(
+                workbook,
+                sheet_name=sheet_name,
+                title=sheet_title,
+                metadata=report_metadata,
+                section_title=section_title,
+                frame=_as_frame(
+                    results.get(
+                        result_key
+                    )
+                ),
+                guidance=guidance,
+            )
 
-        # 7. Device and SIM Intelligence
+        # 12-18. Independent movement and daily-routine sheets
+        for (
+            sheet_name,
+            sheet_title,
+            section_title,
+            frame,
+            guidance,
+        ) in (
+            (
+                SINGLE_CDR_COMPACT_SHEETS[11],
+                "First and Last Communication by Day",
+                "FIRST AND LAST COMMUNICATION BY DAY (FCLC)",
+                fclc,
+                "Each date retains its first and last recorded communication event.",
+            ),
+            (
+                SINGLE_CDR_COMPACT_SHEETS[12],
+                "First and Last Location Summary",
+                "FIRST/LAST LOCATION SUMMARY (FCLC SUMMARY)",
+                fclc_summary,
+                "This summarizes the serving towers found in daily first/last events.",
+            ),
+            (
+                SINGLE_CDR_COMPACT_SHEETS[13],
+                "First and Last Contact Summary",
+                "FIRST/LAST CONTACT SUMMARY (FCLC OP)",
+                fclc_op,
+                "This summarizes counterparties appearing in first/last communication review.",
+            ),
+            (
+                SINGLE_CDR_COMPACT_SHEETS[14],
+                "Moving Calls",
+                "MOVING CALLS",
+                moving_calls,
+                "A changing first and last Cell ID is a network movement indicator.",
+            ),
+            (
+                SINGLE_CDR_COMPACT_SHEETS[15],
+                "Movement Events",
+                "MOVEMENT EVENTS",
+                movements,
+                "Review event order against the source CDR and tower coverage.",
+            ),
+            (
+                SINGLE_CDR_COMPACT_SHEETS[16],
+                "Tower Transitions",
+                "TOWER TRANSITIONS",
+                tower_transition,
+                "Transitions describe consecutive serving towers, not an exact travelled route.",
+            ),
+            (
+                SINGLE_CDR_COMPACT_SHEETS[17],
+                "Movement Patterns",
+                "MOVEMENT PATTERNS",
+                movement_pattern,
+                "Repeated tower transitions require independent corroboration.",
+            ),
+        ):
+            _write_single_section_sheet(
+                workbook,
+                sheet_name=sheet_name,
+                title=sheet_title,
+                metadata=report_metadata,
+                section_title=section_title,
+                frame=frame,
+                guidance=guidance,
+            )
+
+        # 19. Device and SIM Intelligence
         worksheet = workbook.create_sheet(
             SINGLE_CDR_COMPACT_SHEETS[
-                6
+                18
             ]
         )
         row = _write_sheet_title(
@@ -2959,7 +3063,7 @@ def generate_single_cdr_compact_report(
                 data
             )
 
-        confirmed_changes, identifier_variants = split_change_review(
+        change_indicators, identifier_variants = split_change_review(
             change_table
         )
 
@@ -2970,20 +3074,33 @@ def generate_single_cdr_compact_report(
             frame=device_table,
             max_rows=None,
             guidance=(
-                "Valid and invalid observed IMEI values are preserved. "
-                "Values sharing one 14-digit device key are grouped as "
-                "one probable device group."
+                "Observed IMEI values are preserved exactly. Verification "
+                "checks identifier length and the Luhn check digit; a "
+                "mismatch may reflect source formatting. Values sharing "
+                "one 14-digit key form one probable device group."
             ),
         )
         row = _write_section(
             worksheet,
             row,
-            title="CONFIRMED DEVICE OR SIM CHANGES",
-            frame=confirmed_changes,
+            title="SIM SUMMARY",
+            frame=sim_summary(data),
+            max_rows=None,
+            guidance=(
+                "Each observed IMSI is shown with its time range and linked "
+                "probable device groups. IMSI is stored as exact text."
+            ),
+        )
+        row = _write_section(
+            worksheet,
+            row,
+            title="DEVICE / SIM CHANGE INDICATORS",
+            frame=change_indicators,
             max_rows=100,
             guidance=(
-                "Only probable device-key changes and IMSI changes appear "
-                "here. Each event still requires source verification."
+                "Probable device-key or IMSI transitions are indicators, "
+                "not confirmed handset or SIM changes. Verify each event "
+                "against source and acquisition records."
             ),
         )
         row = _write_section(
@@ -3001,170 +3118,45 @@ def generate_single_cdr_compact_report(
             worksheet
         )
 
-        # 8. Activity and Timing
-        worksheet = workbook.create_sheet(
-            SINGLE_CDR_COMPACT_SHEETS[
-                7
-            ]
-        )
-        row = _write_sheet_title(
-            worksheet,
-            title="Activity and Timing Intelligence",
-            metadata=report_metadata,
-        )
-        for title, key, limit in (
+        # 20-23. Independent activity and timing sheets
+        for sheet_name, sheet_title, section_title, key in (
             (
-                "ACTIVITY SUMMARY",
-                "activity_summary",
-                30,
-            ),
-            (
+                SINGLE_CDR_COMPACT_SHEETS[19],
+                "Hourly Activity",
                 "HOURLY ACTIVITY",
                 "hourly_activity",
-                30,
             ),
             (
+                SINGLE_CDR_COMPACT_SHEETS[20],
+                "Daily Activity",
                 "DAILY ACTIVITY",
                 "daily_activity",
-                120,
             ),
             (
+                SINGLE_CDR_COMPACT_SHEETS[21],
+                "Weekly Activity",
                 "WEEKLY ACTIVITY",
                 "weekly_activity",
-                60,
             ),
             (
+                SINGLE_CDR_COMPACT_SHEETS[22],
+                "Monthly Activity",
                 "MONTHLY ACTIVITY",
                 "monthly_activity",
-                36,
             ),
         ):
-            row = _write_section(
-                worksheet,
-                row,
-                title=title,
+            _write_single_section_sheet(
+                workbook,
+                sheet_name=sheet_name,
+                title=sheet_title,
+                metadata=report_metadata,
+                section_title=section_title,
                 frame=_as_frame(
                     results.get(
                         key
                     )
                 ),
-                max_rows=limit,
             )
-
-        _finish_sheet(
-            worksheet
-        )
-
-        # 9. Priority Review Queue
-        worksheet = workbook.create_sheet(
-            SINGLE_CDR_COMPACT_SHEETS[
-                8
-            ]
-        )
-        row = _write_sheet_title(
-            worksheet,
-            title="Priority Review Queue",
-            metadata=report_metadata,
-        )
-        row = _write_section(
-            worksheet,
-            row,
-            title="BEHAVIORAL OBSERVATIONS",
-            frame=_as_frame(
-                results.get(
-                    "behavioral_intelligence"
-                )
-            ),
-            max_rows=30,
-        )
-        row = _write_section(
-            worksheet,
-            row,
-            title="REVIEW INDICATORS",
-            frame=_as_frame(
-                results.get(
-                    "suspicious_activity"
-                )
-            ),
-            max_rows=50,
-            guidance=(
-                "These are review indicators, not automated findings "
-                "of guilt, identity or intent."
-            ),
-        )
-        row = _write_section(
-            worksheet,
-            row,
-            title="INVESTIGATOR VERIFICATION CHECKLIST",
-            frame=_review_checklist(),
-        )
-        _finish_sheet(
-            worksheet
-        )
-
-        # 10. Data Quality and Interpretation Guide
-        worksheet = workbook.create_sheet(
-            SINGLE_CDR_COMPACT_SHEETS[
-                9
-            ]
-        )
-        row = _write_sheet_title(
-            worksheet,
-            title="Data Quality and Interpretation Guide",
-            metadata=report_metadata,
-        )
-        row = _write_section(
-            worksheet,
-            row,
-            title="DATA QUALITY SUMMARY",
-            frame=_quality_summary(
-                data,
-                report_metadata,
-                original_data=df,
-            ),
-        )
-        row = _write_section(
-            worksheet,
-            row,
-            title="MISSING CGI LOOKUP",
-            frame=_as_frame(
-                results.get(
-                    "missing_cgi_lookup"
-                )
-            ),
-            max_rows=30,
-        )
-        row = _write_section(
-            worksheet,
-            row,
-            title="MASTER DATA ENRICHMENT",
-            frame=_as_frame(
-                results.get(
-                    "master_enrichment_summary"
-                )
-            ),
-            max_rows=50,
-        )
-        row = _write_section(
-            worksheet,
-            row,
-            title="REJECTED ROWS SUMMARY",
-            frame=_rejected_rows_summary(
-                df,
-                report_metadata,
-            ),
-            max_rows=30,
-        )
-        row = _write_section(
-            worksheet,
-            row,
-            title="INTERPRETATION AND LIMITATIONS",
-            frame=_interpretation_guide(),
-        )
-
-        _finish_sheet(
-            worksheet
-        )
 
         report_path = Path(
             get_single_report_path(
@@ -3279,6 +3271,7 @@ IDENTIFIER_TEXT_HEADERS = {
     "New IMEI",
     "Old Device Key",
     "New Device Key",
+    "Most Used Device Key",
     "IMSI",
     "Old IMSI",
     "New IMSI",
@@ -3401,6 +3394,12 @@ def _format_identifier_tables_as_text(
                     cell.value
                 )
                 cell.number_format = "@"
+                cell.quotePrefix = True
+                cell.alignment = Alignment(
+                    horizontal="left",
+                    vertical="top",
+                    wrap_text=True,
+                )
 
 
 def _finish_sheet(
@@ -3426,10 +3425,13 @@ def _ensure_full_contact_profile_columns(
 ):
     """Keep required Full Contact Summary columns visible when values are blank."""
 
-    if (
-        title != "FULL CONTACT SUMMARY (CC SUMMARY)"
-        or not selected_columns
-    ):
+    preserve_profile_titles = {
+        "FULL CONTACT SUMMARY (CC SUMMARY)",
+        "BOTTOM 10 HUMAN CONTACTS",
+        "BOTTOM 10 CGI / TOWERS",
+    }
+
+    if title not in preserve_profile_titles or not selected_columns:
         return frame
 
     for column in selected_columns:

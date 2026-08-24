@@ -13,6 +13,12 @@ import pandas as pd
 from openpyxl import Workbook
 
 from modules.analysis.cdr.cross_target import build_cross_target_analysis
+from modules.enrichment.telecom_master_enrichment import (
+    MULTI_CDR_TABLE_SPECS,
+    enrich_analysis_bundle,
+)
+from .cdr_contact_map import generate_cdr_contact_map
+from .cdr_movement_route import generate_multi_cdr_movement_route
 from .excel_styles import (
     finish_sheet,
     set_sensible_widths,
@@ -21,7 +27,6 @@ from .excel_styles import (
     style_table_header,
 )
 from .excel_security import excel_safe_value
-from .report_guidance import append_methodology_sheet
 from .report_paths import get_multi_report_path
 
 
@@ -38,9 +43,376 @@ SHEET_MAP = [
     ("10. IMEI Matrix", "Common IMEI vs Target Matrix", "imei_matrix"),
     ("11. IMSI Matrix", "Common IMSI vs Target Matrix", "imsi_matrix"),
     ("12. Source Files", "Source Files", "source_files"),
-    ("13. Alerts", "Cross-Target Review Alerts", "alerts"),
-    ("14. Errors", "Analysis Errors", "errors"),
 ]
+
+
+_COMMON_NUMBER_SDR_RENAME = {
+    "common_number_sdr_subscriber_name": "Name",
+    "common_number_sdr_father_name": "Father Name",
+    "common_number_sdr_address": "SDR Address",
+    "common_number_sdr_operator": "SDR Operator",
+    "common_number_sdr_circle": "SDR Circle",
+    "common_number_sdr_lookup_status": "SDR Lookup Status",
+}
+
+_COMMON_TOWER_CGI_RENAME = {
+    "common_tower_id_cgi_operator": "CGI Operator",
+    "common_tower_id_cgi_circle": "CGI Circle",
+    "common_tower_id_cgi_district": "CGI District",
+    "common_tower_id_cgi_town": "CGI Town",
+    "common_tower_id_cgi_site_name": "CGI Site Name",
+    "common_tower_id_cgi_address": "CGI Address",
+    "common_tower_id_cgi_latitude": "CGI Latitude",
+    "common_tower_id_cgi_longitude": "CGI Longitude",
+    "common_tower_id_cgi_lookup_status": "CGI Lookup Status",
+}
+
+_TOWER_MATRIX_TARGET_SDR_FIELDS = (
+    (
+        "target_sdr_subscriber_name",
+        "Linked Target Names",
+    ),
+    (
+        "target_sdr_father_name",
+        "Linked Target Father Names",
+    ),
+    (
+        "target_sdr_address",
+        "Linked Target SDR Addresses",
+    ),
+    (
+        "target_sdr_operator",
+        "Linked Target Operators",
+    ),
+    (
+        "target_sdr_circle",
+        "Linked Target Circles",
+    ),
+    (
+        "target_sdr_lookup_status",
+        "Linked Target SDR Status",
+    ),
+)
+
+
+def _ordered_columns(
+    frame: pd.DataFrame,
+    preferred: list[str],
+) -> pd.DataFrame:
+    """Keep preferred investigator fields first without losing metrics."""
+
+    first = [
+        column
+        for column in preferred
+        if column in frame.columns
+    ]
+    remaining = [
+        column
+        for column in frame.columns
+        if column not in first
+    ]
+    return frame.loc[
+        :,
+        [*first, *remaining],
+    ].copy()
+
+
+def _display_text(
+    value: Any,
+) -> str:
+    """Return one clean value for compact multi-target profile fields."""
+
+    if value is None:
+        return ""
+
+    try:
+        if pd.isna(
+            value
+        ):
+            return ""
+    except (
+        TypeError,
+        ValueError,
+    ):
+        pass
+
+    return str(
+        value
+    ).strip()
+
+
+def _has_events(
+    value: Any,
+) -> bool:
+    """Return whether one dynamic target matrix cell has event evidence."""
+
+    try:
+        return float(
+            value
+        ) > 0
+    except (
+        TypeError,
+        ValueError,
+    ):
+        return False
+
+
+def _add_tower_matrix_target_sdr(
+    frame: pd.DataFrame,
+    target_profiles: pd.DataFrame | None,
+) -> pd.DataFrame:
+    """Attach linked-target SDR profiles without treating CGI as a number."""
+
+    output = frame.copy()
+
+    if (
+        not isinstance(
+            target_profiles,
+            pd.DataFrame,
+        )
+        or target_profiles.empty
+        or "Target" not in target_profiles.columns
+    ):
+        return output
+
+    profiles: dict[str, dict[str, str]] = {}
+
+    for record in target_profiles.to_dict(
+        orient="records"
+    ):
+        target = _display_text(
+            record.get(
+                "Target"
+            )
+        )
+
+        if not target:
+            continue
+
+        profiles[
+            target
+        ] = {
+            source: _display_text(
+                record.get(
+                    source
+                )
+            )
+            for source, _ in _TOWER_MATRIX_TARGET_SDR_FIELDS
+        }
+
+    target_columns = [
+        target
+        for target in profiles
+        if target in output.columns
+    ]
+
+    if not target_columns:
+        return output
+
+    for source, heading in _TOWER_MATRIX_TARGET_SDR_FIELDS:
+        values: list[str] = []
+
+        for _, row in output.iterrows():
+            linked = []
+
+            for target in target_columns:
+                if not _has_events(
+                    row.get(
+                        target
+                    )
+                ):
+                    continue
+
+                profile_value = profiles[
+                    target
+                ].get(
+                    source,
+                    "",
+                )
+                linked.append(
+                    f"{target}: {profile_value or 'Not found'}"
+                )
+
+            values.append(
+                "; ".join(
+                    linked
+                )
+            )
+
+        output[
+            heading
+        ] = values
+
+    return output
+
+
+def _present_multi_frame(
+    result_key: str,
+    frame: pd.DataFrame | None,
+    *,
+    target_profiles: pd.DataFrame | None = None,
+) -> pd.DataFrame:
+    """Convert internal batch-enrichment fields to compact report columns."""
+
+    output = (
+        frame.copy()
+        if isinstance(frame, pd.DataFrame)
+        else pd.DataFrame()
+    )
+
+    rename_map: dict[str, str] = {}
+    preferred: list[str] = []
+
+    if result_key == "target_overview":
+        rename_map.update(
+            {
+                "target_sdr_subscriber_name": "Subscriber Name",
+                "target_sdr_father_name": "Father Name",
+                "target_sdr_address": "SDR Address",
+                "target_sdr_operator": "SDR Operator",
+                "target_sdr_circle": "SDR Circle",
+                "target_sdr_lookup_status": "SDR Lookup Status",
+            }
+        )
+        preferred = [
+            "Target",
+            "Subscriber Name",
+            "Father Name",
+            "SDR Address",
+            "SDR Operator",
+            "SDR Circle",
+            "SDR Lookup Status",
+        ]
+
+    elif result_key in {
+        "common_numbers",
+        "contact_matrix",
+    }:
+        rename_map.update(
+            _COMMON_NUMBER_SDR_RENAME
+        )
+        preferred = [
+            "Common Number",
+            "Name",
+            "Father Name",
+            "SDR Address",
+            "SDR Operator",
+            "SDR Circle",
+            "SDR Lookup Status",
+        ]
+
+    elif result_key == "direct_target_links":
+        for prefix, label in (
+            ("source_target_sdr_", "Source"),
+            ("destination_target_sdr_", "Destination"),
+        ):
+            rename_map.update(
+                {
+                    f"{prefix}subscriber_name": f"{label} Name",
+                    f"{prefix}father_name": f"{label} Father Name",
+                    f"{prefix}address": f"{label} SDR Address",
+                    f"{prefix}operator": f"{label} Operator",
+                    f"{prefix}circle": f"{label} Circle",
+                    f"{prefix}lookup_status": f"{label} SDR Lookup Status",
+                }
+            )
+        preferred = [
+            "Source Target",
+            "Source Name",
+            "Source Father Name",
+            "Source SDR Address",
+            "Source Operator",
+            "Source Circle",
+            "Source SDR Lookup Status",
+            "Destination Target",
+            "Destination Name",
+            "Destination Father Name",
+            "Destination SDR Address",
+            "Destination Operator",
+            "Destination Circle",
+            "Destination SDR Lookup Status",
+        ]
+
+    elif result_key in {
+        "common_towers",
+        "tower_matrix",
+    }:
+        if result_key == "tower_matrix":
+            output = _add_tower_matrix_target_sdr(
+                output,
+                target_profiles,
+            )
+
+        rename_map.update(
+            _COMMON_TOWER_CGI_RENAME
+        )
+        preferred = [
+            "Common Tower ID",
+            "CGI Operator",
+            "CGI Circle",
+            "CGI District",
+            "CGI Town",
+            "CGI Site Name",
+            "CGI Address",
+            "CGI Latitude",
+            "CGI Longitude",
+            "CGI Lookup Status",
+        ]
+
+        if result_key == "tower_matrix":
+            preferred.extend(
+                heading
+                for _, heading in _TOWER_MATRIX_TARGET_SDR_FIELDS
+            )
+
+    output = output.rename(
+        columns=rename_map
+    )
+
+    internal_columns = [
+        column
+        for column in output.columns
+        if (
+            "_sdr_" in str(column)
+            or "_cgi_" in str(column)
+        )
+    ]
+    output = output.drop(
+        columns=internal_columns,
+        errors="ignore",
+    )
+
+    return _ordered_columns(
+        output,
+        preferred,
+    )
+
+
+def _contact_map_frame(
+    frame: pd.DataFrame | None,
+) -> pd.DataFrame:
+    """Return the canonical fields consumed by the contact map renderer."""
+
+    if not isinstance(frame, pd.DataFrame):
+        return pd.DataFrame()
+
+    rename_map = {
+        "other_party_sdr_subscriber_name": "Name",
+        "other_party_sdr_lookup_status": "SDR Lookup Status",
+        "most_used_target_cgi_cgi_lookup_status": "Most Used CGI Lookup Status",
+        "most_used_target_cgi_cgi_site_name": "Most Used Site Name",
+        "most_used_target_cgi_cgi_address": "Most Used Tower Address",
+        "most_used_target_cgi_cgi_latitude": "Most Used Latitude",
+        "most_used_target_cgi_cgi_longitude": "Most Used Longitude",
+        "last_interaction_cgi_cgi_lookup_status": "Last Interaction CGI Lookup Status",
+        "last_interaction_cgi_cgi_site_name": "Last Interaction Site Name",
+        "last_interaction_cgi_cgi_address": "Last Interaction Tower Address",
+        "last_interaction_cgi_cgi_latitude": "Last Interaction Latitude",
+        "last_interaction_cgi_cgi_longitude": "Last Interaction Longitude",
+    }
+    return frame.rename(
+        columns=rename_map
+    ).copy()
 
 
 def _metadata_rows(
@@ -124,36 +496,36 @@ def generate_multi_cdr_report(
             min_targets=report_metadata["min_targets"],
         )
 
+        enrichment = enrich_analysis_bundle(
+            bundle,
+            table_specs=MULTI_CDR_TABLE_SPECS,
+        )
+        bundle = enrichment[
+            "bundle"
+        ]
+
+        for warning in enrichment.get(
+            "warnings",
+            [],
+        ):
+            print(
+                "[!] Multiple CDR master-data enrichment:",
+                warning,
+            )
+
         workbook = Workbook()
         workbook.remove(workbook.active)
 
-        error_sheet_written = False
-
         for sheet_name, report_name, result_key in SHEET_MAP:
-            frame = bundle.get(result_key)
-
-            if result_key == "errors" and isinstance(frame, dict):
-                frame = pd.DataFrame(
-                    [
-                        {
-                            "Analysis": key,
-                            "Error": value,
-                        }
-                        for key, value in frame.items()
-                    ]
-                )
-
-            if (
-                result_key == "errors"
-                and (
-                    not isinstance(frame, pd.DataFrame)
-                    or frame.empty
-                )
-            ):
-                continue
-
-            if result_key == "errors":
-                error_sheet_written = True
+            frame = _present_multi_frame(
+                result_key,
+                bundle.get(
+                    result_key
+                ),
+                target_profiles=bundle.get(
+                    "target_overview"
+                ),
+            )
 
             _write_dataframe_sheet(
                 workbook=workbook,
@@ -164,41 +536,60 @@ def generate_multi_cdr_report(
                 frame=frame,
             )
 
-        rejected_frames: list[pd.DataFrame] = []
-        for target, info in loaded_cdrs.items():
-            rejected = info.get("rejected_rows")
-            if not isinstance(rejected, pd.DataFrame):
-                dataframe = info.get("df")
-                if isinstance(dataframe, pd.DataFrame):
-                    rejected = dataframe.attrs.get("rejected_rows")
-            if isinstance(rejected, pd.DataFrame) and not rejected.empty:
-                frame = rejected.copy()
-                frame.insert(0, "target", str(target))
-                rejected_frames.append(frame)
-        rejected_rows = (
-            pd.concat(rejected_frames, ignore_index=True, sort=False)
-            if rejected_frames else pd.DataFrame()
-        )
-        _write_dataframe_sheet(
-            workbook=workbook,
-            sheet_name=(
-                "15. Rejected Rows"
-                if error_sheet_written
-                else "14. Rejected Rows"
-            ),
-            report_name="Rejected / Quarantined Source Rows",
-            metadata=report_metadata,
-            target_count=len(loaded_cdrs),
-            frame=rejected_rows,
-        )
-
         path = get_multi_report_path(
             case_name=report_metadata.get("case_name"),
             output_dir=output_dir,
         )
-        append_methodology_sheet(workbook, "Multiple CDR Cross-Target Analysis")
         workbook.save(path)
+
+        map_path = None
+        route_path = None
+
+        try:
+            map_path = generate_cdr_contact_map(
+                _contact_map_frame(
+                    bundle.get(
+                        "common_contact_map"
+                    )
+                ),
+                target=(
+                    "Multiple CDR Common Contacts "
+                    f"({len(loaded_cdrs)} targets)"
+                ),
+                report_path=path,
+            )
+        except Exception as map_error:
+            print(
+                "[!] Multiple CDR contact map generation skipped:",
+                type(map_error).__name__,
+                "|",
+                str(map_error),
+            )
+
+        try:
+            route_path = generate_multi_cdr_movement_route(
+                bundle.get(
+                    "movement_route_events",
+                    pd.DataFrame(),
+                ),
+                report_path=path,
+            )
+        except Exception as route_error:
+            print(
+                "[!] Multiple CDR movement route generation skipped:",
+                type(route_error).__name__,
+                "|",
+                str(route_error),
+            )
+
         print(f"[+] Multiple CDR common-analysis Excel report generated: {path}")
+
+        if map_path is not None:
+            print(f"[+] Multiple CDR contact map generated: {map_path}")
+
+        if route_path is not None:
+            print(f"[+] Multiple CDR movement route generated: {route_path}")
+
         return str(path)
 
     except Exception as error:

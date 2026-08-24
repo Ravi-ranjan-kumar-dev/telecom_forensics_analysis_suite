@@ -23,6 +23,15 @@ DEVICE_SUMMARY_COLUMNS = [
     "Most Human Contacted",
 ]
 
+SIM_SUMMARY_COLUMNS = [
+    "IMSI",
+    "First Seen",
+    "Last Seen",
+    "Total Events",
+    "Unique Device Groups",
+    "Most Used Device Key",
+]
+
 CHANGE_COLUMNS = [
     "Date",
     "Time",
@@ -188,16 +197,16 @@ def _group_status(values: pd.Series) -> str:
     }
 
     if {"VALID_IMEI", "INVALID_IMEI"}.issubset(statuses):
-        return "Valid IMEI with invalid observed variant"
+        return "Valid IMEI with check-digit variation"
 
     if "VALID_IMEI" in statuses:
-        return "Valid IMEI"
+        return "Valid 15-digit IMEI"
 
     if "IMEISV" in statuses:
         return "IMEISV device identifier"
 
     if "INVALID_IMEI" in statuses:
-        return "Invalid IMEI only"
+        return "IMEI check digit not verified"
 
     return "Non-standard device identifier"
 
@@ -397,6 +406,84 @@ def device_intelligence(dataframe: pd.DataFrame) -> pd.DataFrame:
     return device_summary(dataframe)
 
 
+def sim_summary(dataframe: pd.DataFrame) -> pd.DataFrame:
+    """Return one evidence-preserving summary row per observed IMSI."""
+
+    if (
+        dataframe is None
+        or dataframe.empty
+        or "imsi" not in dataframe.columns
+    ):
+        return pd.DataFrame(columns=SIM_SUMMARY_COLUMNS)
+
+    data = dataframe.copy()
+    data["_raw_imsi"] = data["imsi"].map(_clean_text)
+    data = data.loc[data["_raw_imsi"].ne("")].copy()
+
+    if data.empty:
+        return pd.DataFrame(columns=SIM_SUMMARY_COLUMNS)
+
+    data["_event_datetime"] = _event_datetime(data)
+    data["_device_key"] = (
+        data["imei"].map(_clean_text).map(imei_device_key)
+        if "imei" in data.columns
+        else ""
+    )
+
+    result = (
+        data.groupby("_raw_imsi", dropna=False)
+        .agg(
+            **{
+                "First Seen": ("_event_datetime", "min"),
+                "Last Seen": ("_event_datetime", "max"),
+                "Total Events": ("_raw_imsi", "size"),
+                "Unique Device Groups": (
+                    "_device_key",
+                    lambda values: (
+                        values.replace("", pd.NA).dropna().nunique()
+                    ),
+                ),
+            }
+        )
+        .reset_index()
+        .rename(columns={"_raw_imsi": "IMSI"})
+    )
+
+    most_used = (
+        data.loc[data["_device_key"].ne("")]
+        .groupby(["_raw_imsi", "_device_key"])
+        .size()
+        .reset_index(name="_count")
+        .sort_values(
+            ["_raw_imsi", "_count", "_device_key"],
+            ascending=[True, False, True],
+            kind="stable",
+        )
+        .drop_duplicates("_raw_imsi")
+        .rename(
+            columns={
+                "_raw_imsi": "IMSI",
+                "_device_key": "Most Used Device Key",
+            }
+        )[["IMSI", "Most Used Device Key"]]
+    )
+
+    result = result.merge(most_used, on="IMSI", how="left")
+    result["Most Used Device Key"] = result[
+        "Most Used Device Key"
+    ].fillna("")
+
+    return (
+        result[SIM_SUMMARY_COLUMNS]
+        .sort_values(
+            ["Total Events", "IMSI"],
+            ascending=[False, True],
+            kind="stable",
+            ignore_index=True,
+        )
+    )
+
+
 def device_change_review(dataframe: pd.DataFrame) -> pd.DataFrame:
     'Separate device, SIM and raw identifier changes.'
 
@@ -529,7 +616,7 @@ def device_change_review(dataframe: pd.DataFrame) -> pd.DataFrame:
 def split_change_review(
     frame: pd.DataFrame,
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
-    'Return confirmed changes and raw identifier variants separately.'
+    'Return change indicators and raw identifier variants separately.'
 
     if (
         not isinstance(frame, pd.DataFrame)
@@ -542,8 +629,8 @@ def split_change_review(
     variants = frame.loc[
         frame["Change Type"].eq("Identifier Variant")
     ].copy()
-    confirmed = frame.loc[
+    indicators = frame.loc[
         ~frame["Change Type"].eq("Identifier Variant")
     ].copy()
 
-    return confirmed, variants
+    return indicators, variants

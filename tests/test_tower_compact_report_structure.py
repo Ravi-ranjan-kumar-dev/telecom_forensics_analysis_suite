@@ -206,20 +206,24 @@ def test_tower_compact_report_structure_and_canonical_sample(
 
     assert workbook.sheetnames == [
         "1. Executive Summary",
-        "2. Data Quality",
-        "3. Tower Summary",
-        "4. Priority Review Queue",
-        "5. Visitor Intelligence",
-        "6. Multi-Spot Intel",
-        "7. Device SIM Alerts",
-        "8. Normalized Sample",
-        "9. Backend Data Guide",
-        "10. Analysis Status",
-        "Methodology & Limits",
+        "2. Tower Summary",
+        "3. Priority Review Queue",
+        "4. Rare Uncommon",
+        "5. Repeat Visitors",
+        "6. N-of-M Spot Presence",
+        "7. All-Spot Common Numbers",
+        "8. Spot-Exclusive Numbers",
+        "9. Cross-Spot Device",
+        "10. Shared IMEI Across Spots",
+        "11. Shared IMSI Across Spots",
+        "12. Device Consistency Alerts",
+        "13. Shared IMEI",
+        "14. Shared IMSI",
+        "15. Normalized Sample",
     ]
 
     sample_sheet = workbook[
-        "8. Normalized Sample"
+        "15. Normalized Sample"
     ]
 
     sample_values = [
@@ -236,9 +240,15 @@ def test_tower_compact_report_structure_and_canonical_sample(
     assert "SPOT-02" in sample_values
     assert "airtel" in sample_values
     assert "jio" in sample_values
+    assert "source_row" not in sample_values
+    assert "potential_duplicate" not in sample_values
+    assert (
+        "potential_duplicate_count"
+        not in sample_values
+    )
 
     priority_sheet = workbook[
-        "4. Priority Review Queue"
+        "3. Priority Review Queue"
     ]
 
     priority_values = [
@@ -251,17 +261,11 @@ def test_tower_compact_report_structure_and_canonical_sample(
         "9000000001"
     ) == 1
 
-    visitor_sheet = workbook[
-        "5. Visitor Intelligence"
-    ]
-
-    visitor_values = [
-        cell.value
-        for row in visitor_sheet.iter_rows()
-        for cell in row
-    ]
-
+    assert "next_action" not in priority_values
     assert (
-        "NOT APPLICABLE IN WHOLE-PERIOD REPORT"
-        in visitor_values
+        "LEAD CATEGORY COVERAGE"
+        not in priority_values
+    )
+    assert "5. Visitor Intelligence" not in (
+        workbook.sheetnames
     )

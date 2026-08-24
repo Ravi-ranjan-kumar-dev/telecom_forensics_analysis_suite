@@ -96,18 +96,18 @@ def test_full_contact_profile_keeps_requested_fields():
         "SDR Address",
         "SDR Operator",
         "SDR Circle",
-        "SDR Lookup Status",
         "Most Used CGI Lookup Status",
         "Most Used Tower Address",
         "Most Used Latitude",
         "Most Used Longitude",
-        "Last Interaction CGI Lookup Status",
         "Last Interaction Tower Address",
     }
 
     assert required.issubset(
         set(columns)
     )
+    assert "SDR Lookup Status" not in columns
+    assert "Last Interaction CGI Lookup Status" not in columns
 
 
 def test_finish_sheet_preserves_identifiers_as_text():

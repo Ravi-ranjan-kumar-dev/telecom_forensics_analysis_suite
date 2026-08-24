@@ -1,6 +1,9 @@
 import pandas as pd
 
-from .tower_utils import filter_valid_first_cell_rows
+from .tower_utils import (
+    filter_valid_first_cell_rows,
+    normalize_cell_id,
+)
 
 
 def analyze_location(df):
@@ -47,3 +50,65 @@ def frequent_locations(df, top_n=5):
     counts = valid_tower_rows["first_cell_id"].value_counts().head(top_n).reset_index()
     counts.columns = ["Cell ID", "Total Events"]
     return counts
+
+
+def bottom_cgi(df, limit=10):
+    """Return the least-frequent valid serving CGI/tower identifiers."""
+
+    if df is None or df.empty or "first_cell_id" not in df.columns:
+        return pd.DataFrame(
+            columns=[
+                "Cell ID",
+                "Total Events",
+            ]
+        )
+
+    valid_tower_rows = filter_valid_first_cell_rows(
+        df
+    )
+
+    if valid_tower_rows.empty:
+        return pd.DataFrame(
+            columns=[
+                "Cell ID",
+                "Total Events",
+            ]
+        )
+
+    normalized = valid_tower_rows[
+        "first_cell_id"
+    ].map(
+        normalize_cell_id
+    )
+
+    return (
+        normalized.value_counts()
+        .rename_axis(
+            "Cell ID"
+        )
+        .reset_index(
+            name="Total Events"
+        )
+        .sort_values(
+            [
+                "Total Events",
+                "Cell ID",
+            ],
+            ascending=[
+                True,
+                True,
+            ],
+            kind="stable",
+        )
+        .head(
+            max(
+                1,
+                int(
+                    limit
+                ),
+            )
+        )
+        .reset_index(
+            drop=True
+        )
+    )

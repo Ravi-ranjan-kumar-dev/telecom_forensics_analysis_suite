@@ -58,7 +58,7 @@ def test_methodology_sheet_explains_corroboration_and_limits():
     assert "derived analytical artifact" in text
 
 
-def test_multi_cdr_workbook_sanitizes_untrusted_cells_and_adds_guidance(tmp_path: Path):
+def test_multi_cdr_workbook_sanitizes_visible_cells_and_omits_technical_sheets(tmp_path: Path):
     from modules.reporting.multi_cdr_excel import generate_multi_cdr_report
 
     loaded = {
@@ -66,8 +66,13 @@ def test_multi_cdr_workbook_sanitizes_untrusted_cells_and_adds_guidance(tmp_path
         "9000000002": {"df": pd.DataFrame({"b_party": ["8000000002"]})},
     }
     bundle = {
-        "alerts": pd.DataFrame(
-            [{"Alert": "=HYPERLINK(\"https://example.invalid\",\"OPEN\")"}]
+        "common_numbers": pd.DataFrame(
+            [
+                {
+                    "Common Number": "8000000001",
+                    "Note": "=HYPERLINK(\"https://example.invalid\",\"OPEN\")",
+                }
+            ]
         )
     }
 
@@ -80,14 +85,16 @@ def test_multi_cdr_workbook_sanitizes_untrusted_cells_and_adds_guidance(tmp_path
 
     assert report is not None
     workbook = load_workbook(report, data_only=False)
-    assert "Methodology & Limits" in workbook.sheetnames
+    assert "Methodology & Limits" not in workbook.sheetnames
+    assert "13. Alerts" not in workbook.sheetnames
+    assert "14. Rejected Rows" not in workbook.sheetnames
 
-    alert_sheet = workbook["13. Alerts"]
-    values = [cell.value for row in alert_sheet.iter_rows() for cell in row]
+    common_sheet = workbook["3. Common Numbers"]
+    values = [cell.value for row in common_sheet.iter_rows() for cell in row]
     protected = [value for value in values if isinstance(value, str) and "HYPERLINK" in value]
     assert protected
     assert all(value.startswith("'") for value in protected)
-    assert all(cell.data_type != "f" for row in alert_sheet.iter_rows() for cell in row)
+    assert all(cell.data_type != "f" for row in common_sheet.iter_rows() for cell in row)
 
 
 def test_behavioral_observations_are_neutral_and_corroboration_based():
@@ -168,7 +175,9 @@ def test_single_cdr_workbook_sanitizes_contact_and_adds_guidance(tmp_path: Path)
     assert all(cell.value.startswith("'") and cell.data_type != "f" for cell in protected)
 
 
-def test_tower_dump_workbook_sanitizes_normalized_values_and_adds_guidance(tmp_path: Path):
+def test_tower_dump_workbook_sanitizes_normalized_values_without_technical_sheets(
+    tmp_path: Path,
+):
     from modules.reporting.tower_dump_excel import generate_tower_dump_excel_report
 
     result = {
@@ -185,10 +194,12 @@ def test_tower_dump_workbook_sanitizes_normalized_values_and_adds_guidance(tmp_p
 
     report = generate_tower_dump_excel_report(result, output_dir=tmp_path)
     workbook = load_workbook(report, data_only=False)
-    assert "Methodology & Limits" in workbook.sheetnames
-    assert "8. Normalized Sample" in workbook.sheetnames
+    assert "Methodology & Limits" not in workbook.sheetnames
+    assert "10. Analysis Status" not in workbook.sheetnames
+    assert "9. Backend Data Guide" not in workbook.sheetnames
+    assert "15. Normalized Sample" in workbook.sheetnames
 
-    normalized = workbook["8. Normalized Sample"]
+    normalized = workbook["15. Normalized Sample"]
     values = [cell for row in normalized.iter_rows() for cell in row if cell.value == "'=1+1"]
     assert values
     assert all(cell.data_type != "f" for cell in values)

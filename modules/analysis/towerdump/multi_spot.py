@@ -228,6 +228,91 @@ def _group_joined_unique(
     )
 
 
+def _primary_value_by_event_count(
+    dataframe: pd.DataFrame,
+    *,
+    group_columns: list[str],
+    value_column: str,
+    output_column: str,
+) -> pd.DataFrame:
+    """Return the highest-event value per group deterministically."""
+
+    output_columns = [
+        *group_columns,
+        output_column,
+    ]
+
+    if dataframe.empty:
+        return pd.DataFrame(
+            columns=output_columns
+        )
+
+    relevant = dataframe.loc[
+        dataframe[
+            value_column
+        ].ne(""),
+        [
+            *group_columns,
+            value_column,
+        ],
+    ]
+
+    if relevant.empty:
+        return pd.DataFrame(
+            columns=output_columns
+        )
+
+    ranked = (
+        relevant.groupby(
+            [
+                *group_columns,
+                value_column,
+            ],
+            sort=False,
+            dropna=False,
+            observed=True,
+        )
+        .size()
+        .reset_index(
+            name="_event_count"
+        )
+        .sort_values(
+            [
+                *group_columns,
+                "_event_count",
+                value_column,
+            ],
+            ascending=[
+                *(
+                    [True]
+                    * len(
+                        group_columns
+                    )
+                ),
+                False,
+                True,
+            ],
+            kind="stable",
+        )
+        .drop_duplicates(
+            subset=group_columns,
+            keep="first",
+        )
+        .rename(
+            columns={
+                value_column: output_column,
+            }
+        )
+    )
+
+    return ranked.loc[
+        :,
+        output_columns,
+    ].reset_index(
+        drop=True
+    )
+
+
 
 def filter_multi_spot_time_range(
     dataframe: pd.DataFrame,
@@ -541,6 +626,8 @@ def build_subscriber_spot_presence(
         "spot_names",
         "total_events",
         "unique_searched_cells",
+        "searched_cell_ids",
+        "primary_searched_cell_id",
         "operators",
         "imei_count",
         "imsi_count",
@@ -666,6 +753,36 @@ def build_subscriber_spot_presence(
         output_column="operators",
     )
 
+    searched_cell_ids = (
+        _group_joined_unique(
+            work,
+            group_columns=[
+                "subscriber_number",
+            ],
+            value_column=(
+                "searched_cell_id"
+            ),
+            output_column=(
+                "searched_cell_ids"
+            ),
+        )
+    )
+
+    primary_cells = (
+        _primary_value_by_event_count(
+            work,
+            group_columns=[
+                "subscriber_number",
+            ],
+            value_column=(
+                "searched_cell_id"
+            ),
+            output_column=(
+                "primary_searched_cell_id"
+            ),
+        )
+    )
+
     presence = presence.merge(
         subscriber_stats,
         on="subscriber_number",
@@ -677,6 +794,8 @@ def build_subscriber_spot_presence(
         spot_ids,
         spot_names,
         operators,
+        searched_cell_ids,
+        primary_cells,
     ):
         presence = presence.merge(
             table,
@@ -732,6 +851,8 @@ def build_subscriber_spot_presence(
         "spot_ids",
         "spot_names",
         "operators",
+        "searched_cell_ids",
+        "primary_searched_cell_id",
     ):
         presence[column] = presence[
             column
@@ -811,6 +932,8 @@ def build_cross_spot_device_continuity(
         "subscriber_number",
         "spots_seen_count",
         "spot_names",
+        "searched_cell_ids",
+        "primary_searched_cell_id",
         "imei_count",
         "imei_values",
         "imei_continuity",
@@ -827,15 +950,26 @@ def build_cross_spot_device_continuity(
             columns=columns
         )
 
+    candidate_columns = [
+        "subscriber_number",
+        "spots_seen_count",
+        "spot_names",
+    ]
+
+    candidate_columns.extend(
+        column
+        for column in (
+            "searched_cell_ids",
+            "primary_searched_cell_id",
+        )
+        if column in presence.columns
+    )
+
     candidates = presence.loc[
         presence[
             "spots_seen_count"
         ].ge(2),
-        [
-            "subscriber_number",
-            "spots_seen_count",
-            "spot_names",
-        ],
+        candidate_columns,
     ].copy()
 
     if candidates.empty:
@@ -942,9 +1076,14 @@ def build_cross_spot_device_continuity(
         )
 
     for column in (
+        "searched_cell_ids",
+        "primary_searched_cell_id",
         "imei_values",
         "imsi_values",
     ):
+        if column not in result.columns:
+            result[column] = ""
+
         result[column] = result[
             column
         ].fillna("")
@@ -1034,6 +1173,8 @@ def build_shared_identifier_across_spots(
         identifier_column,
         "spots_seen_count",
         "spot_names",
+        "searched_cell_ids",
+        "primary_searched_cell_id",
         "unique_subscribers",
         "subscriber_numbers",
         "total_events",
@@ -1136,6 +1277,36 @@ def build_shared_identifier_across_spots(
         )
     )
 
+    searched_cell_ids = (
+        _group_joined_unique(
+            relevant,
+            group_columns=[
+                identifier_column,
+            ],
+            value_column=(
+                "searched_cell_id"
+            ),
+            output_column=(
+                "searched_cell_ids"
+            ),
+        )
+    )
+
+    primary_cells = (
+        _primary_value_by_event_count(
+            relevant,
+            group_columns=[
+                identifier_column,
+            ],
+            value_column=(
+                "searched_cell_id"
+            ),
+            output_column=(
+                "primary_searched_cell_id"
+            ),
+        )
+    )
+
     result = summary.merge(
         spot_names,
         on=identifier_column,
@@ -1150,13 +1321,29 @@ def build_shared_identifier_across_spots(
         validate="one_to_one",
     )
 
-    result["spot_names"] = result[
-        "spot_names"
-    ].fillna("")
+    result = result.merge(
+        searched_cell_ids,
+        on=identifier_column,
+        how="left",
+        validate="one_to_one",
+    )
 
-    result["subscriber_numbers"] = result[
-        "subscriber_numbers"
-    ].fillna("")
+    result = result.merge(
+        primary_cells,
+        on=identifier_column,
+        how="left",
+        validate="one_to_one",
+    )
+
+    for column in (
+        "spot_names",
+        "searched_cell_ids",
+        "primary_searched_cell_id",
+        "subscriber_numbers",
+    ):
+        result[column] = result[
+            column
+        ].fillna("")
 
     result["why_important"] = (
         f"Same {identifier_column.upper()} multiple Spots "

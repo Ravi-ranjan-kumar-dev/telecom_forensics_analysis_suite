@@ -11,8 +11,12 @@ from openpyxl import Workbook
 from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 from openpyxl.utils import get_column_letter
 
+from modules.enrichment.telecom_master_enrichment import (
+    TOWER_CDR_TABLE_SPECS,
+    enrich_analysis_bundle,
+)
+
 from .excel_security import excel_safe_value
-from .report_guidance import append_methodology_sheet
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
@@ -21,6 +25,29 @@ DEFAULT_OUTPUT_DIR = PROJECT_ROOT / "output" / "reports" / "tower_dump"
 TITLE_FILL = "1F4E78"
 HEADER_FILL = "BDD7EE"
 WHITE = "FFFFFF"
+
+SDR_DISPLAY_SUFFIXES = (
+    "lookup_status",
+    "subscriber_name",
+    "father_name",
+    "address",
+    "operator",
+    "circle",
+)
+
+CGI_DISPLAY_SUFFIXES = (
+    "lookup_status",
+    "operator",
+    "circle",
+    "state",
+    "district",
+    "police_station",
+    "town",
+    "site_name",
+    "address",
+    "latitude",
+    "longitude",
+)
 
 
 def _safe_sheet_name(name: str) -> str:
@@ -280,9 +307,7 @@ def _compact_summary_mapping(
             )
 
     if len(dataframe) == 1:
-        return dataframe.iloc[
-            0
-        ].to_dict()
+        return dataframe.iloc[0].to_dict() # type: ignore
 
     return {}
 
@@ -1252,7 +1277,6 @@ def _compact_priority_review_queue(
         "first_seen",
         "last_seen",
         "why_important",
-        "next_action",
     ]
 
     if not frames:
@@ -1281,7 +1305,6 @@ def _compact_priority_review_queue(
         "first_seen": pd.NaT,
         "last_seen": pd.NaT,
         "why_important": "",
-        "next_action": "",
     }
 
     for column, default in defaults.items():
@@ -1428,7 +1451,6 @@ def _compact_priority_review_queue(
 
     for column in (
         "why_important",
-        "next_action",
         "priority",
         "confidence",
         "lead_categories",
@@ -1485,18 +1507,12 @@ def _compact_balanced_normalized_sample(
         "searched_tower_latitude",
         "searched_tower_longitude",
         "source_file",
-        "source_row",
-        "is_potential_duplicate",
-        "potential_duplicate_count",
     ]
 
     renamed_columns = {
         "call_duration": "duration_seconds",
         "present_at_searched_cell": (
             "searched_cell_presence"
-        ),
-        "is_potential_duplicate": (
-            "potential_duplicate"
         ),
     }
 
@@ -1668,7 +1684,6 @@ def _compact_balanced_normalized_sample(
             "operator",
             "call_datetime",
             "source_file",
-            "source_row",
         )
         if column
         in sample.columns
@@ -1784,6 +1799,184 @@ def _compact_normalized_sample_info(
             "Value",
         ],
     )
+
+
+def _compact_select_columns(
+    value: Any,
+    preferred_columns: list[str],
+    *,
+    limit: int,
+) -> pd.DataFrame:
+    """Select and bound one report table before master-data lookup."""
+
+    dataframe = _as_dataframe(
+        value
+    )
+
+    available = [
+        column
+        for column in preferred_columns
+        if column in dataframe.columns
+    ]
+
+    if not available:
+        return pd.DataFrame()
+
+    return dataframe.loc[
+        :,
+        available,
+    ].head(
+        max(
+            1,
+            int(limit),
+        )
+    ).reset_index(
+        drop=True
+    )
+
+
+def _compact_expand_subscriber_list(
+    value: Any,
+    *,
+    list_columns: tuple[str, ...],
+    limit: int,
+) -> pd.DataFrame:
+    """Expand a compact mobile-number list into one auditable row per number."""
+
+    dataframe = _as_dataframe(
+        value
+    )
+
+    if dataframe.empty:
+        return dataframe
+
+    bounded_limit = max(
+        1,
+        int(limit),
+    )
+
+    if "subscriber_number" in dataframe.columns:
+        output = dataframe.head(
+            bounded_limit
+        ).copy()
+
+    else:
+        source_column = next(
+            (
+                column
+                for column in list_columns
+                if column in dataframe.columns
+            ),
+            None,
+        )
+
+        if source_column is None:
+            return dataframe.head(
+                bounded_limit
+            ).copy()
+
+        output = dataframe.head(
+            bounded_limit
+        ).copy()
+
+        output[
+            "subscriber_number"
+        ] = (
+            output[
+                source_column
+            ]
+            .fillna("")
+            .astype(str)
+            .str.split(
+                r"\s*,\s*"
+            )
+        )
+
+        output = output.explode(
+            "subscriber_number",
+            ignore_index=True,
+        )
+
+        output[
+            "subscriber_number"
+        ] = (
+            output[
+                "subscriber_number"
+            ]
+            .fillna("")
+            .astype(str)
+            .str.strip()
+        )
+
+        output = output.loc[
+            output[
+                "subscriber_number"
+            ].ne("")
+        ].copy()
+
+        output = output.drop(
+            columns=[
+                source_column,
+            ]
+        )
+
+    return output.head(
+        bounded_limit
+    ).reset_index(
+        drop=True
+    )
+
+
+def _compact_enriched_report_view(
+    value: Any,
+    preferred_columns: list[str],
+    *,
+    sdr_prefixes: tuple[str, ...] = (),
+    cgi_prefixes: tuple[str, ...] = (),
+) -> pd.DataFrame:
+    """Return a clean table with only useful SDR and CGI display fields."""
+
+    dataframe = _as_dataframe(
+        value
+    )
+
+    available = [
+        column
+        for column in preferred_columns
+        if column in dataframe.columns
+    ]
+
+    for prefix in sdr_prefixes:
+        for suffix in SDR_DISPLAY_SUFFIXES:
+            column = f"{prefix}{suffix}"
+
+            if (
+                column in dataframe.columns
+                and column not in available
+            ):
+                available.append(
+                    column
+                )
+
+    for prefix in cgi_prefixes:
+        for suffix in CGI_DISPLAY_SUFFIXES:
+            column = f"{prefix}{suffix}"
+
+            if (
+                column in dataframe.columns
+                and column not in available
+            ):
+                available.append(
+                    column
+                )
+
+    if not available:
+        return pd.DataFrame()
+
+    return dataframe.loc[
+        :,
+        available,
+    ].copy()
 
 
 def _compact_visitor_scope_guidance() -> pd.DataFrame:
@@ -2038,15 +2231,6 @@ def _overview(
                 0,
             ),
         ),
-        (
-            "Detailed Data Availability",
-            (
-                "Indexed normalized evidence is retained "
-                "in DuckDB / Parquet. Detailed "
-                "analyses can be regenerated from "
-                "that indexed evidence."
-            ),
-        ),
     ]
 
     return pd.DataFrame(
@@ -2075,7 +2259,7 @@ def generate_tower_dump_excel_report(
     case_name: str | None = None,
     raw_row_limit: int = 200000,
     report_profile: str = "COMPACT",
-    lead_row_limit: int = 200,
+    lead_row_limit: int = 99999,
 ) -> Path:
     """Generate a compact investigator-facing Excel report.
 
@@ -2158,11 +2342,13 @@ def generate_tower_dump_excel_report(
     )
 
     wb = Workbook()
-    wb.remove(
-        wb.active
-    )
+    active_sheet = wb.active
+    if active_sheet is not None:
+        wb.remove(
+            active_sheet
+        )
 
-    total_sheets = 11
+    total_sheets = 15
     current_sheet = 0
 
     def show_progress(
@@ -2186,6 +2372,387 @@ def generate_tower_dump_excel_report(
         "[+] Preparing compact investigation report..."
     )
 
+    (
+        priority_queue,
+        _,
+    ) = _compact_priority_review_queue(
+        results,
+        limit=lead_limit,
+    )
+
+    normalized_sample = (
+        _compact_balanced_normalized_sample(
+            report_context[
+                "dataframe"
+            ],
+            max_rows=normalized_row_limit,
+        )
+    )
+
+    priority_columns = [
+        "subscriber_number",
+        "priority",
+        "confidence",
+        "priority_score",
+        "lead_categories",
+        "event_count",
+        "cells_seen",
+        "night_event_count",
+        "imei_count",
+        "imsi_count",
+        "first_seen",
+        "last_seen",
+        "why_important",
+    ]
+
+    uncommon_columns = [
+        "subscriber_number",
+        "priority",
+        "confidence",
+        "event_count",
+        "cells_seen",
+        "searched_cells_seen",
+        "searched_cells",
+        "night_event_count",
+        "first_seen",
+        "last_seen",
+        "why_important",
+    ]
+
+    visitor_columns = [
+        "subscriber_number",
+        "total_events",
+        "first_seen",
+        "last_seen",
+        "active_days",
+        "unique_cells",
+        "unique_operators",
+        "unique_imei",
+        "unique_imsi",
+        "unique_other_parties",
+        "total_duration_seconds",
+    ]
+
+    presence_columns = [
+        "subscriber_number",
+        "spots_seen_count",
+        "total_spots",
+        "match_ratio",
+        "spot_ids",
+        "spot_names",
+        "total_events",
+        "unique_searched_cells",
+        "searched_cell_ids",
+        "primary_searched_cell_id",
+        "operators",
+        "imei_count",
+        "imsi_count",
+        "first_seen",
+        "last_seen",
+    ]
+
+    device_continuity_columns = [
+        "subscriber_number",
+        "spots_seen_count",
+        "spot_names",
+        "searched_cell_ids",
+        "primary_searched_cell_id",
+        "imei_count",
+        "imei_values",
+        "imei_continuity",
+        "imsi_count",
+        "imsi_values",
+        "imsi_continuity",
+        "confidence",
+        "why_important",
+        "next_verification",
+    ]
+
+    shared_imei_spot_columns = [
+        "imei",
+        "subscriber_number",
+        "spots_seen_count",
+        "spot_names",
+        "searched_cell_ids",
+        "primary_searched_cell_id",
+        "unique_subscribers",
+        "total_events",
+        "first_seen",
+        "last_seen",
+        "why_important",
+        "next_verification",
+    ]
+
+    shared_imsi_spot_columns = [
+        "imsi",
+        "subscriber_number",
+        "spots_seen_count",
+        "spot_names",
+        "searched_cell_ids",
+        "primary_searched_cell_id",
+        "unique_subscribers",
+        "total_events",
+        "first_seen",
+        "last_seen",
+        "why_important",
+        "next_verification",
+    ]
+
+    device_columns = [
+        "subscriber_number",
+        "priority",
+        "confidence",
+        "priority_score",
+        "event_count",
+        "cells_seen",
+        "night_event_count",
+        "imei_count",
+        "imsi_count",
+        "other_party_count",
+        "first_seen",
+        "last_seen",
+        "why_important",
+        "next_action",
+    ]
+
+    shared_imei_columns = [
+        "imei",
+        "subscriber_number",
+        "total_events",
+        "unique_subscribers",
+        "unique_cells",
+        "unique_operators",
+        "first_seen",
+        "last_seen",
+        "operators",
+        "searched_cells",
+    ]
+
+    shared_imsi_columns = [
+        "imsi",
+        "subscriber_number",
+        "total_events",
+        "unique_subscribers",
+        "unique_cells",
+        "unique_operators",
+        "first_seen",
+        "last_seen",
+        "operators",
+        "searched_cells",
+    ]
+
+    normalized_columns = [
+        "subscriber_number",
+        "other_party",
+        "call_type",
+        "call_datetime",
+        "duration_seconds",
+        "operator",
+        "spot_id",
+        "spot_name",
+        "searched_cell_id",
+        "searched_cell_presence",
+        "imei",
+        "imsi",
+        "first_cell_id",
+        "last_cell_id",
+        "source_file",
+    ]
+
+    report_tables = {
+        "tower_cdr_priority_leads": (
+            _compact_select_columns(
+                priority_queue,
+                priority_columns,
+                limit=lead_limit,
+            )
+        ),
+        "tower_cdr_uncommon_numbers": (
+            _compact_select_columns(
+                results.get(
+                    "tower_cdr_uncommon_numbers"
+                ),
+                uncommon_columns,
+                limit=lead_limit,
+            )
+        ),
+        "repeat_visitors": (
+            _compact_select_columns(
+                results.get(
+                    "repeat_visitors"
+                ),
+                visitor_columns,
+                limit=lead_limit,
+            )
+        ),
+        "n_of_m_spot_presence": (
+            _compact_select_columns(
+                results.get(
+                    "n_of_m_spot_presence"
+                ),
+                presence_columns,
+                limit=lead_limit,
+            )
+        ),
+        "all_spot_common_numbers": (
+            _compact_select_columns(
+                results.get(
+                    "all_spot_common_numbers"
+                ),
+                presence_columns,
+                limit=lead_limit,
+            )
+        ),
+        "spot_exclusive_numbers": (
+            _compact_select_columns(
+                results.get(
+                    "spot_exclusive_numbers"
+                ),
+                [
+                    *presence_columns,
+                    "exclusive_spot_id",
+                    "exclusive_spot_name",
+                ],
+                limit=lead_limit,
+            )
+        ),
+        "cross_spot_device_continuity": (
+            _compact_select_columns(
+                results.get(
+                    "cross_spot_device_continuity"
+                ),
+                device_continuity_columns,
+                limit=lead_limit,
+            )
+        ),
+        "shared_imei_across_spots": (
+            _compact_select_columns(
+                _compact_expand_subscriber_list(
+                    results.get(
+                        "shared_imei_across_spots"
+                    ),
+                    list_columns=(
+                        "subscriber_numbers",
+                    ),
+                    limit=lead_limit,
+                ),
+                shared_imei_spot_columns,
+                limit=lead_limit,
+            )
+        ),
+        "shared_imsi_across_spots": (
+            _compact_select_columns(
+                _compact_expand_subscriber_list(
+                    results.get(
+                        "shared_imsi_across_spots"
+                    ),
+                    list_columns=(
+                        "subscriber_numbers",
+                    ),
+                    limit=lead_limit,
+                ),
+                shared_imsi_spot_columns,
+                limit=lead_limit,
+            )
+        ),
+        "tower_cdr_device_consistency": (
+            _compact_select_columns(
+                results.get(
+                    "tower_cdr_device_consistency"
+                ),
+                device_columns,
+                limit=lead_limit,
+            )
+        ),
+        "shared_imei": (
+            _compact_select_columns(
+                _compact_expand_subscriber_list(
+                    results.get(
+                        "shared_imei"
+                    ),
+                    list_columns=(
+                        "subscribers",
+                    ),
+                    limit=lead_limit,
+                ),
+                shared_imei_columns,
+                limit=lead_limit,
+            )
+        ),
+        "shared_imsi": (
+            _compact_select_columns(
+                _compact_expand_subscriber_list(
+                    results.get(
+                        "shared_imsi"
+                    ),
+                    list_columns=(
+                        "subscribers",
+                    ),
+                    limit=lead_limit,
+                ),
+                shared_imsi_columns,
+                limit=lead_limit,
+            )
+        ),
+        "normalized_sample": (
+            _compact_select_columns(
+                normalized_sample,
+                normalized_columns,
+                limit=normalized_row_limit,
+            )
+        ),
+    }
+
+    report_enrichment = (
+        enrich_analysis_bundle(
+            report_tables,
+            table_specs=(
+                TOWER_CDR_TABLE_SPECS
+            ),
+        )
+    )
+
+    report_tables = report_enrichment[
+        "bundle"
+    ]
+
+    for warning in report_enrichment[
+        "warnings"
+    ]:
+        print(
+            f"[!] {warning}"
+        )
+
+    def write_single_section_sheet(
+        sheet_name: str,
+        section_title: str,
+        value: Any,
+        *,
+        max_rows: int,
+    ) -> None:
+        show_progress(
+            sheet_name.split(
+                ". ",
+                maxsplit=1,
+            )[-1]
+        )
+
+        worksheet = wb.create_sheet(
+            sheet_name
+        )
+
+        _write_section(
+            worksheet,
+            section_title,
+            1,
+            value,
+            max_rows=max_rows,
+        )
+
+        _style_section_sheet(
+            worksheet
+        )
+
     # ----------------------------------------------------------
     # 1. Executive Summary
     # ----------------------------------------------------------
@@ -2203,95 +2770,8 @@ def generate_tower_dump_excel_report(
         ),
     )
 
-
     # ----------------------------------------------------------
-    # 2. Data Quality
-    # ----------------------------------------------------------
-
-    show_progress(
-        "Data Quality"
-    )
-
-    ws = wb.create_sheet(
-        "2. Data Quality"
-    )
-
-    row = 1
-
-    row = _write_section(
-        ws,
-        "DATA QUALITY OVERVIEW",
-        row,
-        _compact_data_quality_overview(
-            report_context
-        ),
-        max_rows=100,
-    )
-
-    row = _write_section(
-        ws,
-        "MASTER DATA ENRICHMENT",
-        row,
-        analysis.get(
-            "master_enrichment_summary",
-            results.get(
-                "master_enrichment_summary",
-                pd.DataFrame(),
-            ),
-        ),
-        max_rows=100,
-    )
-
-    row = _write_section(
-        ws,
-        "FILE SUMMARY",
-        row,
-        result.get(
-            "file_summary",
-            pd.DataFrame(),
-        ),
-        max_rows=1000,
-    )
-
-    row = _write_section(
-        ws,
-        "SPOT INGESTION SUMMARY",
-        row,
-        result.get(
-            "spot_summary",
-            pd.DataFrame(),
-        ),
-        max_rows=500,
-    )
-
-    row = _write_section(
-        ws,
-        "LOADER WARNINGS",
-        row,
-        result.get(
-            "warnings",
-            [],
-        ),
-        max_rows=200,
-    )
-
-    row = _write_section(
-        ws,
-        "LOADER ERRORS",
-        row,
-        result.get(
-            "errors",
-            [],
-        ),
-        max_rows=200,
-    )
-
-    _style_section_sheet(
-        ws
-    )
-
-    # ----------------------------------------------------------
-    # 3. Tower Summary
+    # 2. Tower Summary
     # ----------------------------------------------------------
 
     show_progress(
@@ -2299,7 +2779,7 @@ def generate_tower_dump_excel_report(
     )
 
     ws = wb.create_sheet(
-        "3. Tower Summary"
+        "2. Tower Summary"
     )
 
     row = 1
@@ -2313,14 +2793,27 @@ def generate_tower_dump_excel_report(
         ),
     )
 
+    cell_summary = _as_dataframe(
+        results.get(
+            "cell_summary"
+        )
+    ).drop(
+        columns=[
+            "searched_cell_longitude",
+            "searched_cell_source_file",
+            "searched_cell_address_found",
+            "searched_cell_lookup_status",
+            "searched_cell_match_confidence",
+        ],
+        errors="ignore",
+    )
+
     row = _write_section(
         ws,
         "SEARCHED CELL / CGI SUMMARY",
         row,
-        results.get(
-            "cell_summary"
-        ),
-        max_rows=2000,
+        cell_summary,
+        max_rows=99999,
     )
 
     row = _write_section(
@@ -2347,420 +2840,192 @@ def generate_tower_dump_excel_report(
     )
 
     # ----------------------------------------------------------
-# ----------------------------------------------------------
-    # 4. Priority Review Queue
+    # 3. Priority Review Queue
     # ----------------------------------------------------------
 
-    show_progress(
-        "Priority Review Queue"
-    )
-
-    ws = wb.create_sheet(
-        "4. Priority Review Queue"
-    )
-
-    row = 1
-
-    (
-        priority_queue,
-        category_coverage,
-    ) = _compact_priority_review_queue(
-        results,
-        limit=lead_limit,
-    )
-
-    priority_columns = [
-        "subscriber_number",
-        "priority",
-        "confidence",
-        "priority_score",
-        "lead_categories",
-        "event_count",
-        "cells_seen",
-        "night_event_count",
-        "imei_count",
-        "imsi_count",
-        "first_seen",
-        "last_seen",
-        "why_important",
-        "next_action",
-    ]
-
-    uncommon_columns = [
-        "subscriber_number",
-        "priority",
-        "confidence",
-        "event_count",
-        "cells_seen",
-        "night_event_count",
-        "first_seen",
-        "last_seen",
-        "why_important",
-        "next_action",
-    ]
-
-    row = _write_section(
-        ws,
+    write_single_section_sheet(
+        "3. Priority Review Queue",
         "MASTER PRIORITY REVIEW QUEUE",
-        row,
-        _compact_report_view(
-            priority_queue,
+        _compact_enriched_report_view(
+            report_tables[
+                "tower_cdr_priority_leads"
+            ],
             priority_columns,
+            sdr_prefixes=(
+                "sdr_",
+            ),
         ),
         max_rows=lead_limit,
     )
 
-    row = _write_section(
-        ws,
-        "RARE / UNCOMMON SHORTLIST",
-        row,
-        _compact_report_view(
-            results.get(
+    # ----------------------------------------------------------
+    # 4. Rare / Uncommon
+    # ----------------------------------------------------------
+
+    write_single_section_sheet(
+        "4. Rare Uncommon",
+        "RARE / UNCOMMON NUMBERS",
+        _compact_enriched_report_view(
+            report_tables[
                 "tower_cdr_uncommon_numbers"
-            ),
+            ],
             uncommon_columns,
-        ),
-        max_rows=min(
-            50,
-            lead_limit,
-        ),
-    )
-
-    row = _write_section(
-        ws,
-        "LEAD CATEGORY COVERAGE",
-        row,
-        category_coverage,
-        max_rows=100,
-    )
-
-    _style_section_sheet(
-        ws
-    )
-
-# ----------------------------------------------------------
-    # 5. Visitor Intelligence
-    # ----------------------------------------------------------
-
-    show_progress(
-        "Visitor Intelligence"
-    )
-
-    ws = wb.create_sheet(
-        "5. Visitor Intelligence"
-    )
-
-    row = 1
-
-    row = _write_section(
-        ws,
-        "SCOPE GUIDANCE",
-        row,
-        _compact_visitor_scope_guidance(),
-        max_rows=10,
-    )
-
-    visitor_columns = [
-        "subscriber_number",
-        "total_events",
-        "first_seen",
-        "last_seen",
-        "active_days",
-        "unique_cells",
-        "unique_operators",
-        "unique_imei",
-        "unique_imsi",
-        "unique_other_parties",
-        "total_duration_seconds",
-    ]
-
-    row = _write_section(
-        ws,
-        "FREQUENT VISITORS",
-        row,
-        _compact_report_view(
-            results.get(
-                "frequent_visitors"
+            sdr_prefixes=(
+                "sdr_",
             ),
-            visitor_columns,
         ),
         max_rows=lead_limit,
     )
 
-    row = _write_section(
-        ws,
+    # ----------------------------------------------------------
+    # 5. Repeat Visitors
+    # ----------------------------------------------------------
+
+    write_single_section_sheet(
+        "5. Repeat Visitors",
         "REPEAT VISITORS",
-        row,
-        _compact_report_view(
-            results.get(
+        _compact_enriched_report_view(
+            report_tables[
                 "repeat_visitors"
-            ),
+            ],
             visitor_columns,
+            sdr_prefixes=(
+                "sdr_",
+            ),
         ),
         max_rows=lead_limit,
     )
 
-    _style_section_sheet(
-        ws
-    )
-
-# ----------------------------------------------------------
-    # 6. Multi-Spot Intelligence
+    # ----------------------------------------------------------
+    # 6-11. Independent Multi-Spot intelligence
     # ----------------------------------------------------------
 
-    show_progress(
-        "Multi-Spot Intelligence"
-    )
-
-    ws = wb.create_sheet(
-        "6. Multi-Spot Intel"
-    )
-
-    row = 1
-
-    total_spots = report_context[
-        "valid_spot_count"
-    ]
-
-    row = _write_section(
-        ws,
-        "SCOPE GUIDANCE",
-        row,
-        _compact_multi_spot_scope_guidance(
-            total_spots
+    multi_spot_sheets = [
+        (
+            "6. N-of-M Spot Presence",
+            "N-OF-M SPOT PRESENCE",
+            "n_of_m_spot_presence",
+            presence_columns,
         ),
-        max_rows=10,
-    )
-
-    presence_columns = [
-        "subscriber_number",
-        "spots_seen_count",
-        "total_spots",
-        "match_ratio",
-        "spot_ids",
-        "spot_names",
-        "total_events",
-        "unique_searched_cells",
-        "operators",
-        "imei_count",
-        "imsi_count",
-        "first_seen",
-        "last_seen",
+        (
+            "7. All-Spot Common Numbers",
+            "ALL-SPOT COMMON NUMBERS",
+            "all_spot_common_numbers",
+            presence_columns,
+        ),
+        (
+            "8. Spot-Exclusive Numbers",
+            "SPOT-EXCLUSIVE NUMBERS",
+            "spot_exclusive_numbers",
+            [
+                *presence_columns,
+                "exclusive_spot_id",
+                "exclusive_spot_name",
+            ],
+        ),
+        (
+            "9. Cross-Spot Device",
+            "DEVICE CONTINUITY ACROSS SPOTS",
+            "cross_spot_device_continuity",
+            device_continuity_columns,
+        ),
+        (
+            "10. Shared IMEI Across Spots",
+            "SHARED IMEI ACROSS SPOTS",
+            "shared_imei_across_spots",
+            shared_imei_spot_columns,
+        ),
+        (
+            "11. Shared IMSI Across Spots",
+            "SHARED IMSI ACROSS SPOTS",
+            "shared_imsi_across_spots",
+            shared_imsi_spot_columns,
+        ),
     ]
-
-    multi_spot_sections: list[
-        tuple[
-            str,
-            str,
-            list[str],
-        ]
-    ] = []
-
-    if total_spots >= 3:
-        multi_spot_sections.append(
-            (
-                "N-OF-M SPOT PRESENCE",
-                "n_of_m_spot_presence",
-                presence_columns,
-            )
-        )
-
-    multi_spot_sections.extend(
-        [
-            (
-                "ALL-SPOT COMMON NUMBERS",
-                "all_spot_common_numbers",
-                presence_columns,
-            ),
-            (
-                "SPOT-EXCLUSIVE NUMBERS",
-                "spot_exclusive_numbers",
-                [
-                    *presence_columns,
-                    "exclusive_spot_id",
-                    "exclusive_spot_name",
-                ],
-            ),
-            (
-                "DEVICE CONTINUITY ACROSS SPOTS",
-                "cross_spot_device_continuity",
-                [
-                    "subscriber_number",
-                    "spots_seen_count",
-                    "spot_names",
-                    "imei_count",
-                    "imei_values",
-                    "imei_continuity",
-                    "imsi_count",
-                    "imsi_values",
-                    "imsi_continuity",
-                    "confidence",
-                    "why_important",
-                    "next_verification",
-                ],
-            ),
-            (
-                "SHARED IMEI ACROSS SPOTS",
-                "shared_imei_across_spots",
-                [
-                    "imei",
-                    "spots_seen_count",
-                    "spot_names",
-                    "unique_subscribers",
-                    "subscriber_numbers",
-                    "total_events",
-                    "first_seen",
-                    "last_seen",
-                    "why_important",
-                    "next_verification",
-                ],
-            ),
-            (
-                "SHARED IMSI ACROSS SPOTS",
-                "shared_imsi_across_spots",
-                [
-                    "imsi",
-                    "spots_seen_count",
-                    "spot_names",
-                    "unique_subscribers",
-                    "subscriber_numbers",
-                    "total_events",
-                    "first_seen",
-                    "last_seen",
-                    "why_important",
-                    "next_verification",
-                ],
-            ),
-        ]
-    )
 
     for (
-        title,
-        result_name,
+        sheet_name,
+        section_title,
+        table_name,
         preferred_columns,
-    ) in multi_spot_sections:
-        row = _write_section(
-            ws,
-            title,
-            row,
-            _compact_report_view(
-                results.get(
-                    result_name
-                ),
+    ) in multi_spot_sheets:
+        write_single_section_sheet(
+            sheet_name,
+            section_title,
+            _compact_enriched_report_view(
+                report_tables[
+                    table_name
+                ],
                 preferred_columns,
+                sdr_prefixes=(
+                    "sdr_",
+                ),
+                cgi_prefixes=(
+                    "primary_cell_",
+                ),
             ),
             max_rows=lead_limit,
         )
 
-    _style_section_sheet(
-        ws
-    )
-
-    # 7. Device / SIM Alerts
+    # ----------------------------------------------------------
+    # 12-14. Independent Device / SIM intelligence
     # ----------------------------------------------------------
 
-    show_progress(
-        "Device and SIM Alerts"
-    )
-
-    ws = wb.create_sheet(
-        "7. Device SIM Alerts"
-    )
-
-    row = 1
-
-    device_columns = [
-        "subscriber_number",
-        "priority",
-        "confidence",
-        "priority_score",
-        "event_count",
-        "cells_seen",
-        "night_event_count",
-        "imei_count",
-        "imsi_count",
-        "other_party_count",
-        "first_seen",
-        "last_seen",
-        "why_important",
-        "next_action",
-    ]
-
-    shared_identifier_columns = [
-        "imei",
-        "imsi",
-        "total_events",
-        "unique_subscribers",
-        "unique_cells",
-        "unique_operators",
-        "first_seen",
-        "last_seen",
-        "operators",
-        "subscribers",
-    ]
-
-    row = _write_section(
-        ws,
+    write_single_section_sheet(
+        "12. Device Consistency Alerts",
         "DEVICE CONSISTENCY ALERTS",
-        row,
-        _compact_report_view(
-            results.get(
+        _compact_enriched_report_view(
+            report_tables[
                 "tower_cdr_device_consistency"
-            ),
+            ],
             device_columns,
+            sdr_prefixes=(
+                "sdr_",
+            ),
         ),
         max_rows=lead_limit,
     )
 
-    row = _write_section(
-        ws,
+    write_single_section_sheet(
+        "13. Shared IMEI",
         "SHARED IMEI",
-        row,
-        _compact_report_view(
-            results.get(
+        _compact_enriched_report_view(
+            report_tables[
                 "shared_imei"
+            ],
+            shared_imei_columns,
+            sdr_prefixes=(
+                "sdr_",
             ),
-            shared_identifier_columns,
         ),
         max_rows=lead_limit,
     )
 
-    row = _write_section(
-        ws,
+    write_single_section_sheet(
+        "14. Shared IMSI",
         "SHARED IMSI",
-        row,
-        _compact_report_view(
-            results.get(
+        _compact_enriched_report_view(
+            report_tables[
                 "shared_imsi"
+            ],
+            shared_imsi_columns,
+            sdr_prefixes=(
+                "sdr_",
             ),
-            shared_identifier_columns,
         ),
         max_rows=lead_limit,
-    )
-
-    _style_section_sheet(
-        ws
     )
 
     # ----------------------------------------------------------
-    # 8. Normalized Sample
+    # 15. Normalized Sample
     # ----------------------------------------------------------
 
     show_progress(
         "Normalized Sample"
     )
 
-    normalized_sample = (
-        _compact_balanced_normalized_sample(
-            report_context[
-                "dataframe"
-            ],
-            max_rows=normalized_row_limit,
-        )
-    )
-
     ws = wb.create_sheet(
-        "8. Normalized Sample"
+        "15. Normalized Sample"
     )
 
     row = 1
@@ -2771,7 +3036,9 @@ def generate_tower_dump_excel_report(
         row,
         _compact_normalized_sample_info(
             report_context,
-            normalized_sample,
+            report_tables[
+                "normalized_sample"
+            ],
         ),
         max_rows=20,
     )
@@ -2780,131 +3047,23 @@ def generate_tower_dump_excel_report(
         ws,
         "NORMALIZED RECORD SAMPLE",
         row,
-        normalized_sample,
+        _compact_enriched_report_view(
+            report_tables[
+                "normalized_sample"
+            ],
+            normalized_columns,
+            sdr_prefixes=(
+                "sdr_",
+            ),
+            cgi_prefixes=(
+                "searched_cell_",
+            ),
+        ),
         max_rows=normalized_row_limit,
     )
 
     _style_section_sheet(
         ws
-    )
-
-    # 9. Backend Data Guide
-    # ----------------------------------------------------------
-
-    show_progress(
-        "Backend Data Guide"
-    )
-
-    backend_tables = (
-        "subscriber_summary",
-        "imei_summary",
-        "imsi_summary",
-        "common_subscriber_matrix",
-        "subscriber_spot_detail",
-        "subscriber_spot_presence",
-        "cross_spot_sequence",
-        "subscriber_movements",
-        "investigative_indicators",
-    )
-
-    backend_rows = []
-
-    for table_name in backend_tables:
-        value = results.get(
-            table_name
-        )
-
-        row_count = (
-            len(value)
-            if hasattr(
-                value,
-                "__len__",
-            )
-            else 0
-        )
-
-        backend_rows.append(
-            {
-                "backend_table": table_name,
-                "rows_available": int(
-                    row_count
-                ),
-                "included_in_compact_excel": "No",
-                "storage": (
-                    "Indexed evidence: DuckDB / Parquet"
-                ),
-                "access": (
-                    "Regenerate analysis or create a "
-                    "selected detailed export"
-                ),
-                "reason": (
-                    "Derived table excluded from compact "
-                    "Excel. Row count reflects the "
-                    "current analysis run."
-                ),
-            }
-        )
-
-    _write_dataframe(
-        wb,
-        "9. Backend Data Guide",
-        pd.DataFrame(
-            backend_rows
-        ),
-    )
-
-    # ----------------------------------------------------------
-    # 10. Analysis Status
-    # ----------------------------------------------------------
-
-    show_progress(
-        "Analysis Status"
-    )
-
-    ws = wb.create_sheet(
-        "10. Analysis Status"
-    )
-
-    row = 1
-
-    row = _write_section(
-        ws,
-        "ANALYSIS STATUS",
-        row,
-        analysis.get(
-            "status",
-            pd.DataFrame(),
-        ),
-        max_rows=1000,
-    )
-
-    row = _write_section(
-        ws,
-        "ANALYSIS ERRORS",
-        row,
-        analysis.get(
-            "errors",
-            pd.DataFrame(),
-        ),
-        max_rows=500,
-    )
-
-    _style_section_sheet(
-        ws
-    )
-
-
-    # ----------------------------------------------------------
-    # 11. Methodology and Limits
-    # ----------------------------------------------------------
-
-    show_progress(
-        "Methodology & Limits"
-    )
-
-    append_methodology_sheet(
-        wb,
-        "Tower CDR Dump Analysis",
     )
 
     print(

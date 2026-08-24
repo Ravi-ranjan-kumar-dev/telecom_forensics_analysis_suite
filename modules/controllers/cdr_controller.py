@@ -106,6 +106,7 @@ def run_multiple(
                 "file": source_file,
                 "files": [source_file],
                 "df": df.copy(),
+                "_merged_input_count": 1,
                 "metadata": dict(metadata),
                 "rejected_rows": [
                     item.get("rejected_rows")
@@ -116,6 +117,12 @@ def run_multiple(
 
         existing = grouped[target]
         existing["df"] = pd.concat([existing["df"], df], ignore_index=True, sort=False)
+        existing["_merged_input_count"] = int(
+            existing.get(
+                "_merged_input_count",
+                1,
+            )
+        ) + 1
         existing["files"].append(source_file)
         existing["file"] = ", ".join(dict.fromkeys(existing["files"]))
         existing["metadata"].update({k: v for k, v in metadata.items() if v not in (None, "")})
@@ -124,8 +131,39 @@ def run_multiple(
             existing["rejected_rows"].append(rejected)
         existing["ingestion_metadata"].append(item.get("ingestion_metadata", {}))
 
+    duplicate_flag_columns = {
+        "is_potential_duplicate",
+        "potential_duplicate_count",
+        "potential_duplicate_group",
+        "potential_duplicate_signature_columns",
+    }
+
     for info in grouped.values():
-        info["df"] = flag_potential_duplicates(info["df"]).reset_index(drop=True)
+        frame = info["df"]
+        merged_input_count = int(
+            info.pop(
+                "_merged_input_count",
+                1,
+            )
+        )
+
+        # load_multiple_cdr() already flags each fully merged target.  Reuse
+        # those columns instead of repeating the most expensive record-level
+        # operation.  Recalculate only for alternate loaders that return more
+        # than one item for a target, or return an unflagged DataFrame.
+        if (
+            merged_input_count > 1
+            or not duplicate_flag_columns.issubset(
+                frame.columns
+            )
+        ):
+            frame = flag_potential_duplicates(
+                frame
+            )
+
+        info["df"] = frame.reset_index(
+            drop=True
+        )
         info["files"] = list(dict.fromkeys(info["files"]))
         rejected_frames = [
             frame for frame in info.get("rejected_rows", [])

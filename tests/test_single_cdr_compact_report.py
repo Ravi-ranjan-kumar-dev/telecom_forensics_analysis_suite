@@ -102,6 +102,7 @@ def _analysis_bundle() -> dict:
                 "Total Records": 4,
             },
             "top_contacts": contact,
+            "bottom_contacts": contact,
             "contact_ranking": contact,
             "social_network": contact,
             "contact_category_summary": pd.DataFrame(),
@@ -330,7 +331,7 @@ def test_compact_clean_frame_hides_technical_columns():
     assert "CGI Match Confidence" in result.columns
 
 
-def test_compact_quality_count_matches_rejected_summary(
+def test_compact_report_omits_technical_quality_and_rejected_sections(
     tmp_path: Path,
     monkeypatch,
 ):
@@ -372,39 +373,11 @@ def test_compact_quality_count_matches_rejected_summary(
         data_only=False,
     )
 
-    worksheet = workbook[
-        "10. Data Quality & Guide"
-    ]
-
-    quality_value = None
-    rejected_reason_value = None
-
-    for row in range(
-        1,
-        worksheet.max_row + 1,
-    ):
-        label = worksheet.cell(
-            row=row,
-            column=1,
-        ).value
-
-        if label == "Rejected or quarantined rows":
-            quality_value = worksheet.cell(
-                row=row,
-                column=2,
-            ).value
-
-        if (
-            label
-            == "INVALID_OR_NON_DATA_CDR_TIMESTAMP"
-        ):
-            rejected_reason_value = worksheet.cell(
-                row=row,
-                column=2,
-            ).value
-
-    assert quality_value == 1
-    assert rejected_reason_value == 1
+    assert "9. Priority Review Queue" not in workbook.sheetnames
+    assert "10. Data Quality & Guide" not in workbook.sheetnames
+    assert "INVALID_OR_NON_DATA_CDR_TIMESTAMP" not in _all_cell_text(
+        workbook
+    )
 
 
 def test_executive_top_contacts_exclude_service_senders(
@@ -481,7 +454,8 @@ def test_executive_top_contacts_exclude_service_senders(
         values
     )
 
-    assert "TOP FIVE HUMAN CONTACTS" in text
+    assert "TOP 10 HUMAN CONTACTS" in text
+    assert "BOTTOM 10 HUMAN CONTACTS" in text
     assert "8000000001" in text
     assert "AD-AIRBNK-S" not in text
 
@@ -781,6 +755,9 @@ def test_wide_investigator_sections_have_compact_profiles():
         "MOVEMENT EVENTS",
         "TOWER TRANSITIONS",
         "MOVEMENT PATTERNS",
+        "DEVICE SUMMARY",
+        "SIM SUMMARY",
+        "DEVICE / SIM CHANGE INDICATORS",
     }
 
     assert required_profiles.issubset(
@@ -799,6 +776,52 @@ def test_wide_investigator_sections_have_compact_profiles():
         assert len(
             columns
         ) <= 15
+
+
+def test_incoming_voice_profile_omits_tower_columns():
+    columns = cdr_compact_excel.SECTION_COLUMN_PROFILES[
+        "INCOMING VOICE CALLS"
+    ]
+
+    assert "Cell ID" not in columns
+    assert "Address" not in columns
+    assert "End Cell ID" not in columns
+    assert "End Address" not in columns
+
+
+def test_location_overview_profile_omits_lookup_status():
+    columns = cdr_compact_excel.SECTION_COLUMN_PROFILES[
+        "CELL ID SUMMARY"
+    ]
+
+    assert "Start Tower Lookup Status" not in columns
+
+
+def test_identifier_cells_are_forced_to_exact_text():
+    from openpyxl import Workbook
+
+    workbook = Workbook()
+    worksheet = workbook.active
+    worksheet.append(["Device Key", "IMSI", "Most Used Device Key"])
+    worksheet.append(
+        [86811606664317, 405001111111111, 86811606664317]
+    )
+
+    cdr_compact_excel._finish_sheet(worksheet)
+
+    for cell, expected in zip(
+        worksheet[2],
+        (
+            "86811606664317",
+            "405001111111111",
+            "86811606664317",
+        ),
+    ):
+        assert cell.value == expected
+        assert cell.data_type == "s"
+        assert cell.number_format == "@"
+        assert cell.quotePrefix is True
+        assert cell.alignment.horizontal == "left"
 
 
 def test_profiled_moving_calls_section_is_not_overwide():

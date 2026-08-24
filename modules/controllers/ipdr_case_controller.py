@@ -7,7 +7,9 @@ from typing import Any
 
 import pandas as pd
 
-from modules.analysis.ipdr import run_ipdr_analysis
+from modules.analysis.ipdr import (
+    run_ipdr_analysis as build_ipdr_analysis,
+)
 from modules.cases import (
     case_evidence_dir,
     case_report_dir,
@@ -27,6 +29,27 @@ from modules.reporting.ipdr_console import print_ipdr_analysis
 
 
 SUPPORTED_SUFFIXES = {".csv", ".txt", ".xlsx", ".xls"}
+IPDR_ANALYSIS_MODES = (
+    "single",
+    "multiple",
+)
+
+
+def normalize_ipdr_mode(
+    mode: object,
+) -> str:
+    """Return one supported subscriber IPDR analysis mode."""
+
+    normalized = str(
+        mode or ""
+    ).strip().casefold()
+
+    if normalized not in IPDR_ANALYSIS_MODES:
+        raise ValueError(
+            f"Unsupported IPDR analysis mode: {mode}"
+        )
+
+    return normalized
 
 
 def _menu(case: dict[str, Any]) -> str:
@@ -54,6 +77,9 @@ def _has_files(directory: Path) -> bool:
 
 
 def _input_folder(case_id: str, mode: str) -> Path:
+    mode = normalize_ipdr_mode(
+        mode
+    )
     case_folder = case_evidence_dir(
         case_id,
         "ipdr",
@@ -67,15 +93,35 @@ def _input_folder(case_id: str, mode: str) -> Path:
     fallback.mkdir(parents=True, exist_ok=True)
     return fallback
 
+
 def resolve_ipdr_input_folder(
     case_id: str,
     mode: str,
+    input_folder: str | Path | None = None,
 ) -> Path:
-    """Return the canonical Single/Multiple IPDR input folder."""
+    """Return a selected or canonical subscriber IPDR input folder."""
+
+    normalized_mode = normalize_ipdr_mode(
+        mode
+    )
+
+    if input_folder is not None:
+        selected = Path(
+            input_folder
+        ).expanduser().resolve(
+            strict=False
+        )
+
+        if not selected.is_dir():
+            raise FileNotFoundError(
+                f"Selected IPDR evidence folder does not exist: {selected}"
+            )
+
+        return selected
 
     return _input_folder(
         case_id,
-        mode,
+        normalized_mode,
     )
 
 
@@ -100,9 +146,12 @@ def _execute(
     case: dict[str, Any],
     *,
     mode: str,
+    input_folder: str | Path | None = None,
 ) -> dict[str, Any] | None:
     case_id = str(case["case_id"])
-    mode = str(mode).strip().lower()
+    mode = normalize_ipdr_mode(
+        mode
+    )
     analysis_type = f"IPDR_{mode.upper()}"
 
     log_case_event(
@@ -111,10 +160,17 @@ def _execute(
     )
 
     try:
-        input_folder = _input_folder(case_id, mode)
-        print(f"[+] {mode.title()} IPDR input: {input_folder}")
-        load_result = load_ipdr_case(
+        resolved_input_folder = resolve_ipdr_input_folder(
+            case_id,
+            mode,
             input_folder,
+        )
+        print(
+            f"[+] {mode.title()} IPDR input: "
+            f"{resolved_input_folder}"
+        )
+        load_result = load_ipdr_case(
+            resolved_input_folder,
             recursive=True,
         )
 
@@ -191,7 +247,7 @@ def _execute(
         if not isinstance(search_requests, pd.DataFrame):
             search_requests = pd.DataFrame()
 
-        analysis = run_ipdr_analysis(
+        analysis = build_ipdr_analysis(
             dataframe,
             file_summary=load_result.get("file_summary"),
             search_requests=search_requests,
@@ -236,7 +292,7 @@ def _execute(
             case_id,
             mode=mode,
             analysis=analysis,
-            input_folder=input_folder,
+            input_folder=resolved_input_folder,
             source_files=source_files,
             warnings=load_result.get("warnings", []),
             errors=load_result.get("errors", []),
@@ -328,6 +384,21 @@ def _execute(
         return None
 
 
+def run_ipdr_case_analysis(
+    case: dict[str, Any],
+    *,
+    mode: str,
+    input_folder: str | Path | None = None,
+) -> dict[str, Any] | None:
+    """Run one non-interactive subscriber IPDR workflow."""
+
+    return _execute(
+        case,
+        mode=mode,
+        input_folder=input_folder,
+    )
+
+
 def _latest(
     case_id: str,
     mode: str,
@@ -361,10 +432,16 @@ def handle_ipdr_workspace(
             choice = _menu(case)
 
             if choice == "1":
-                _execute(case, mode="single")
+                run_ipdr_case_analysis(
+                    case,
+                    mode="single",
+                )
 
             elif choice == "2":
-                _execute(case, mode="multiple")
+                run_ipdr_case_analysis(
+                    case,
+                    mode="multiple",
+                )
 
             elif choice == "3":
                 _latest(

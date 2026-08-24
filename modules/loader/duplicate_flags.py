@@ -82,27 +82,80 @@ def flag_potential_duplicates(
                 .str.strip()
             )
 
-    signature_text = signature_frame.astype(str).agg(
-        "\x1f".join,
-        axis=1,
+    # Grouping the complete signature is implemented inside pandas instead of
+    # joining and hashing every row in Python.  Large multi-target cases often
+    # contain millions of unique events; computing SHA-256 for every unique
+    # event added substantial CPU time even though only duplicate groups need
+    # a persistent review identifier.
+    group_codes = signature_frame.groupby(
+        list(
+            signature_frame.columns
+        ),
+        sort=False,
+        dropna=False,
+        observed=True,
+    ).ngroup()
+
+    group_sizes = group_codes.value_counts(
+        sort=False
+    )
+    counts = group_codes.map(
+        group_sizes
+    ).astype(
+        "Int64"
+    )
+    duplicate_mask = (
+        counts.gt(
+            1
+        )
+        .fillna(
+            False
+        )
+        .astype(
+            bool
+        )
     )
 
-    hashes = signature_text.map(
-        lambda value: hashlib.sha256(
-            value.encode("utf-8")
+    # Preserve the existing deterministic SHA-256 group label, but calculate
+    # it once per actual duplicate signature rather than once per source row.
+    duplicate_group_ids: dict[int, str] = {}
+    representatives = group_codes.loc[
+        duplicate_mask
+    ].drop_duplicates()
+
+    for row_index, group_code in representatives.items():
+        signature_text = "\x1f".join(
+            signature_frame.loc[
+                row_index,
+                :,
+            ].astype(
+                str
+            )
+        )
+        digest = hashlib.sha256(
+            signature_text.encode(
+                "utf-8"
+            )
         ).hexdigest()
-    )
-
-    counts = hashes.map(hashes.value_counts())
-    duplicate_mask = counts.gt(1)
+        duplicate_group_ids[
+            int(
+                group_code
+            )
+        ] = f"DUP-{digest[:16]}"
 
     data["is_potential_duplicate"] = duplicate_mask
-    data["potential_duplicate_count"] = counts.astype("Int64")
-    data["potential_duplicate_group"] = hashes.where(
-        duplicate_mask,
-        "",
-    ).map(
-        lambda value: f"DUP-{value[:16]}" if value else ""
+    data["potential_duplicate_count"] = counts
+    data["potential_duplicate_group"] = (
+        group_codes.map(
+            duplicate_group_ids
+        )
+        .where(
+            duplicate_mask,
+            "",
+        )
+        .fillna(
+            ""
+        )
     )
     data["potential_duplicate_signature_columns"] = ", ".join(
         columns

@@ -1070,7 +1070,7 @@ def _enrich_contact_report_dataframe(
     ).strip().lower()
 
     supported = (
-        "top human contacts"
+        "human contacts"
         in normalized_sheet_name
         or "contact ranking"
         in normalized_sheet_name

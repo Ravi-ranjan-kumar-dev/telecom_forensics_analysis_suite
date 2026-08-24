@@ -16,6 +16,7 @@ from modules.analysis.cdr.device_quality import (
     device_change_review,
     device_summary,
     imei_is_valid,
+    sim_summary,
 )
 from modules.reporting.multi_cdr_excel import (
     SHEET_MAP,
@@ -138,7 +139,24 @@ def test_invalid_and_valid_values_share_one_device_group():
     assert row["Device Key"] == "86811606664317"
     assert row["Valid IMEI"] == "868116066643177"
     assert row["Invalid IMEI Values"] == "868116066643170"
+    assert row["IMEI Status"] == (
+        "Valid IMEI with check-digit variation"
+    )
     assert int(row["Total Events"]) == 2
+
+
+def test_sim_summary_preserves_imsi_and_links_probable_devices():
+    frame = _device_frame()
+    frame.loc[1, "imei"] = "490154203237518"
+
+    result = sim_summary(frame)
+
+    assert len(result) == 1
+    row = result.iloc[0]
+    assert row["IMSI"] == "405001111111111"
+    assert int(row["Total Events"]) == 2
+    assert int(row["Unique Device Groups"]) == 2
+    assert row["Most Used Device Key"] == "49015420323751"
 
 
 def test_same_device_raw_change_is_identifier_variant():
@@ -264,7 +282,7 @@ def _targets() -> dict:
     }
 
 
-def test_empty_multiple_error_sheet_is_omitted(tmp_path: Path):
+def test_multiple_report_omits_technical_sheets(tmp_path: Path):
     report = generate_multi_cdr_report(
         _targets(),
         metadata={"case_name": "Test Case"},
@@ -276,11 +294,17 @@ def test_empty_multiple_error_sheet_is_omitted(tmp_path: Path):
 
     workbook = load_workbook(report, read_only=True)
 
+    assert tuple(workbook.sheetnames) == tuple(
+        sheet_name
+        for sheet_name, _, _ in SHEET_MAP
+    )
+    assert "13. Alerts" not in workbook.sheetnames
     assert "14. Errors" not in workbook.sheetnames
-    assert "14. Rejected Rows" in workbook.sheetnames
+    assert "14. Rejected Rows" not in workbook.sheetnames
+    assert "Methodology & Limits" not in workbook.sheetnames
 
 
-def test_nonempty_multiple_error_sheet_is_preserved(tmp_path: Path):
+def test_multiple_internal_errors_stay_out_of_investigator_workbook(tmp_path: Path):
     bundle = _empty_bundle()
     bundle["errors"] = pd.DataFrame(
         [{"Analysis": "test", "Error": "sample"}]
@@ -297,5 +321,5 @@ def test_nonempty_multiple_error_sheet_is_preserved(tmp_path: Path):
 
     workbook = load_workbook(report, read_only=True)
 
-    assert "14. Errors" in workbook.sheetnames
-    assert "15. Rejected Rows" in workbook.sheetnames
+    assert "14. Errors" not in workbook.sheetnames
+    assert "15. Rejected Rows" not in workbook.sheetnames

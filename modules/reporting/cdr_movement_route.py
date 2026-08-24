@@ -522,3 +522,242 @@ def generate_cdr_movement_route(
     )
 
     return output
+
+
+def build_multi_movement_route_points(
+    movement: pd.DataFrame,
+) -> list[dict[str, Any]]:
+    """Build separate chronological route points for every target."""
+
+    if (
+        not isinstance(movement, pd.DataFrame)
+        or movement.empty
+        or "Target" not in movement.columns
+    ):
+        return []
+
+    points: list[dict[str, Any]] = []
+
+    for target, frame in movement.groupby(
+        "Target",
+        sort=True,
+        dropna=False,
+    ):
+        target_text = _text(
+            target
+        )
+
+        if not target_text:
+            continue
+
+        points.extend(
+            build_movement_route_points(
+                frame,
+                target=target_text,
+            )
+        )
+
+    return points
+
+
+def render_multi_movement_route_html(
+    points: list[dict[str, Any]],
+) -> str:
+    """Render multiple target routes without joining different targets."""
+
+    safe_payload = json.dumps(
+        {
+            "points": points,
+        },
+        ensure_ascii=True,
+    ).replace(
+        "<",
+        "\\u003c",
+    ).replace(
+        ">",
+        "\\u003e",
+    ).replace(
+        "&",
+        "\\u0026",
+    )
+
+    return f"""<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Multiple CDR Movement Routes</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+<style>
+:root {{ color-scheme: dark; }}
+* {{ box-sizing: border-box; }}
+body {{ margin: 0; background: #0f172a; color: #e5e7eb; font-family: system-ui, sans-serif; }}
+header {{ padding: 14px 18px; background: #111827; border-bottom: 1px solid #334155; }}
+h1 {{ margin: 0 0 4px; font-size: 21px; }}
+.sub {{ color: #94a3b8; font-size: 13px; }}
+.toolbar {{ display: flex; gap: 10px; align-items: center; padding: 10px 14px; flex-wrap: wrap; }}
+select, button {{ min-height: 36px; border-radius: 6px; padding: 7px 10px; }}
+select {{ min-width: 230px; color: #f8fafc; background: #111827; border: 1px solid #475569; }}
+button {{ color: white; background: #2563eb; border: 0; cursor: pointer; }}
+#summary {{ color: #bfdbfe; font-size: 13px; }}
+#map {{ height: 58vh; min-height: 390px; }}
+.caution {{ margin: 10px 14px; padding: 10px 12px; border: 1px solid #92400e; border-radius: 7px; background: #451a03; color: #fde68a; font-size: 13px; }}
+.table-wrap {{ max-height: 31vh; overflow: auto; border-top: 1px solid #334155; }}
+table {{ width: 100%; border-collapse: collapse; font-size: 12px; }}
+th, td {{ padding: 8px; border-bottom: 1px solid #263449; text-align: left; vertical-align: top; }}
+th {{ position: sticky; top: 0; color: white; background: #1e3a5f; }}
+.empty {{ padding: 30px; text-align: center; color: #fca5a5; }}
+</style>
+</head>
+<body>
+<header>
+  <h1>Multiple CDR Movement Routes</h1>
+  <div class="sub">Each target route is drawn separately. Different targets are never joined by one route line.</div>
+</header>
+<div class="toolbar">
+  <label for="targetFilter">Target</label>
+  <select id="targetFilter"><option value="">All Targets</option></select>
+  <button id="reset" type="button">Reset View</button>
+  <span id="summary"></span>
+</div>
+<div id="map"></div>
+<div class="caution">Routes connect chronological serving towers and do not prove an exact road, exact handset position, continuous movement or co-location. Verify important points with source CDR, CGI coverage and independent evidence.</div>
+<div class="table-wrap"><table>
+<thead><tr><th>Target</th><th>Step</th><th>Date-Time</th><th>CGI</th><th>Site / Address</th><th>Contact</th><th>Call Type</th></tr></thead>
+<tbody id="routeRows"></tbody>
+</table></div>
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script>
+"use strict";
+const payload = {safe_payload};
+const allPoints = Array.isArray(payload.points) ? payload.points : [];
+const palette = ["#38bdf8", "#f97316", "#22c55e", "#e879f9", "#facc15", "#a78bfa", "#fb7185", "#2dd4bf"];
+const targets = [...new Set(allPoints.map((point) => String(point.target || "")).filter(Boolean))].sort();
+const filter = document.getElementById("targetFilter");
+for (const target of targets) {{
+  const option = document.createElement("option");
+  option.value = target;
+  option.textContent = target;
+  filter.appendChild(option);
+}}
+
+const esc = (value) => String(value ?? "").replace(/[&<>"']/g, (char) => ({{"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}}[char]));
+const mapElement = document.getElementById("map");
+let map = null;
+let layers = [];
+
+function selectedPoints() {{
+  const target = filter.value;
+  return target ? allPoints.filter((point) => String(point.target || "") === target) : allPoints;
+}}
+
+function clearLayers() {{
+  if (!map) return;
+  for (const layer of layers) map.removeLayer(layer);
+  layers = [];
+}}
+
+function renderTable(points) {{
+  const body = document.getElementById("routeRows");
+  body.replaceChildren();
+  if (!points.length) {{
+    const row = document.createElement("tr");
+    const cell = document.createElement("td");
+    cell.colSpan = 7;
+    cell.textContent = "No mapped route points are available for this selection.";
+    row.appendChild(cell);
+    body.appendChild(row);
+    return;
+  }}
+  for (const point of points) {{
+    const row = document.createElement("tr");
+    const values = [
+      point.target || "",
+      point.sequence || "",
+      point.timestamp || "",
+      point.cgi || "",
+      point.site_name || point.address || point.district || "",
+      point.contact || "",
+      point.call_type || "",
+    ];
+    for (const value of values) {{
+      const cell = document.createElement("td");
+      cell.textContent = value;
+      row.appendChild(cell);
+    }}
+    body.appendChild(row);
+  }}
+}}
+
+function render() {{
+  const points = selectedPoints();
+  renderTable(points);
+  const visibleTargets = [...new Set(points.map((point) => String(point.target || "")))];
+  document.getElementById("summary").textContent = `Targets: ${{visibleTargets.length}} | Mapped points: ${{points.length}}`;
+  if (!map) return;
+  clearLayers();
+  const bounds = [];
+  for (const [targetIndex, target] of visibleTargets.sort().entries()) {{
+    const routePoints = points.filter((point) => String(point.target || "") === target);
+    const color = palette[targetIndex % palette.length];
+    const coordinates = routePoints.map((point) => [point.latitude, point.longitude]);
+    if (coordinates.length > 1) {{
+      const line = L.polyline(coordinates, {{color, weight: 4, opacity: 0.82}}).addTo(map);
+      line.bindTooltip(`Target ${{esc(target)}} | ${{coordinates.length}} route points`);
+      layers.push(line);
+    }}
+    routePoints.forEach((point) => {{
+      const marker = L.circleMarker([point.latitude, point.longitude], {{radius: 7, color, fillColor: color, fillOpacity: 0.82, weight: 2}}).addTo(map);
+      marker.bindPopup(`<b>Target:</b> ${{esc(target)}}<br><b>Step:</b> ${{esc(point.sequence)}}<br>${{esc(point.timestamp)}}<br><b>CGI:</b> ${{esc(point.cgi)}}<br>${{esc(point.site_name || point.address || "")}}`);
+      layers.push(marker);
+      bounds.push([point.latitude, point.longitude]);
+    }});
+  }}
+  if (bounds.length === 1) map.setView(bounds[0], 14);
+  else if (bounds.length > 1) map.fitBounds(bounds, {{padding: [25, 25], maxZoom: 15}});
+}}
+
+if (window.L) {{
+  map = L.map("map");
+  L.tileLayer("https://{{s}}.tile.openstreetmap.org/{{z}}/{{x}}/{{y}}.png", {{maxZoom: 19, attribution: "&copy; OpenStreetMap contributors"}}).addTo(map);
+}} else {{
+  mapElement.innerHTML = '<div class="empty">Interactive basemap resources could not be loaded. The route evidence table remains available below.</div>';
+}}
+
+filter.addEventListener("change", render);
+document.getElementById("reset").addEventListener("click", () => {{ filter.value = ""; render(); }});
+render();
+</script>
+</body>
+</html>
+"""
+
+
+def generate_multi_cdr_movement_route(
+    movement: pd.DataFrame,
+    *,
+    report_path: str | Path,
+) -> Path | None:
+    """Generate one combined sidecar with separate per-target routes."""
+
+    points = build_multi_movement_route_points(
+        movement
+    )
+
+    if not points:
+        return None
+
+    output = movement_route_path(
+        report_path
+    )
+    output.parent.mkdir(
+        parents=True,
+        exist_ok=True,
+    )
+    output.write_text(
+        render_multi_movement_route_html(
+            points
+        ),
+        encoding="utf-8",
+    )
+    return output

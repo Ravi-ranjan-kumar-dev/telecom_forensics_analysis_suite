@@ -218,6 +218,15 @@ CDR_TABLE_SPECS = {
             "Other Party",
         ),
     },
+    "bottom_contacts": {
+        "sdr": (
+            "Contact",
+            "contact",
+            "b_party",
+            "other_party",
+            "Other Party",
+        ),
+    },
     "contact_ranking": {
         "sdr": (
             "Contact",
@@ -253,6 +262,14 @@ CDR_TABLE_SPECS = {
         ),
     },
     "frequent_locations": {
+        "cgi": (
+            "first_cell_id",
+            "cell_id",
+            "cgi",
+            "Cell ID",
+        ),
+    },
+    "bottom_cgi": {
         "cgi": (
             "first_cell_id",
             "cell_id",
@@ -309,8 +326,62 @@ CDR_TABLE_SPECS = {
 }
 
 
+MULTI_CDR_TABLE_SPECS = {
+    "target_overview": {
+        "sdr": (
+            "Target",
+        ),
+    },
+    "common_numbers": {
+        "sdr": (
+            "Common Number",
+        ),
+    },
+    "direct_target_links": {
+        "sdr": (
+            "Source Target",
+            "Destination Target",
+        ),
+    },
+    "contact_matrix": {
+        "sdr": (
+            "Common Number",
+        ),
+    },
+    "common_towers": {
+        "cgi": (
+            "Common Tower ID",
+        ),
+    },
+    "tower_matrix": {
+        "cgi": (
+            "Common Tower ID",
+        ),
+    },
+    "common_contact_map": {
+        "sdr": (
+            "Other Party",
+        ),
+        "cgi": (
+            "Most Used Target CGI",
+            "Last Interaction CGI",
+        ),
+    },
+    "movement_route_events": {
+        "cgi": (
+            "first_cell_id",
+        ),
+    },
+}
+
+
 TOWER_CDR_TABLE_SPECS = {
     "subscriber_summary": {
+        "sdr": (
+            "subscriber_number",
+        ),
+    },
+    "repeat_visitors": {
         "sdr": (
             "subscriber_number",
         ),
@@ -385,6 +456,72 @@ TOWER_CDR_TABLE_SPECS = {
             "searched_cell_id",
             "cell_id",
             "cgi",
+        ),
+    },
+    "n_of_m_spot_presence": {
+        "sdr": (
+            "subscriber_number",
+        ),
+        "cgi": (
+            "primary_searched_cell_id",
+        ),
+    },
+    "all_spot_common_numbers": {
+        "sdr": (
+            "subscriber_number",
+        ),
+        "cgi": (
+            "primary_searched_cell_id",
+        ),
+    },
+    "spot_exclusive_numbers": {
+        "sdr": (
+            "subscriber_number",
+        ),
+        "cgi": (
+            "primary_searched_cell_id",
+        ),
+    },
+    "cross_spot_device_continuity": {
+        "sdr": (
+            "subscriber_number",
+        ),
+        "cgi": (
+            "primary_searched_cell_id",
+        ),
+    },
+    "shared_imei_across_spots": {
+        "sdr": (
+            "subscriber_number",
+        ),
+        "cgi": (
+            "primary_searched_cell_id",
+        ),
+    },
+    "shared_imsi_across_spots": {
+        "sdr": (
+            "subscriber_number",
+        ),
+        "cgi": (
+            "primary_searched_cell_id",
+        ),
+    },
+    "shared_imei": {
+        "sdr": (
+            "subscriber_number",
+        ),
+    },
+    "shared_imsi": {
+        "sdr": (
+            "subscriber_number",
+        ),
+    },
+    "normalized_sample": {
+        "sdr": (
+            "subscriber_number",
+        ),
+        "cgi": (
+            "searched_cell_id",
         ),
     },
 }
@@ -630,6 +767,7 @@ def _cgi_prefix(
         "cgi": "cgi_",
         "cell_id": "cell_",
         "searched_cell_id": "searched_cell_",
+        "primary_searched_cell_id": "primary_cell_",
         "first_cell_id": "first_cell_",
         "last_cell_id": "last_cell_",
     }

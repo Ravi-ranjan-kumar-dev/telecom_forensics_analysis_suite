@@ -170,6 +170,42 @@ def test_multi_spot_device_and_identifier_continuity():
         shared_imei["imei"]
     )
 
+    presence = result[
+        "subscriber_spot_presence"
+    ].set_index(
+        "subscriber_number"
+    )
+
+    assert (
+        presence.loc[
+            "9000000001",
+            "searched_cell_ids",
+        ]
+        == "CELL-A, CELL-B"
+    )
+    assert (
+        presence.loc[
+            "9000000001",
+            "primary_searched_cell_id",
+        ]
+        == "CELL-A"
+    )
+
+    shared_row = shared_imei.loc[
+        shared_imei[
+            "imei"
+        ].eq(
+            "IMEI-SHARED"
+        )
+    ].iloc[0]
+
+    assert (
+        shared_row[
+            "primary_searched_cell_id"
+        ]
+        == "CELL-A"
+    )
+
 
 def test_cross_spot_sequence_is_time_ordered():
     result = build_multi_spot_analysis(

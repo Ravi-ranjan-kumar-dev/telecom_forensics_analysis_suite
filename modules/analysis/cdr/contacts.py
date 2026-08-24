@@ -1,5 +1,7 @@
 import pandas as pd
 
+from modules.loader.identity import normalize_msisdn
+
 from .call_type_classifier import unknown_call_type_summary
 from .contact_classifier import (
     add_contact_category,
@@ -23,18 +25,57 @@ def _safe_call_type_series(dataframe: pd.DataFrame) -> pd.Series:
     return dataframe["call_type"].astype("string").fillna("").str.lower().str.strip()
 
 
+def _valid_mobile_counts(dataframe: pd.DataFrame) -> pd.DataFrame:
+    """Return normalized Indian mobile counts without changing source rows."""
+
+    if (
+        dataframe is None
+        or dataframe.empty
+        or "b_party" not in dataframe.columns
+    ):
+        return pd.DataFrame(columns=["Contact", "Total Calls"])
+
+    normalized = dataframe["b_party"].map(normalize_msisdn).dropna()
+
+    if normalized.empty:
+        return pd.DataFrame(columns=["Contact", "Total Calls"])
+
+    return (
+        normalized.value_counts()
+        .rename_axis("Contact")
+        .reset_index(name="Total Calls")
+    )
+
+
 def top_contacts(df, limit=20):
-    """Top human/mobile contacts only. Service sender IDs and short codes are excluded."""
-    if df is None or df.empty or "b_party" not in df.columns:
-        return pd.DataFrame(columns=["Contact", "Total Calls"])
+    """Return the most frequent normalized Indian mobile contacts."""
 
-    contacts = only_human_contacts(df)
-    if contacts.empty:
-        return pd.DataFrame(columns=["Contact", "Total Calls"])
+    counts = _valid_mobile_counts(df)
 
-    result = contacts["b_party"].value_counts().head(limit).reset_index()
-    result.columns = ["Contact", "Total Calls"]
-    return result
+    return (
+        counts.sort_values(
+            ["Total Calls", "Contact"],
+            ascending=[False, True],
+            kind="stable",
+        )
+        .head(max(1, int(limit)))
+        .reset_index(drop=True)
+    )
+
+
+def bottom_contacts(df, limit=10):
+    """Return the least frequent normalized Indian mobile contacts."""
+
+    return (
+        _valid_mobile_counts(df)
+        .sort_values(
+            ["Total Calls", "Contact"],
+            ascending=[True, True],
+            kind="stable",
+        )
+        .head(max(1, int(limit)))
+        .reset_index(drop=True)
+    )
 
 
 def top_service_sender_ids(df, limit=20):
@@ -103,7 +144,12 @@ def contact_summary(df, target_number):
     if df is None or df.empty or "b_party" not in df.columns:
         return {}
 
-    target_df = df[df["b_party"] == target_number]
+    target_key = normalize_msisdn(target_number)
+    target_df = (
+        df.loc[df["b_party"].map(normalize_msisdn).eq(target_key)]
+        if target_key
+        else df.loc[df["b_party"].astype(str).eq(str(target_number))]
+    )
     if target_df.empty:
         return {"Status": "No interactions recorded"}
 

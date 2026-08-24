@@ -105,6 +105,122 @@ def _normalise_imsi(value: Any) -> str | None:
     return digits
 
 
+def _normalise_number_series(series: pd.Series) -> pd.Series:
+    """Vectorized equivalent of _normalise_number for large CDR frames."""
+
+    digits = (
+        series.astype(
+            "string"
+        )
+        .fillna(
+            ""
+        )
+        .str.replace(
+            r"\D",
+            "",
+            regex=True,
+        )
+    )
+    valid = digits.str.len().ge(
+        10
+    )
+    return digits.str[-10:].where(
+        valid,
+        pd.NA,
+    )
+
+
+def _normalise_identifier_series(series: pd.Series) -> pd.Series:
+    """Vectorized equivalent of _normalise_identifier."""
+
+    text = (
+        series.astype(
+            "string"
+        )
+        .fillna(
+            ""
+        )
+        .str.strip()
+        .str.strip(
+            "'\""
+        )
+        .str.replace(
+            r"\.0$",
+            "",
+            regex=True,
+        )
+        .str.upper()
+    )
+    invalid = text.str.lower().isin(
+        {
+            "",
+            "nan",
+            "none",
+            "null",
+            "<na>",
+        }
+    )
+    return text.where(
+        ~invalid,
+        pd.NA,
+    )
+
+
+def _normalise_imei_series(series: pd.Series) -> pd.Series:
+    """Vectorized equivalent of _normalise_imei."""
+
+    digits = (
+        series.astype(
+            "string"
+        )
+        .fillna(
+            ""
+        )
+        .str.replace(
+            r"\D",
+            "",
+            regex=True,
+        )
+    )
+    lengths = digits.str.len()
+    normalized = digits.where(
+        lengths.lt(
+            15
+        ),
+        digits.str[:15],
+    )
+    return normalized.where(
+        lengths.ge(
+            14
+        ),
+        pd.NA,
+    )
+
+
+def _normalise_imsi_series(series: pd.Series) -> pd.Series:
+    """Vectorized equivalent of _normalise_imsi."""
+
+    digits = (
+        series.astype(
+            "string"
+        )
+        .fillna(
+            ""
+        )
+        .str.replace(
+            r"\D",
+            "",
+            regex=True,
+        )
+    )
+    return digits.where(
+        digits.str.len().ge(
+            10
+        ),
+        pd.NA,
+    )
+
+
 def _first_existing(data: pd.DataFrame, names: list[str], default: Any = pd.NA) -> pd.Series:
     for name in names:
         if name in data.columns:
@@ -113,23 +229,36 @@ def _first_existing(data: pd.DataFrame, names: list[str], default: Any = pd.NA) 
 
 
 def _prepare_target_frame(df: pd.DataFrame, target: str) -> pd.DataFrame:
-    """Create a stable canonical frame used only by cross-target analysis."""
-    data = df.copy()
+    """Create a compact canonical frame used only by cross-target analysis."""
 
-    # Cross-target analysis की internal working copy में
-    # rejected_rows जैसी DataFrame metadata नहीं चाहिए.
-    data.attrs = {}
+    # Keep only the derived fields consumed below.  Copying every raw source
+    # column for every target multiplied memory and concat cost without adding
+    # any cross-target evidence.
+    source = df
 
-    data = data.reset_index(drop=True)
+    if not (
+        isinstance(
+            source.index,
+            pd.RangeIndex,
+        )
+        and source.index.start == 0
+        and source.index.step == 1
+    ):
+        source = source.reset_index(
+            drop=True
+        )
+    data = pd.DataFrame(
+        index=source.index
+    )
     data["_row_id"] = range(len(data))
     data["_target"] = str(target).strip()
     data["_target_key"] = _normalise_number(target) or str(target).strip()
 
-    if "datetime" in data.columns:
-        parsed_datetime = pd.to_datetime(data["datetime"], errors="coerce", dayfirst=True)
+    if "datetime" in source.columns:
+        parsed_datetime = pd.to_datetime(source["datetime"], errors="coerce", dayfirst=True)
     else:
-        call_date = _first_existing(data, ["call_date"], "").astype("string").fillna("")
-        call_time = _first_existing(data, ["call_time"], "").astype("string").fillna("")
+        call_date = _first_existing(source, ["call_date"], "").astype("string").fillna("")
+        call_time = _first_existing(source, ["call_time"], "").astype("string").fillna("")
         parsed_datetime = pd.to_datetime(
             call_date.str.strip() + " " + call_time.str.strip(),
             errors="coerce",
@@ -137,23 +266,33 @@ def _prepare_target_frame(df: pd.DataFrame, target: str) -> pd.DataFrame:
         )
     data["_datetime"] = parsed_datetime
 
-    other_party = _first_existing(data, ["opposite_party", "b_party"])
-    data["_other_number"] = other_party.map(_normalise_number)
+    other_party = _first_existing(source, ["opposite_party", "b_party"])
+    data["_other_number"] = _normalise_number_series(
+        other_party
+    )
 
-    call_type = _first_existing(data, ["call_type"], "unknown").astype("string").fillna("unknown")
+    call_type = _first_existing(source, ["call_type"], "unknown").astype("string").fillna("unknown")
     data["_call_type"] = call_type.str.lower().str.strip()
 
-    direction = _first_existing(data, ["call_direction"], "").astype("string").fillna("")
+    direction = _first_existing(source, ["call_direction"], "").astype("string").fillna("")
     data["_direction"] = direction.str.upper().str.strip()
 
     data["_duration"] = pd.to_numeric(
-        _first_existing(data, ["call_duration"], 0), errors="coerce"
+        _first_existing(source, ["call_duration"], 0), errors="coerce"
     ).fillna(0).clip(lower=0)
 
-    data["_imei"] = _first_existing(data, ["imei"]).map(_normalise_imei)
-    data["_imsi"] = _first_existing(data, ["imsi"]).map(_normalise_imsi)
-    data["_first_tower"] = _first_existing(data, ["first_cell_id", "cell_id"]).map(_normalise_identifier)
-    data["_last_tower"] = _first_existing(data, ["last_cell_id"]).map(_normalise_identifier)
+    data["_imei"] = _normalise_imei_series(
+        _first_existing(source, ["imei"])
+    )
+    data["_imsi"] = _normalise_imsi_series(
+        _first_existing(source, ["imsi"])
+    )
+    data["_first_tower"] = _normalise_identifier_series(
+        _first_existing(source, ["first_cell_id", "cell_id"])
+    )
+    data["_last_tower"] = _normalise_identifier_series(
+        _first_existing(source, ["last_cell_id"])
+    )
 
     is_sms = data["_call_type"].str.contains("sms", na=False)
     data["_is_sms"] = is_sms
@@ -171,8 +310,72 @@ def _prepare_target_frame(df: pd.DataFrame, target: str) -> pd.DataFrame:
     return data
 
 
-def _linked_targets(series: pd.Series) -> str:
-    return ", ".join(sorted({str(value) for value in series.dropna() if str(value).strip()}))
+def _common_item_keys(
+    events: pd.DataFrame,
+    item_column: str,
+    min_targets: int,
+) -> set[str]:
+    """Return item keys present for the configured number of targets."""
+
+    if events.empty:
+        return set()
+
+    target_counts = events.groupby(
+        item_column,
+        sort=False,
+        dropna=False,
+    )[
+        "_target"
+    ].nunique()
+
+    return set(
+        target_counts.loc[
+            target_counts.ge(
+                min_targets
+            )
+        ].index.tolist()
+    )
+
+
+def _linked_target_labels(
+    events: pd.DataFrame,
+    item_column: str,
+) -> pd.Series:
+    """Build sorted linked-target labels after common items are filtered."""
+
+    if events.empty:
+        return pd.Series(
+            dtype="string"
+        )
+
+    pairs = (
+        events.loc[
+            :,
+            [
+                item_column,
+                "_target",
+            ],
+        ]
+        .dropna()
+        .drop_duplicates()
+        .sort_values(
+            [
+                item_column,
+                "_target",
+            ],
+            kind="stable",
+        )
+    )
+
+    return pairs.groupby(
+        item_column,
+        sort=False,
+        dropna=False,
+    )[
+        "_target"
+    ].agg(
+        ", ".join
+    )
 
 
 def _matrix(
@@ -223,10 +426,25 @@ def _build_contact_outputs(
             _matrix(contacts, "_other_number", "Common Number", set(), targets),
         )
 
-    grouped = contacts.groupby("_other_number", dropna=False)
-    common = grouped.agg(
+    common_items = _common_item_keys(
+        contacts,
+        "_other_number",
+        min_targets,
+    )
+    common_events = contacts.loc[
+        contacts[
+            "_other_number"
+        ].isin(
+            common_items
+        )
+    ].copy()
+
+    common = common_events.groupby(
+        "_other_number",
+        sort=False,
+        dropna=False,
+    ).agg(
         **{
-            "Linked Targets": ("_target", _linked_targets),
             "Target Count": ("_target", "nunique"),
             "Total Events": ("_row_id", "count"),
             "Outgoing Events": ("_is_outgoing", "sum"),
@@ -236,9 +454,20 @@ def _build_contact_outputs(
             "First Seen": ("_datetime", "min"),
             "Last Seen": ("_datetime", "max"),
         }
-    ).reset_index().rename(columns={"_other_number": "Common Number"})
-
-    common = common[common["Target Count"] >= min_targets].copy()
+    ).reset_index()
+    common[
+        "Linked Targets"
+    ] = common[
+        "_other_number"
+    ].map(
+        _linked_target_labels(
+            common_events,
+            "_other_number",
+        )
+    ).fillna(
+        ""
+    )
+    common = common.rename(columns={"_other_number": "Common Number"})
     common["Matches Investigated Target"] = common["Common Number"].map(target_key_to_label).fillna("")
     common = common[RESULT_COLUMNS["common_numbers"]]
     common = common.sort_values(
@@ -272,7 +501,6 @@ def _build_contact_outputs(
         direct_result = direct_result[RESULT_COLUMNS["direct_target_links"]]
         direct_result = direct_result.sort_values("Total Events", ascending=False).reset_index(drop=True)
 
-    common_items = set(common["Common Number"].astype(str)) if not common.empty else set()
     matrix = _matrix(contacts, "_other_number", "Common Number", common_items, targets)
     return common, direct_result, matrix
 
@@ -307,9 +535,25 @@ def _build_tower_outputs(
     if towers.empty:
         return _empty_result("common_towers"), _matrix(towers, "_tower", "Common Tower ID", set(), targets)
 
-    result = towers.groupby("_tower", dropna=False).agg(
+    common_items = _common_item_keys(
+        towers,
+        "_tower",
+        min_targets,
+    )
+    common_events = towers.loc[
+        towers[
+            "_tower"
+        ].isin(
+            common_items
+        )
+    ].copy()
+
+    result = common_events.groupby(
+        "_tower",
+        sort=False,
+        dropna=False,
+    ).agg(
         **{
-            "Linked Targets": ("_target", _linked_targets),
             "Target Count": ("_target", "nunique"),
             "Total Events": ("_row_id", "count"),
             "Unique Contacts": ("_other_number", "nunique"),
@@ -317,13 +561,23 @@ def _build_tower_outputs(
             "First Seen": ("_datetime", "min"),
             "Last Seen": ("_datetime", "max"),
         }
-    ).reset_index().rename(columns={"_tower": "Common Tower ID"})
-
-    result = result[result["Target Count"] >= min_targets]
+    ).reset_index()
+    result[
+        "Linked Targets"
+    ] = result[
+        "_tower"
+    ].map(
+        _linked_target_labels(
+            common_events,
+            "_tower",
+        )
+    ).fillna(
+        ""
+    )
+    result = result.rename(columns={"_tower": "Common Tower ID"})
     result = result[RESULT_COLUMNS["common_towers"]]
     result = result.sort_values(["Target Count", "Total Events"], ascending=False).reset_index(drop=True)
 
-    common_items = set(result["Common Tower ID"].astype(str)) if not result.empty else set()
     matrix = _matrix(towers, "_tower", "Common Tower ID", common_items, targets)
     return result, matrix
 
@@ -340,10 +594,26 @@ def _build_identifier_outputs(
     if work.empty:
         return _empty_result(result_name), _matrix(work, identifier_column, item_header, set(), targets)
 
+    common_items = _common_item_keys(
+        work,
+        identifier_column,
+        min_targets,
+    )
+    common_events = work.loc[
+        work[
+            identifier_column
+        ].isin(
+            common_items
+        )
+    ].copy()
+
     if identifier_column == "_imei":
-        result = work.groupby(identifier_column, dropna=False).agg(
+        result = common_events.groupby(
+            identifier_column,
+            sort=False,
+            dropna=False,
+        ).agg(
             **{
-                "Linked Targets": ("_target", _linked_targets),
                 "Target Count": ("_target", "nunique"),
                 "Total Events": ("_row_id", "count"),
                 "Unique Contacts": ("_other_number", "nunique"),
@@ -353,9 +623,12 @@ def _build_identifier_outputs(
             }
         ).reset_index().rename(columns={identifier_column: item_header})
     else:
-        result = work.groupby(identifier_column, dropna=False).agg(
+        result = common_events.groupby(
+            identifier_column,
+            sort=False,
+            dropna=False,
+        ).agg(
             **{
-                "Linked Targets": ("_target", _linked_targets),
                 "Target Count": ("_target", "nunique"),
                 "Total Events": ("_row_id", "count"),
                 "Unique Contacts": ("_other_number", "nunique"),
@@ -365,11 +638,21 @@ def _build_identifier_outputs(
             }
         ).reset_index().rename(columns={identifier_column: item_header})
 
-    result = result[result["Target Count"] >= min_targets]
+    result[
+        "Linked Targets"
+    ] = result[
+        item_header
+    ].map(
+        _linked_target_labels(
+            common_events,
+            identifier_column,
+        )
+    ).fillna(
+        ""
+    )
     result = result[RESULT_COLUMNS[result_name]]
     result = result.sort_values(["Target Count", "Total Events"], ascending=False).reset_index(drop=True)
 
-    common_items = set(result[item_header].astype(str)) if not result.empty else set()
     matrix = _matrix(work, identifier_column, item_header, common_items, targets)
     return result, matrix
 
@@ -459,6 +742,194 @@ def _alerts(
         })
 
     return pd.DataFrame(rows, columns=RESULT_COLUMNS["alerts"])
+
+
+def _build_common_contact_map_rows(
+    all_events: pd.DataFrame,
+    common_numbers: pd.DataFrame,
+) -> pd.DataFrame:
+    """Build one compact target/contact table for the common contact map."""
+
+    columns = [
+        "Target",
+        "Other Party",
+        "Total Events",
+        "Most Used Target CGI",
+        "Most Used CGI Events",
+        "Last Interaction CGI",
+        "Last Call Time",
+    ]
+
+    if (
+        all_events.empty
+        or not isinstance(common_numbers, pd.DataFrame)
+        or common_numbers.empty
+        or "Common Number" not in common_numbers.columns
+    ):
+        return pd.DataFrame(columns=columns)
+
+    common_keys = set(
+        common_numbers["Common Number"]
+        .dropna()
+        .astype(str)
+    )
+    contacts = all_events[
+        all_events["_other_number"].isin(common_keys)
+    ].copy()
+
+    if contacts.empty:
+        return pd.DataFrame(columns=columns)
+
+    total_events = (
+        contacts.groupby(
+            ["_target", "_other_number"],
+            dropna=False,
+        )
+        .size()
+        .reset_index(name="Total Events")
+    )
+
+    tower_rows = contacts[
+        contacts["_first_tower"].notna()
+    ].copy()
+
+    if tower_rows.empty:
+        most_used = pd.DataFrame(
+            columns=[
+                "_target",
+                "_other_number",
+                "Most Used Target CGI",
+                "Most Used CGI Events",
+            ]
+        )
+    else:
+        most_used = (
+            tower_rows.groupby(
+                ["_target", "_other_number", "_first_tower"],
+                dropna=False,
+            )
+            .size()
+            .reset_index(name="Most Used CGI Events")
+            .sort_values(
+                [
+                    "_target",
+                    "_other_number",
+                    "Most Used CGI Events",
+                    "_first_tower",
+                ],
+                ascending=[True, True, False, True],
+                kind="stable",
+            )
+            .drop_duplicates(
+                ["_target", "_other_number"],
+                keep="first",
+            )
+            .rename(
+                columns={
+                    "_first_tower": "Most Used Target CGI",
+                }
+            )
+        )
+
+    last_rows = (
+        contacts.sort_values(
+            ["_target", "_other_number", "_datetime", "_row_id"],
+            kind="stable",
+            na_position="first",
+        )
+        .drop_duplicates(
+            ["_target", "_other_number"],
+            keep="last",
+        )
+        [["_target", "_other_number", "_first_tower", "_datetime"]]
+        .rename(
+            columns={
+                "_first_tower": "Last Interaction CGI",
+                "_datetime": "Last Call Time",
+            }
+        )
+    )
+
+    result = total_events.merge(
+        most_used,
+        on=["_target", "_other_number"],
+        how="left",
+        sort=False,
+    ).merge(
+        last_rows,
+        on=["_target", "_other_number"],
+        how="left",
+        sort=False,
+    )
+
+    return (
+        result.rename(
+            columns={
+                "_target": "Target",
+                "_other_number": "Other Party",
+            }
+        )
+        .loc[:, columns]
+        .sort_values(
+            ["Total Events", "Target", "Other Party"],
+            ascending=[False, True, True],
+            kind="stable",
+        )
+        .reset_index(drop=True)
+    )
+
+
+def _build_multi_target_movement_rows(
+    all_events: pd.DataFrame,
+) -> pd.DataFrame:
+    """Build chronological per-target tower changes for a combined route map."""
+
+    columns = [
+        "Target",
+        "call_date",
+        "call_time",
+        "first_cell_id",
+        "b_party",
+        "call_type",
+    ]
+    movement = all_events[
+        all_events["_first_tower"].notna()
+        & all_events["_datetime"].notna()
+    ].copy()
+
+    if movement.empty:
+        return pd.DataFrame(columns=columns)
+
+    movement = movement.sort_values(
+        ["_target", "_datetime", "_row_id"],
+        kind="stable",
+    )
+    previous = movement.groupby(
+        "_target",
+        sort=False,
+    )["_first_tower"].shift()
+    movement = movement[
+        previous.isna()
+        | movement[
+            "_first_tower"
+        ].ne(
+            previous
+        ).fillna(
+            False
+        )
+    ].copy()
+
+    return pd.DataFrame(
+        {
+            "Target": movement["_target"].astype(str),
+            "call_date": movement["_datetime"].dt.strftime("%d-%m-%Y"),
+            "call_time": movement["_datetime"].dt.strftime("%H:%M:%S"),
+            "first_cell_id": movement["_first_tower"].astype(str),
+            "b_party": movement["_other_number"].fillna("").astype(str),
+            "call_type": movement["_call_type"].fillna("").astype(str),
+        },
+        columns=columns,
+    ).reset_index(drop=True)
 
 
 def build_cross_target_analysis(
@@ -574,6 +1045,29 @@ def build_cross_target_analysis(
         target_overview = _empty_result("target_overview")
         source_files = _empty_result("source_files")
 
+    try:
+        common_contact_map = _build_common_contact_map_rows(
+            all_events,
+            common_numbers,
+        )
+    except Exception as error:
+        errors.append({
+            "Target / Section": "common contact map",
+            "Error": f"{type(error).__name__}: {error}",
+        })
+        common_contact_map = pd.DataFrame()
+
+    try:
+        movement_route_events = _build_multi_target_movement_rows(
+            all_events
+        )
+    except Exception as error:
+        errors.append({
+            "Target / Section": "movement route",
+            "Error": f"{type(error).__name__}: {error}",
+        })
+        movement_route_events = pd.DataFrame()
+
     summary = pd.DataFrame([
         {"Metric": "Targets Analyzed", "Value": len(prepared)},
         {"Metric": "Total Records", "Value": len(all_events)},
@@ -598,6 +1092,8 @@ def build_cross_target_analysis(
         "imei_matrix": imei_matrix,
         "imsi_matrix": imsi_matrix,
         "source_files": source_files,
+        "common_contact_map": common_contact_map,
+        "movement_route_events": movement_route_events,
         "alerts": _alerts(common_numbers, direct_links, common_towers, common_imeis, common_imsis),
         "errors": pd.DataFrame(errors, columns=RESULT_COLUMNS["errors"]),
     })

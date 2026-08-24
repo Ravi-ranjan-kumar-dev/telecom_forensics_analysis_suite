@@ -33,6 +33,7 @@ class AnalysisSpec:
 ANALYSIS_REGISTRY: tuple[AnalysisSpec, ...] = (
     AnalysisSpec("Summary", "cdr_summary", "modules.analysis.cdr.summary", "cdr_summary"),
     AnalysisSpec("Contacts", "top_contacts", "modules.analysis.cdr.contacts", "top_contacts"),
+    AnalysisSpec("Contacts", "bottom_contacts", "modules.analysis.cdr.contacts", "bottom_contacts"),
     AnalysisSpec("Contacts", "contact_category_summary", "modules.analysis.cdr.contacts", "contact_category_summary"),
     AnalysisSpec("Contacts", "top_service_sender_ids", "modules.analysis.cdr.contacts", "top_service_sender_ids"),
     AnalysisSpec("Contacts", "top_short_codes", "modules.analysis.cdr.contacts", "top_short_codes"),
@@ -42,6 +43,7 @@ ANALYSIS_REGISTRY: tuple[AnalysisSpec, ...] = (
     AnalysisSpec("Network", "social_network", "modules.analysis.cdr.social_network", "social_network"),
     AnalysisSpec("Location", "analyze_location", "modules.analysis.cdr.location", "analyze_location"),
     AnalysisSpec("Location", "frequent_locations", "modules.analysis.cdr.location", "frequent_locations"),
+    AnalysisSpec("Location", "bottom_cgi", "modules.analysis.cdr.location", "bottom_cgi"),
     AnalysisSpec("Movement", "tower_movement", "modules.analysis.cdr.movement", "tower_movement"),
     AnalysisSpec("Movement", "tower_transition", "modules.analysis.cdr.movement", "tower_transition"),
     AnalysisSpec("Movement", "movement_pattern", "modules.analysis.cdr.movement", "movement_pattern"),
@@ -73,6 +75,7 @@ ANALYSIS_REGISTRY: tuple[AnalysisSpec, ...] = (
 
 
 CGI_ENRICHMENT_RESULT_KEYS = {
+    "bottom_cgi",
     "tower_movement",
     "tower_transition",
     "tower_intelligence",
@@ -191,6 +194,7 @@ def _run_top_contact_details(
 
 
 CGI_ENRICHMENT_RESULT_KEYS = {
+    "bottom_cgi",
     "tower_movement",
     "tower_transition",
     "tower_intelligence",
