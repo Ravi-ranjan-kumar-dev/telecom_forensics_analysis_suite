@@ -66,3 +66,30 @@ gprs_finalization_source_bundle.txt
 build/
 dist/
 *.egg-info/
+
+
+# Raw evidence directories – कभी भी commit न करें
+data/cdr/
+data/ipdr/
+data/gprs_dump/
+data/tower_dump/
+data/device/
+
+# SQLite database (अगर मौजूद हो)
+database/*.db
+database/*.sqlite
+database/*.sqlite3
+
+# Excel और अन्य जनरेटेड फ़ाइलें (कहीं भी हों)
+*.xlsx
+*.xls
+*.xlsb
+
+# Environment / secrets
+.env
+*.env
+
+# IDE / OS
+.idea/
+.vscode/
+.DS_Store
