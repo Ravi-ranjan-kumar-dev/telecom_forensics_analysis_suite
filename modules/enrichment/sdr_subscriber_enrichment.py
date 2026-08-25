@@ -1,6 +1,7 @@
-from __future__ import annotations
+"""SDR subscriber enrichment with caching."""
 
-from typing import Iterable
+from functools import lru_cache
+from typing import Iterable, List
 
 import pandas as pd
 from modules.loader.identity import normalize_msisdn
@@ -8,13 +9,16 @@ from modules.loader.identity import normalize_msisdn
 from modules.database.duckdb_core import query_dataframe
 
 
-def normalize_mobile_number(value) -> str:
-    """Normalize SDR lookup values using the canonical MSISDN rule."""
-
+@lru_cache(maxsize=1024)
+def _normalize_mobile_cached(value: str) -> str:
     return normalize_msisdn(value) or ""
 
 
-def _chunks(values: list[str], size: int = 1000):
+def normalize_mobile_number(value) -> str:
+    return _normalize_mobile_cached(str(value))
+
+
+def _chunks(values: List[str], size: int = 1000):
     for index in range(0, len(values), size):
         yield values[index:index + size]
 
@@ -48,22 +52,18 @@ def _table_exists(table_name: str) -> bool:
             """,
             [table_name],
         )
-
         return result is not None and not result.empty and int(result.iloc[0]["total"]) > 0
-
     except Exception:
         return False
 
 
-def _lookup_from_large_table(numbers: list[str]) -> pd.DataFrame:
+def _lookup_from_large_table(numbers: List[str]) -> pd.DataFrame:
     if not numbers or not _table_exists("sdr_subscribers_large"):
         return _empty_lookup_frame()
 
     frames = []
-
     for batch in _chunks(numbers):
         placeholders = ",".join(["?"] * len(batch))
-
         result = query_dataframe(
             f"""
             WITH ranked AS (
@@ -112,25 +112,20 @@ def _lookup_from_large_table(numbers: list[str]) -> pd.DataFrame:
             """,
             batch,
         )
-
         if result is not None and not result.empty:
             frames.append(result)
-
     if not frames:
         return _empty_lookup_frame()
-
     return pd.concat(frames, ignore_index=True)
 
 
-def _lookup_from_primary_table(numbers: list[str]) -> pd.DataFrame:
+def _lookup_from_primary_table(numbers: List[str]) -> pd.DataFrame:
     if not numbers:
         return _empty_lookup_frame()
 
     frames = []
-
     for batch in _chunks(numbers):
         placeholders = ",".join(["?"] * len(batch))
-
         result = query_dataframe(
             f"""
             SELECT
@@ -151,109 +146,42 @@ def _lookup_from_primary_table(numbers: list[str]) -> pd.DataFrame:
             """,
             batch,
         )
-
         if result is not None and not result.empty:
             frames.append(result)
-
     if not frames:
         return _empty_lookup_frame()
+    return pd.concat(frames, ignore_index=True)
+
+
+@lru_cache(maxsize=32)
+def lookup_sdr_subscribers_cached(numbers: tuple[str, ...]) -> pd.DataFrame:
+    """Cached lookup for repeated calls with same numbers."""
+    normalized_numbers = sorted({normalize_mobile_number(n) for n in numbers})
+    if not normalized_numbers:
+        return _empty_lookup_frame()
+
+    primary_result = _lookup_from_primary_table(normalized_numbers)
+    primary_numbers = set(primary_result["lookup_mobile"]) if not primary_result.empty else set()
+    missing_numbers = [n for n in normalized_numbers if n not in primary_numbers]
+    large_result = _lookup_from_large_table(missing_numbers)
+
+    frames = []
+    if not primary_result.empty:
+        frames.append(primary_result)
+    if not large_result.empty:
+        frames.append(large_result)
+
+    if not frames:
+        output = pd.DataFrame({"lookup_mobile": normalized_numbers})
+        output["sdr_found"] = "No"
+        return output
 
     return pd.concat(frames, ignore_index=True)
 
 
-def lookup_sdr_subscribers(
-    numbers: Iterable,
-) -> pd.DataFrame:
-    """
-    Lookup SDR profiles with new delta records taking priority.
-
-    The small primary table stores verified updates and corrections.
-    The historical large table is used only for numbers not found in
-    the primary table.
-    """
-
-    normalized_numbers = sorted(
-        {
-            normalize_mobile_number(
-                number
-            )
-            for number in numbers
-            if normalize_mobile_number(
-                number
-            )
-        }
-    )
-
-    if not normalized_numbers:
-        return _empty_lookup_frame()
-
-    primary_result = (
-        _lookup_from_primary_table(
-            normalized_numbers
-        )
-    )
-
-    primary_numbers: set[str] = set()
-
-    if (
-        primary_result is not None
-        and not primary_result.empty
-    ):
-        primary_numbers = set(
-            primary_result[
-                "lookup_mobile"
-            ].astype(
-                str
-            )
-        )
-
-    missing_numbers = [
-        number
-        for number in normalized_numbers
-        if number not in primary_numbers
-    ]
-
-    large_result = (
-        _lookup_from_large_table(
-            missing_numbers
-        )
-    )
-
-    frames = []
-
-    if (
-        primary_result is not None
-        and not primary_result.empty
-    ):
-        frames.append(
-            primary_result
-        )
-
-    if (
-        large_result is not None
-        and not large_result.empty
-    ):
-        frames.append(
-            large_result
-        )
-
-    if not frames:
-        output = pd.DataFrame(
-            {
-                "lookup_mobile": (
-                    normalized_numbers
-                )
-            }
-        )
-        output["sdr_found"] = "No"
-        return output
-
-    return pd.concat(
-        frames,
-        ignore_index=True,
-    )
-
-
+def lookup_sdr_subscribers(numbers: Iterable) -> pd.DataFrame:
+    """Public wrapper that converts iterable to tuple for caching."""
+    return lookup_sdr_subscribers_cached(tuple(numbers))
 
 
 def enrich_dataframe_with_sdr(
@@ -261,9 +189,9 @@ def enrich_dataframe_with_sdr(
     number_column: str = "b_party",
     prefix: str = "other_party_",
 ) -> pd.DataFrame:
+    """Enrich dataframe with SDR profile data."""
     if dataframe is None or not isinstance(dataframe, pd.DataFrame):
         return dataframe
-
     if dataframe.empty or number_column not in dataframe.columns:
         return dataframe
 
@@ -292,13 +220,6 @@ def enrich_dataframe_with_sdr(
             "sdr_found": f"{prefix}sdr_found",
         }
     )
-
-    output = output.merge(
-        renamed,
-        on=f"{prefix}lookup_mobile",
-        how="left",
-    )
-
+    output = output.merge(renamed, on=f"{prefix}lookup_mobile", how="left")
     output[f"{prefix}sdr_found"] = output[f"{prefix}sdr_found"].fillna("No")
-
     return output

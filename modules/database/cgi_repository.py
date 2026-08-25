@@ -1,4 +1,7 @@
-from typing import Optional
+"""CGI repository with caching and canonical normalization."""
+
+from functools import lru_cache
+from typing import Optional, Iterable
 
 import pandas as pd
 
@@ -6,7 +9,6 @@ from .duckdb_core import execute_sql, query_dataframe, table_count
 
 
 CGI_TABLE = "cgi_addresses"
-
 
 CGI_OPTIONAL_COLUMNS = {
     "site_name": "TEXT",
@@ -27,11 +29,7 @@ CGI_OPTIONAL_COLUMNS = {
 
 
 def _ensure_optional_cgi_columns() -> None:
-    """
-    Add newer CGI master-data columns without rebuilding the database.
-
-    This keeps old DuckDB data safe and only adds missing columns.
-    """
+    """Add newer CGI master-data columns without rebuilding the database."""
     try:
         info = query_dataframe(f"PRAGMA table_info('{CGI_TABLE}')")
         existing = set(info["name"].astype(str).tolist()) if not info.empty else set()
@@ -73,102 +71,95 @@ def cgi_count() -> int:
     return table_count(CGI_TABLE)
 
 
-def normalize_cgi(value) -> str:
+@lru_cache(maxsize=4096)
+def normalize_cgi_key(value: str) -> str:
+    """Canonical CGI key: uppercase, remove spaces, normalize hyphens."""
     if value is None or pd.isna(value):
         return ""
-    return str(value).strip().strip("'").strip('"')
+    text = str(value).strip().strip("'").strip('"').upper()
+    import re
+    text = re.sub(r"\s+", "", text)
+    text = re.sub(r"-+", "-", text)
+    return text
+
+
+def normalize_cgi(value) -> str:
+    """Backward-compatible normalizer using canonical key."""
+    return normalize_cgi_key(value)
 
 
 def lookup_cgi(cgi_value: str) -> Optional[dict]:
     create_cgi_table()
-    cgi = normalize_cgi(cgi_value)
-
+    cgi = normalize_cgi_key(cgi_value)
     if not cgi:
         return None
-
     result = query_dataframe(
-        f"""
-        SELECT *
-        FROM {CGI_TABLE}
-        WHERE cgi = ?
-        LIMIT 1
-        """,
+        f"SELECT * FROM {CGI_TABLE} WHERE cgi = ? LIMIT 1",
         [cgi],
     )
-
     if result.empty:
         return None
-
     return result.iloc[0].to_dict()
 
 
-def lookup_cgi_dataframe(values) -> pd.DataFrame:
+@lru_cache(maxsize=128)
+def lookup_cgi_dataframe_cached(values: tuple[str, ...]) -> pd.DataFrame:
     create_cgi_table()
-    cleaned = sorted({normalize_cgi(value) for value in values if normalize_cgi(value)})
-
+    cleaned = sorted({normalize_cgi_key(v) for v in values})
     if not cleaned:
         return pd.DataFrame()
+    frames = []
+    for i in range(0, len(cleaned), 5000):
+        batch = cleaned[i:i+5000]
+        placeholders = ",".join(["?"] * len(batch))
+        result = query_dataframe(
+            f"SELECT * FROM {CGI_TABLE} WHERE cgi IN ({placeholders})",
+            batch,
+        )
+        if result is not None and not result.empty:
+            frames.append(result)
+    return pd.concat(frames, ignore_index=True) if frames else pd.DataFrame()
 
-    placeholders = ", ".join(["?"] * len(cleaned))
-    return query_dataframe(
-        f"""
-        SELECT *
-        FROM {CGI_TABLE}
-        WHERE cgi IN ({placeholders})
-        """,
-        cleaned,
-    )
+
+def lookup_cgi_dataframe(values: Iterable) -> pd.DataFrame:
+    """Public wrapper for cached lookup."""
+    return lookup_cgi_dataframe_cached(tuple(values))
+
 
 def clear_lookup_cache() -> None:
-    """
-    Compatibility hook for older CGI importer code.
+    """Clear all CGI lookup caches."""
+    lookup_cgi_dataframe_cached.cache_clear()
+    normalize_cgi_key.cache_clear()
+    # Also clear SDR cache if imported
+    try:
+        from .sdr_repository import lookup_mobile_dataframe_cached
+        lookup_mobile_dataframe_cached.cache_clear()
+    except ImportError:
+        pass
 
-    Earlier CGI code calls this after import so cached lookup results
-    do not stay stale. Current DuckDB lookup functions do not keep an
-    in-memory cache yet, so this is intentionally a safe no-op.
-    """
-    return None
 
 # ---------------------------------------------------------------------
 # Backward-compatible CGI repository API
 # ---------------------------------------------------------------------
-# Older modules/database/cgi.py and cgi_importer.py expect these names.
-# These wrappers keep the old project API working while the backend uses
-# the new DuckDB master lookup database.
 
 def bulk_lookup_cgi(cgi_values):
-    """
-    Backward-compatible bulk CGI lookup.
-
-    Returns a dictionary:
-        {
-            "cgi_value": {row-data},
-            ...
-        }
-    """
+    """Backward-compatible bulk CGI lookup."""
     create_cgi_table()
-
     if not cgi_values:
         return {}
-
     result = lookup_cgi_dataframe(cgi_values)
     if result is None or result.empty:
         return {}
-
     output = {}
     for _, row in result.iterrows():
         row_dict = row.to_dict()
         cgi_key = normalize_cgi(row_dict.get("cgi", ""))
         if cgi_key:
             output[cgi_key] = row_dict
-
     return output
 
 
 def get_cgi_database_status():
-    """
-    Backward-compatible CGI database status helper.
-    """
     create_cgi_table()
     return {
         "table": CGI_TABLE,
@@ -179,38 +170,23 @@ def get_cgi_database_status():
 
 
 def get_cgi_repository_status():
-    """
-    Alias used by older code.
-    """
     return get_cgi_database_status()
 
 
 def initialize_cgi_repository():
-    """
-    Backward-compatible initializer.
-    """
     create_cgi_table()
     return get_cgi_database_status()
 
 
 def search_cgi(cgi_value):
-    """
-    Backward-compatible single CGI search.
-    """
     return lookup_cgi(cgi_value)
 
 
 def get_cgi_details(cgi_value):
-    """
-    Backward-compatible CGI detail lookup.
-    """
     return lookup_cgi(cgi_value)
 
 
 def database_status():
-    """
-    Public CGI database status expected by modules/database/cgi.py.
-    """
     create_cgi_table()
     return {
         "backend": "DuckDB",
@@ -221,17 +197,10 @@ def database_status():
 
 
 def get_tower_candidates(query_value=None, limit: int = 20):
-    """
-    Search possible tower/CGI address candidates.
-
-    This keeps the old public CGI API working while using the DuckDB
-    master database table.
-    """
+    """Search possible tower/CGI address candidates."""
     create_cgi_table()
-
     if limit is None:
         limit = 20
-
     try:
         limit = int(limit)
     except Exception:
@@ -239,28 +208,20 @@ def get_tower_candidates(query_value=None, limit: int = 20):
 
     if query_value is None or str(query_value).strip() == "":
         return query_dataframe(
-            f"""
-            SELECT *
-            FROM {CGI_TABLE}
-            ORDER BY imported_at DESC
-            LIMIT {limit}
-            """
+            f"SELECT * FROM {CGI_TABLE} ORDER BY imported_at DESC LIMIT {limit}"
         )
 
     query_text = f"%{str(query_value).strip()}%"
-
     return query_dataframe(
         f"""
-        SELECT *
-        FROM {CGI_TABLE}
-        WHERE
-            cgi ILIKE ?
-            OR operator ILIKE ?
-            OR circle ILIKE ?
-            OR state ILIKE ?
-            OR district ILIKE ?
-            OR police_station ILIKE ?
-            OR address ILIKE ?
+        SELECT * FROM {CGI_TABLE}
+        WHERE cgi ILIKE ?
+           OR operator ILIKE ?
+           OR circle ILIKE ?
+           OR state ILIKE ?
+           OR district ILIKE ?
+           OR police_station ILIKE ?
+           OR address ILIKE ?
         LIMIT {limit}
         """,
         [query_text, query_text, query_text, query_text, query_text, query_text, query_text],
@@ -268,21 +229,10 @@ def get_tower_candidates(query_value=None, limit: int = 20):
 
 
 def enrich_cdr_dataframe(dataframe, inplace: bool = False):
-    """
-    Enrich CDR dataframe with CGI/tower address fields.
-
-    It checks common CDR tower columns:
-    - first_cell_id
-    - last_cell_id
-    - searched_cell_id
-
-    Raw evidence columns are not changed. New lookup columns are added.
-    """
+    """Enrich CDR dataframe with CGI/tower address fields."""
     create_cgi_table()
-
     if dataframe is None:
         return dataframe
-
     data = dataframe if inplace else dataframe.copy()
 
     lookup_columns = [
@@ -290,7 +240,6 @@ def enrich_cdr_dataframe(dataframe, inplace: bool = False):
         for column in ["first_cell_id", "last_cell_id", "searched_cell_id"]
         if column in data.columns
     ]
-
     if not lookup_columns:
         return data
 
@@ -317,6 +266,4 @@ def enrich_cdr_dataframe(dataframe, inplace: bool = False):
         data[f"{prefix}_tower_longitude"] = data[column].map(
             lambda value: (lookup_rows.get(normalize_cgi(value)) or {}).get("longitude", None)
         )
-
     return data
-

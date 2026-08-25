@@ -1,61 +1,30 @@
-from __future__ import annotations
+"""CGI address enrichment with caching and dynamic prefixes."""
 
+from functools import lru_cache
 from typing import Iterable, Optional
 
-import duckdb
 import pandas as pd
 
-from modules.database.cgi_repository import normalize_cgi
-from modules.database.duckdb_core import query_dataframe
+from modules.database.cgi_repository import normalize_cgi, lookup_cgi_dataframe_cached
 
 
 CELL_ID_CANDIDATES = [
-    "tower",
-    "Tower",
-    "Tower ID",
-    "Cell Tower",
-    "Cell ID / CGI",
-    "First Cell ID",
-    "Last Cell ID",
-    "From Tower",
-    "To Tower",
-    "Primary Tower",
-    "first_cell_id",
-    "last_cell_id",
-    "cell_id",
-    "cgi",
-    "cgi_id",
-    "first_cell_global_id",
-    "last_cell_global_id",
-    "first_cell_global_identity",
-    "last_cell_global_identity",
-    "Cell ID",
-    "CGI",
-    "First Cell Global Id",
-    "Last Cell Global Id",
+    "tower", "Tower", "Tower ID", "Cell Tower", "Cell ID / CGI",
+    "First Cell ID", "Last Cell ID", "From Tower", "To Tower",
+    "Primary Tower", "first_cell_id", "last_cell_id", "cell_id",
+    "cgi", "cgi_id", "first_cell_global_id", "last_cell_global_id",
+    "first_cell_global_identity", "last_cell_global_identity",
+    "Cell ID", "CGI", "First Cell Global Id", "Last Cell Global Id",
 ]
 
-
 CGI_LOOKUP_COLUMNS = [
-    "cgi",
-    "operator",
-    "circle",
-    "state",
-    "district",
-    "police_station",
-    "town",
-    "site_name",
-    "address",
-    "latitude",
-    "longitude",
-    "source_file",
+    "cgi", "operator", "circle", "state", "district", "police_station",
+    "town", "site_name", "address", "latitude", "longitude", "source_file",
 ]
 
 
 def detect_cell_id_column(dataframe: pd.DataFrame) -> Optional[str]:
-    """
-    Detect the most likely Cell ID / CGI column in a dataframe.
-    """
+    """Detect the most likely Cell ID / CGI column in a dataframe."""
     if dataframe is None or dataframe.empty:
         return None
 
@@ -78,110 +47,38 @@ def detect_cell_id_column(dataframe: pd.DataFrame) -> Optional[str]:
     return None
 
 
-def _chunks(values: list[str], size: int = 5000):
-    for index in range(0, len(values), size):
-        yield values[index:index + size]
+@lru_cache(maxsize=32)
+def _lookup_cgi_addresses_cached(cgi_tuple: tuple[str, ...]) -> pd.DataFrame:
+    if not cgi_tuple:
+        return pd.DataFrame(columns=CGI_LOOKUP_COLUMNS)
+    return lookup_cgi_dataframe_cached(cgi_tuple)
 
 
 def lookup_cgi_addresses(cgi_values: Iterable) -> pd.DataFrame:
-    """
-    Bulk lookup CGI values from DuckDB cgi_addresses table.
-
-    Returns one row per found CGI key.
-    """
-    normalized_values = []
-
-    for value in cgi_values:
-        normalized = normalize_cgi(value)
-        if normalized:
-            normalized_values.append(str(normalized).strip())
-
-    unique_values = sorted(set(normalized_values))
-
-    if not unique_values:
+    """Bulk lookup with caching."""
+    normalized = sorted({normalize_cgi(v) for v in cgi_values if normalize_cgi(v)})
+    if not normalized:
         return pd.DataFrame(columns=CGI_LOOKUP_COLUMNS)
-
-    frames = []
-
-    for batch in _chunks(unique_values):
-        placeholders = ", ".join(["?"] * len(batch))
-
-        sql = f"""
-            SELECT
-                cgi,
-                operator,
-                circle,
-                state,
-                district,
-                police_station,
-                town,
-                site_name,
-                address,
-                latitude,
-                longitude,
-                source_file
-            FROM cgi_addresses
-            WHERE cgi IN ({placeholders})
-        """
-
-        try:
-            found = query_dataframe(
-                sql,
-                batch,
-            )
-
-        except duckdb.CatalogException as error:
-            message = str(
-                error
-            ).casefold()
-
-            if (
-                "cgi_addresses"
-                in message
-                and "does not exist"
-                in message
-            ):
-                return pd.DataFrame(
-                    columns=(
-                        CGI_LOOKUP_COLUMNS
-                    )
-                )
-
-            raise
-
-        if found is not None and not found.empty:
-            frames.append(found)
-
-    if not frames:
-        return pd.DataFrame(columns=CGI_LOOKUP_COLUMNS)
-
-    result = pd.concat(frames, ignore_index=True)
-    result = result.drop_duplicates(subset=["cgi"], keep="last")
-
-    return result
+    return _lookup_cgi_addresses_cached(tuple(normalized))
 
 
 def enrich_dataframe_with_cgi_address(
     dataframe: pd.DataFrame,
     cell_id_column: Optional[str] = None,
-    prefix: str = "tower_",
+    prefix: Optional[str] = None,
 ) -> pd.DataFrame:
     """
-    Add CGI tower address columns to any dataframe.
-
-    This is intentionally simple:
-    - Found address = Yes
-    - Not found = No
-    - No confidence system added
+    Add CGI tower address columns.
+    If prefix is None, it is inferred from the column name.
     """
     if dataframe is None or dataframe.empty:
         return dataframe
 
     output = dataframe.copy()
-
     selected_column = cell_id_column or detect_cell_id_column(output)
 
     if selected_column is None:
+        prefix = prefix or "tower_"
         output[f"{prefix}address_found"] = "No"
         output[f"{prefix}lookup_key"] = ""
         output[f"{prefix}operator"] = ""
@@ -194,20 +91,18 @@ def enrich_dataframe_with_cgi_address(
         output[f"{prefix}source_file"] = ""
         return output
 
-    output[f"{prefix}lookup_key"] = output[selected_column].map(normalize_cgi)
+    if prefix is None:
+        prefix = _cgi_prefix_from_column(selected_column)
 
+    output[f"{prefix}lookup_key"] = output[selected_column].map(normalize_cgi)
     lookup = lookup_cgi_addresses(output[f"{prefix}lookup_key"].dropna().unique())
 
     if lookup.empty:
         output[f"{prefix}address_found"] = "No"
-        output[f"{prefix}operator"] = ""
-        output[f"{prefix}circle"] = ""
-        output[f"{prefix}town"] = ""
-        output[f"{prefix}site_name"] = ""
-        output[f"{prefix}address"] = ""
+        for col in [f"{prefix}operator", f"{prefix}circle", f"{prefix}town", f"{prefix}site_name", f"{prefix}address", f"{prefix}source_file"]:
+            output[col] = ""
         output[f"{prefix}latitude"] = pd.NA
         output[f"{prefix}longitude"] = pd.NA
-        output[f"{prefix}source_file"] = ""
         return output
 
     lookup = lookup.rename(
@@ -225,72 +120,64 @@ def enrich_dataframe_with_cgi_address(
     )
 
     keep_columns = [
-        f"{prefix}lookup_key",
-        f"{prefix}operator",
-        f"{prefix}circle",
-        f"{prefix}town",
-        f"{prefix}site_name",
-        f"{prefix}address",
-        f"{prefix}latitude",
-        f"{prefix}longitude",
-        f"{prefix}source_file",
+        f"{prefix}lookup_key", f"{prefix}operator", f"{prefix}circle",
+        f"{prefix}town", f"{prefix}site_name", f"{prefix}address",
+        f"{prefix}latitude", f"{prefix}longitude", f"{prefix}source_file",
     ]
 
-    output = output.merge(
-        lookup[keep_columns],
-        on=f"{prefix}lookup_key",
-        how="left",
-    )
-
+    output = output.merge(lookup[keep_columns], on=f"{prefix}lookup_key", how="left")
     output[f"{prefix}address_found"] = output[f"{prefix}address"].fillna("").astype(str).str.strip()
-    output[f"{prefix}address_found"] = output[f"{prefix}address_found"].map(
-        lambda value: "Yes" if value else "No"
-    )
+    output[f"{prefix}address_found"] = output[f"{prefix}address_found"].map(lambda v: "Yes" if v else "No")
 
-    for column in [
-        f"{prefix}operator",
-        f"{prefix}circle",
-        f"{prefix}town",
-        f"{prefix}site_name",
-        f"{prefix}address",
-        f"{prefix}source_file",
-    ]:
-        output[column] = output[column].fillna("")
+    for col in [f"{prefix}operator", f"{prefix}circle", f"{prefix}town", f"{prefix}site_name", f"{prefix}address", f"{prefix}source_file"]:
+        output[col] = output[col].fillna("")
 
     return output
+
+
+def _cgi_prefix_from_column(column: str) -> str:
+    """Infer prefix from column name."""
+    col_lower = str(column).lower()
+    mapping = {
+        "cgi": "cgi_",
+        "cell_id": "cell_",
+        "searched_cell_id": "searched_cell_",
+        "first_cell_id": "first_cell_",
+        "last_cell_id": "last_cell_",
+        "primary_cell_id": "primary_cell_",
+    }
+    if col_lower in mapping:
+        return mapping[col_lower]
+    return col_lower.replace(" ", "_").replace("-", "_") + "_"
 
 
 def build_missing_cgi_lookup_summary(
     dataframe: pd.DataFrame,
     cell_id_column: Optional[str] = None,
+    source_table: str = "",
 ) -> pd.DataFrame:
-    """
-    Build simple missing CGI lookup summary.
-    """
+    """Build missing CGI summary, optionally with source_table."""
     if dataframe is None or dataframe.empty:
-        return pd.DataFrame(columns=["cell_id", "records"])
+        return pd.DataFrame(columns=["cell_id", "records", "source_table"])
 
     enriched = enrich_dataframe_with_cgi_address(dataframe, cell_id_column)
 
     if "tower_address_found" not in enriched.columns:
-        return pd.DataFrame(columns=["cell_id", "records"])
+        return pd.DataFrame(columns=["cell_id", "records", "source_table"])
 
     missing = enriched[enriched["tower_address_found"].eq("No")].copy()
-
     if missing.empty:
-        return pd.DataFrame(columns=["cell_id", "records"])
+        return pd.DataFrame(columns=["cell_id", "records", "source_table"])
 
     cell_column = cell_id_column or detect_cell_id_column(missing)
-
     if cell_column is None:
-        return pd.DataFrame(columns=["cell_id", "records"])
+        return pd.DataFrame(columns=["cell_id", "records", "source_table"])
 
     summary = (
         missing.groupby(cell_column, dropna=False)
         .size()
         .reset_index(name="records")
         .rename(columns={cell_column: "cell_id"})
-        .sort_values("records", ascending=False)
     )
-
-    return summary
+    summary["source_table"] = source_table
+    return summary.sort_values("records", ascending=False)

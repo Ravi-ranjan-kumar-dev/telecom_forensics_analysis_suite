@@ -1,4 +1,3 @@
-
 """Shared batch SDR and CGI enrichment for telecom analysis tables."""
 
 from __future__ import annotations
@@ -728,6 +727,22 @@ def _valid_cgi_key(
     )
 
 
+_SDR_PREFIX_MAP = {
+    "subscriber_number": "sdr_",
+    "mobile_number": "sdr_",
+    "msisdn": "sdr_",
+}
+
+_CGI_PREFIX_MAP = {
+    "cgi": "cgi_",
+    "cell_id": "cell_",
+    "searched_cell_id": "searched_cell_",
+    "primary_searched_cell_id": "primary_cell_",
+    "first_cell_id": "first_cell_",
+    "last_cell_id": "last_cell_",
+}
+
+
 def _sdr_prefix(
     column: str,
 ) -> str:
@@ -735,12 +750,8 @@ def _sdr_prefix(
         column
     ).strip().lower()
 
-    if normalized in {
-        "subscriber_number",
-        "mobile_number",
-        "msisdn",
-    }:
-        return "sdr_"
+    if normalized in _SDR_PREFIX_MAP:
+        return _SDR_PREFIX_MAP[normalized]
 
     return (
         normalized
@@ -763,29 +774,20 @@ def _cgi_prefix(
         column
     ).strip().lower()
 
-    mapping = {
-        "cgi": "cgi_",
-        "cell_id": "cell_",
-        "searched_cell_id": "searched_cell_",
-        "primary_searched_cell_id": "primary_cell_",
-        "first_cell_id": "first_cell_",
-        "last_cell_id": "last_cell_",
-    }
+    if normalized in _CGI_PREFIX_MAP:
+        return _CGI_PREFIX_MAP[normalized]
 
-    return mapping.get(
-        normalized,
-        (
-            normalized
-            .replace(
-                " ",
-                "_",
-            )
-            .replace(
-                "-",
-                "_",
-            )
-            + "_cgi_"
-        ),
+    return (
+        normalized
+        .replace(
+            " ",
+            "_",
+        )
+        .replace(
+            "-",
+            "_",
+        )
+        + "_cgi_"
     )
 
 
@@ -1733,6 +1735,7 @@ def enrich_analysis_bundle(
         "warnings": warnings,
     }
 
+
 def build_missing_cgi_summary_from_bundle(
     bundle: Mapping[str, Any],
     *,
@@ -1866,3 +1869,30 @@ def build_missing_cgi_summary_from_bundle(
             drop=True
         )
     )
+
+
+def clear_master_lookup_cache() -> None:
+    """Clear all lookup caches used by enrichment."""
+    try:
+        from modules.database.sdr_repository import lookup_mobile_dataframe_cached, _normalize_mobile_cached
+        lookup_mobile_dataframe_cached.cache_clear()
+        _normalize_mobile_cached.cache_clear()
+    except ImportError:
+        pass
+    try:
+        from modules.database.cgi_repository import lookup_cgi_dataframe_cached, normalize_cgi_key
+        lookup_cgi_dataframe_cached.cache_clear()
+        normalize_cgi_key.cache_clear()
+    except ImportError:
+        pass
+    try:
+        from modules.enrichment.sdr_subscriber_enrichment import lookup_sdr_subscribers_cached, _normalize_mobile_cached
+        lookup_sdr_subscribers_cached.cache_clear()
+        _normalize_mobile_cached.cache_clear()
+    except ImportError:
+        pass
+    try:
+        from modules.enrichment.cgi_address_enrichment import _lookup_cgi_addresses_cached
+        _lookup_cgi_addresses_cached.cache_clear()
+    except ImportError:
+        pass

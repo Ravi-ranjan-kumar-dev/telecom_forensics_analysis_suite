@@ -1,4 +1,7 @@
-from typing import Optional
+"""SDR repository with caching and normalization."""
+
+from functools import lru_cache
+from typing import Optional, Iterable
 
 import pandas as pd
 from modules.loader.identity import normalize_msisdn
@@ -35,48 +38,44 @@ def sdr_count() -> int:
     return table_count(SDR_TABLE)
 
 
-def normalize_mobile(value) -> str:
-    """Backward-compatible strict Indian MSISDN normalizer."""
-
+@lru_cache(maxsize=1024)
+def _normalize_mobile_cached(value: str) -> str:
+    """Cached normalization, avoiding repeated computation."""
     return normalize_msisdn(value) or ""
+
+
+def normalize_mobile(value) -> str:
+    """Backward-compatible strict Indian MSISDN normalizer using cache."""
+    return _normalize_mobile_cached(str(value))
 
 
 def lookup_mobile(number: str) -> Optional[dict]:
     create_sdr_table()
     mobile = normalize_mobile(number)
-
     if not mobile:
         return None
-
     result = query_dataframe(
-        f"""
-        SELECT *
-        FROM {SDR_TABLE}
-        WHERE mobile_number = ?
-        LIMIT 1
-        """,
+        f"SELECT * FROM {SDR_TABLE} WHERE mobile_number = ? LIMIT 1",
         [mobile],
     )
-
     if result.empty:
         return None
-
     return result.iloc[0].to_dict()
 
 
-def lookup_mobile_dataframe(values) -> pd.DataFrame:
+@lru_cache(maxsize=128)
+def lookup_mobile_dataframe_cached(values: tuple[str, ...]) -> pd.DataFrame:
     create_sdr_table()
-    cleaned = sorted({normalize_mobile(value) for value in values if normalize_mobile(value)})
-
+    cleaned = sorted({normalize_mobile(value) for value in values})
     if not cleaned:
         return pd.DataFrame()
-
-    placeholders = ", ".join(["?"] * len(cleaned))
+    placeholders = ",".join(["?"] * len(cleaned))
     return query_dataframe(
-        f"""
-        SELECT *
-        FROM {SDR_TABLE}
-        WHERE mobile_number IN ({placeholders})
-        """,
+        f"SELECT * FROM {SDR_TABLE} WHERE mobile_number IN ({placeholders})",
         cleaned,
     )
+
+
+def lookup_mobile_dataframe(values: Iterable) -> pd.DataFrame:
+    """Public wrapper for cached lookup."""
+    return lookup_mobile_dataframe_cached(tuple(values))
