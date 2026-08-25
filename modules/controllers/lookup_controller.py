@@ -9,8 +9,8 @@ from modules.database.lookup_service import (
     INVALID_INPUT,
     MATCHED,
     NOT_FOUND,
-    lookup_cgi_profile,
-    lookup_sdr_profile,
+    lookup_sdr_profiles,   # 🆕 batch function
+    lookup_cgi_profiles,   # 🆕 batch function
 )
 
 
@@ -99,58 +99,12 @@ def _log_lookup_event(
         return
 
 
-def run_sdr_lookup(
-    case: dict[str, Any] | None,
-    number: object,
-) -> dict[str, Any]:
-    """Run one structured SDR lookup and record minimal audit metadata."""
-
-    result = lookup_sdr_profile(number)
-
-    _log_lookup_event(
-        case,
-        lookup_type="SDR",
-        query=str(number or ""),
-        status=str(result.get("status", "")),
-    )
-
-    return result
-
-
-def run_cgi_lookup(
-    case: dict[str, Any] | None,
-    cgi_value: object,
-) -> dict[str, Any]:
-    """Run one structured CGI lookup and record minimal audit metadata."""
-
-    result = lookup_cgi_profile(cgi_value)
-
-    _log_lookup_event(
-        case,
-        lookup_type="CGI",
-        query=str(cgi_value or ""),
-        status=str(result.get("status", "")),
-    )
-
-    return result
-
-
-def _run_sdr_lookup(
-    case: dict[str, Any] | None,
+def _print_sdr_result(
+    result: dict[str, Any],
+    *,
+    index: int = 1,
 ) -> None:
-    print("\n" + "=" * 86)
-    print("SDR NUMBER LOOKUP")
-    print("=" * 86)
-
-    number = input(
-        "Mobile Number: "
-    ).strip()
-
-    result = run_sdr_lookup(
-        case,
-        number
-    )
-
+    """Print one SDR lookup result in structured format."""
     status = str(
         result.get(
             "status",
@@ -160,13 +114,13 @@ def _run_sdr_lookup(
 
     if status == INVALID_INPUT:
         print(
-            f"[-] {result.get('message')}"
+            f"\n[{index}] {result.get('message')}"
         )
         return
 
     if status == DATABASE_ERROR:
         print(
-            "[-] SDR database lookup failed."
+            f"\n[{index}] SDR database lookup failed."
         )
         print(
             f"    Error Type : "
@@ -180,7 +134,7 @@ def _run_sdr_lookup(
 
     if status == NOT_FOUND:
         print(
-            f"[-] {result.get('message')}"
+            f"\n[{index}] {result.get('message')}"
         )
         print(
             "    Normalized Number: "
@@ -190,7 +144,7 @@ def _run_sdr_lookup(
 
     if status != MATCHED:
         print(
-            "[-] Unknown SDR lookup status."
+            f"\n[{index}] Unknown SDR lookup status."
         )
         return
 
@@ -202,7 +156,7 @@ def _run_sdr_lookup(
     )
 
     print("\n" + "-" * 86)
-    print("SDR PROFILE FOUND")
+    print(f"SDR PROFILE FOUND (Result {index})")
     print("-" * 86)
 
     _print_fields(
@@ -271,22 +225,12 @@ def _run_sdr_lookup(
     )
 
 
-def _run_cgi_lookup(
-    case: dict[str, Any] | None,
+def _print_cgi_result(
+    result: dict[str, Any],
+    *,
+    index: int = 1,
 ) -> None:
-    print("\n" + "=" * 86)
-    print("CGI / CELL ADDRESS LOOKUP")
-    print("=" * 86)
-
-    value = input(
-        "CGI / Cell ID: "
-    ).strip()
-
-    result = run_cgi_lookup(
-        case,
-        value
-    )
-
+    """Print one CGI lookup result in structured format."""
     status = str(
         result.get(
             "status",
@@ -296,13 +240,13 @@ def _run_cgi_lookup(
 
     if status == INVALID_INPUT:
         print(
-            f"[-] {result.get('message')}"
+            f"\n[{index}] {result.get('message')}"
         )
         return
 
     if status == DATABASE_ERROR:
         print(
-            "[-] CGI database lookup failed."
+            f"\n[{index}] CGI database lookup failed."
         )
         print(
             f"    Error Type : "
@@ -316,7 +260,7 @@ def _run_cgi_lookup(
 
     if status == NOT_FOUND:
         print(
-            f"[-] {result.get('message')}"
+            f"\n[{index}] {result.get('message')}"
         )
         print(
             "    Normalized CGI: "
@@ -326,7 +270,7 @@ def _run_cgi_lookup(
 
     if status != MATCHED:
         print(
-            "[-] Unknown CGI lookup status."
+            f"\n[{index}] Unknown CGI lookup status."
         )
         return
 
@@ -338,7 +282,7 @@ def _run_cgi_lookup(
     )
 
     print("\n" + "-" * 86)
-    print("CGI / CELL RECORD FOUND")
+    print(f"CGI / CELL RECORD FOUND (Result {index})")
     print("-" * 86)
 
     _print_fields(
@@ -448,6 +392,58 @@ def _run_cgi_lookup(
         "[!] Tower address aur coordinates ko current "
         "field/operator information se verify karein."
     )
+
+
+def _run_sdr_lookup(
+    case: dict[str, Any] | None,
+) -> None:
+    print("\n" + "=" * 86)
+    print("SDR NUMBER LOOKUP")
+    print("=" * 86)
+    print("Ek se zyada numbers comma (,) ya space se alag karke enter karein.")
+    print("Example: 9999999999, 1234567890")
+
+    numbers_input = input(
+        "Mobile Number(s): "
+    ).strip()
+
+    if not numbers_input:
+        print("[-] No numbers entered.")
+        return
+
+    results = lookup_sdr_profiles(numbers_input)
+
+    for idx, result in enumerate(results, start=1):
+        _print_sdr_result(
+            result,
+            index=idx,
+        )
+
+
+def _run_cgi_lookup(
+    case: dict[str, Any] | None,
+) -> None:
+    print("\n" + "=" * 86)
+    print("CGI / CELL ADDRESS LOOKUP")
+    print("=" * 86)
+    print("Ek se zyada CGI comma (,) ya space se alag karke enter karein.")
+    print("Example: 405-52-3347-232803094, 405-55-1234-56789012")
+
+    cgi_input = input(
+        "CGI / Cell ID(s): "
+    ).strip()
+
+    if not cgi_input:
+        print("[-] No CGI entered.")
+        return
+
+    results = lookup_cgi_profiles(cgi_input)
+
+    for idx, result in enumerate(results, start=1):
+        _print_cgi_result(
+            result,
+            index=idx,
+        )
 
 
 def _run_master_data_import(
@@ -574,8 +570,8 @@ def run_lookup_services(
             print("\n" + "=" * 86)
             print("LOOKUP SERVICES")
             print("=" * 86)
-            print("1. SDR Number Lookup")
-            print("2. CGI / Cell Address Lookup")
+            print("1. SDR Number Lookup (Multiple allowed)")
+            print("2. CGI / Cell Address Lookup (Multiple allowed)")
             print("3. Master Data Import")
             print("0. Back")
 

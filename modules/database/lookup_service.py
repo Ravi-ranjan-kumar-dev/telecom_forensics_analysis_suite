@@ -2,11 +2,12 @@
 
 from functools import lru_cache
 import re
-from typing import Any
+from typing import Any, List, Union
 
 import pandas as pd
 
 from modules.enrichment.sdr_subscriber_enrichment import lookup_sdr_subscribers, normalize_mobile_number
+from modules.enrichment.cgi_address_enrichment import lookup_cgi_addresses
 from .cgi_repository import create_cgi_table, lookup_cgi, normalize_cgi, normalize_cgi_key
 from .sdr_repository import create_sdr_table, lookup_mobile
 
@@ -188,6 +189,79 @@ def lookup_cgi_profile(cgi_value: object) -> dict[str, Any]:
     result = _lookup_cgi_profile_cached(normalized_cgi)
     result["entered_cgi"] = entered_cgi
     return result
+
+
+# ------------------------------------------------------------------
+# 🆕 Batch Lookup Functions (कई नंबर / CGI एक साथ)
+# ------------------------------------------------------------------
+
+def lookup_sdr_profiles(numbers: Union[List[str], str]) -> List[dict]:
+    """
+    एक साथ कई मोबाइल नंबरों का SDR profile देखें।
+    
+    Input:
+        - list of numbers: ["9876543210", "9123456789"]
+        - ya comma/space separated string: "9876543210, 9123456789"
+    
+    Returns:
+        - list of profile dicts (हर एक का result)
+    """
+    if isinstance(numbers, str):
+        # comma, space, semicolon से split करें
+        numbers = [n.strip() for n in re.split(r"[,;\s]+", numbers) if n.strip()]
+    elif isinstance(numbers, (list, tuple)):
+        numbers = [str(n).strip() for n in numbers if str(n).strip()]
+    else:
+        numbers = [str(numbers)]
+
+    results = []
+    for num in numbers:
+        profile = lookup_sdr_profile(num)
+        results.append(profile)
+    return results
+
+
+def lookup_cgi_profiles(cgi_values: Union[List[str], str]) -> List[dict]:
+    """
+    एक साथ कई CGI/Cell ID का profile देखें।
+    
+    Input:
+        - list of CGI: ["405-52-3347-232803094", "405-55-1234-56789012"]
+        - ya comma/space separated string: "405-52-3347-232803094, 405-55-1234-56789012"
+    
+    Returns:
+        - list of profile dicts
+    """
+    if isinstance(cgi_values, str):
+        cgi_values = [c.strip() for c in re.split(r"[,;\s]+", cgi_values) if c.strip()]
+    elif isinstance(cgi_values, (list, tuple)):
+        cgi_values = [str(c).strip() for c in cgi_values if str(c).strip()]
+    else:
+        cgi_values = [str(cgi_values)]
+
+    results = []
+    for cgi in cgi_values:
+        profile = lookup_cgi_profile(cgi)
+        results.append(profile)
+    return results
+
+
+def lookup_sdr_numbers_dataframe(numbers: List[str]) -> pd.DataFrame:
+    """
+    बैच SDR lookup – सीधे DataFrame में result (ज्यादा efficient)।
+    
+    यह `lookup_sdr_subscribers()` को use करता है जो पहले से batch-optimized है।
+    """
+    return lookup_sdr_subscribers(numbers)
+
+
+def lookup_cgi_values_dataframe(cgi_values: List[str]) -> pd.DataFrame:
+    """
+    बैच CGI lookup – सीधे DataFrame में result।
+    
+    यह `lookup_cgi_addresses()` को use करता है।
+    """
+    return lookup_cgi_addresses(cgi_values)
 
 
 # ------------------------------------------------------------------
