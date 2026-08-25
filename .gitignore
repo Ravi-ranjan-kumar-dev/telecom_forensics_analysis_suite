@@ -97,3 +97,4 @@ database/*.sqlite3
 
 data/
 database/
+changes.diff
