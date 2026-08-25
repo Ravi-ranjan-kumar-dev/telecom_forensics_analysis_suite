@@ -123,7 +123,7 @@ class LookupPage(QFrame):
 
         self._sdr_input = QLineEdit()
         self._sdr_input.setObjectName("inputControl")
-        self._sdr_input.setPlaceholderText("Enter a 10-digit mobile number")
+        self._sdr_input.setPlaceholderText("Enter mobile numbers (comma separated) e.g. 9876543210, 9123456789")
         self._sdr_input.setClearButtonEnabled(True)
         self._sdr_button = QPushButton("Search SDR")
         self._sdr_button.setObjectName("primaryButton")
@@ -131,7 +131,7 @@ class LookupPage(QFrame):
 
         self._cgi_input = QLineEdit()
         self._cgi_input.setObjectName("inputControl")
-        self._cgi_input.setPlaceholderText("Enter CGI, ECGI or supported Cell ID")
+        self._cgi_input.setPlaceholderText("Enter CGI/Cell IDs (comma separated) e.g. 405-52-3347-232803094, 405-55-1234-56789012")
         self._cgi_input.setClearButtonEnabled(True)
         self._cgi_button = QPushButton("Search CGI / Cell")
         self._cgi_button.setObjectName("primaryButton")
@@ -140,9 +140,11 @@ class LookupPage(QFrame):
         self._import_edit = QLineEdit()
         self._import_edit.setObjectName("inputControl")
         self._import_edit.setReadOnly(True)
-        self._import_edit.setPlaceholderText("Select one SDR or CGI master-data file")
+        self._import_edit.setPlaceholderText("Select one SDR/CGI file or a folder containing multiple files")
         self._import_browse_button = QPushButton("Select File")
         self._import_browse_button.setObjectName("secondaryButton")
+        self._import_folder_button = QPushButton("Select Folder")
+        self._import_folder_button.setObjectName("secondaryButton")
         self._import_button = QPushButton("Import / Update Master Data")
         self._import_button.setObjectName("primaryButton")
         self._import_table = self._build_key_value_table()
@@ -176,18 +178,17 @@ class LookupPage(QFrame):
         self._cgi_button.clicked.connect(self._start_cgi_lookup)
         self._cgi_input.returnPressed.connect(self._start_cgi_lookup)
         self._import_browse_button.clicked.connect(self._browse_import_file)
+        self._import_folder_button.clicked.connect(self._browse_import_folder)
         self._import_button.clicked.connect(self._start_import)
 
     @property
     def is_running(self) -> bool:
         """Return True while a lookup or import worker is active."""
-
         return self._thread is not None
 
     @property
     def last_results(self) -> dict[str, dict[str, Any]]:
         """Return a copy of the latest result for every operation."""
-
         return {key: dict(value) for key, value in self._last_results.items()}
 
     def _build_layout(self) -> None:
@@ -226,8 +227,8 @@ class LookupPage(QFrame):
         layout.setSpacing(12)
 
         note = QLabel(
-            "Search an exact Indian mobile number. Multiple historical or "
-            "source matches remain visible as separate rows."
+            "Search one or multiple Indian mobile numbers. Multiple historical or "
+            "source matches remain visible as separate rows. Separate numbers with commas."
         )
         note.setObjectName("cardText")
         note.setWordWrap(True)
@@ -257,8 +258,8 @@ class LookupPage(QFrame):
         layout.setSpacing(12)
 
         note = QLabel(
-            "Search a CGI, ECGI or supported Cell ID to review the stored "
-            "tower address and network identifiers."
+            "Search one or multiple CGI/ECGI values. Separate with commas. "
+            "Stored tower address and network identifiers will be shown."
         )
         note.setObjectName("cardText")
         note.setWordWrap(True)
@@ -288,9 +289,9 @@ class LookupPage(QFrame):
         layout.setSpacing(12)
 
         note = QLabel(
-            "Select one SDR or CGI master file. The software detects its "
-            "type and columns, creates a database backup, imports safely, "
-            "handles duplicates and writes an import log."
+            "Select one SDR or CGI master file, or a folder containing multiple files. "
+            "The software detects file type, creates a backup, imports safely, "
+            "and handles duplicates automatically."
         )
         note.setObjectName("cardText")
         note.setWordWrap(True)
@@ -299,6 +300,7 @@ class LookupPage(QFrame):
         file_row.setSpacing(10)
         file_row.addWidget(self._import_edit, stretch=1)
         file_row.addWidget(self._import_browse_button)
+        file_row.addWidget(self._import_folder_button)
 
         action_row = QHBoxLayout()
         action_row.addWidget(self._import_button)
@@ -354,17 +356,11 @@ class LookupPage(QFrame):
 
     def set_import_file(self, value: str | Path) -> None:
         self._import_edit.setText(str(Path(value).expanduser().resolve(strict=False)))
+        self._import_edit.setProperty("isFolder", False)
 
-    def import_validation_error(self) -> str:
-        value = self._import_edit.text().strip()
-        if not value:
-            return "Select one SDR or CGI master-data file."
-        path = Path(value)
-        if not path.is_file():
-            return "The selected master-data file does not exist."
-        if path.suffix.casefold() not in SUPPORTED_MASTER_SUFFIXES:
-            return "The selected master-data file type is not supported."
-        return ""
+    def set_import_folder(self, value: str | Path) -> None:
+        self._import_edit.setText(str(Path(value).expanduser().resolve(strict=False)))
+        self._import_edit.setProperty("isFolder", True)
 
     def refresh(self) -> None:
         """Keep the current lookup results visible when revisiting the page."""
@@ -379,26 +375,45 @@ class LookupPage(QFrame):
         if selected:
             self.set_import_file(selected)
 
+    def _browse_import_folder(self) -> None:
+        selected = QFileDialog.getExistingDirectory(
+            self,
+            "Select Master Data Folder",
+            self._import_edit.text().strip(),
+        )
+        if selected:
+            self.set_import_folder(selected)
+
     def _start_sdr_lookup(self) -> None:
         value = self._sdr_input.text().strip()
         if not value:
-            self._show_validation("Enter a mobile number for SDR lookup.")
+            self._show_validation("Enter at least one mobile number for SDR lookup.")
             return
         self._start_worker("sdr", value)
 
     def _start_cgi_lookup(self) -> None:
         value = self._cgi_input.text().strip()
         if not value:
-            self._show_validation("Enter a CGI or Cell ID for lookup.")
+            self._show_validation("Enter at least one CGI or Cell ID for lookup.")
             return
         self._start_worker("cgi", value)
 
     def _start_import(self) -> None:
-        error = self.import_validation_error()
-        if error:
-            self._show_validation(error)
+        value = self._import_edit.text().strip()
+        if not value:
+            self._show_validation("Select a file or folder for import.")
             return
-        self._start_worker("import", self._import_edit.text().strip())
+
+        path = Path(value)
+        if path.is_dir():
+            self._start_worker("import_folder", value)
+        elif path.is_file():
+            if path.suffix.casefold() not in SUPPORTED_MASTER_SUFFIXES:
+                self._show_validation("The selected file type is not supported.")
+                return
+            self._start_worker("import", value)
+        else:
+            self._show_validation("Selected path does not exist.")
 
     def _show_validation(self, message: str) -> None:
         QMessageBox.warning(self, "Lookup Input Review", message)
@@ -413,6 +428,7 @@ class LookupPage(QFrame):
             "sdr": "SDR lookup",
             "cgi": "CGI / Cell lookup",
             "import": "master-data import",
+            "import_folder": "master-data folder import",
         }
         self._append_log(f"[+] Starting {labels[operation]}.")
         self._set_running_state(True)
@@ -439,6 +455,7 @@ class LookupPage(QFrame):
             self._cgi_input,
             self._cgi_button,
             self._import_browse_button,
+            self._import_folder_button,
             self._import_button,
         ):
             control.setEnabled(not running)
@@ -462,7 +479,7 @@ class LookupPage(QFrame):
             self._display_sdr_result(result)
         elif operation == "cgi":
             self._display_cgi_result(result)
-        elif operation == "import":
+        elif operation in {"import", "import_folder"}:
             self._display_import_result(result)
         else:
             self._operation_failed("Unknown lookup result type.")
@@ -473,43 +490,55 @@ class LookupPage(QFrame):
         if not isinstance(records, list):
             records = []
 
-        if status == MATCHED:
-            self._sdr_table.setRowCount(len(records))
-            for row, record in enumerate(records):
-                values = record if isinstance(record, dict) else {}
-                for column, (key, _) in enumerate(_SDR_COLUMNS):
-                    self._set_item(
-                        self._sdr_table,
-                        row,
-                        column,
-                        _display_value(values.get(key)),
-                    )
-            self._status_label.setText(
-                f"SDR profile matched | Records shown: {len(records)}"
-            )
-            self._append_log("[+] SDR lookup completed with a match.")
-            return
-
         self._sdr_table.setRowCount(0)
-        self._show_lookup_status("SDR", status, result)
+        valid_records = []
+        for record in records:
+            if not isinstance(record, dict):
+                continue
+            # Remove internal __status
+            rec = {k: v for k, v in record.items() if k != "__status"}
+            valid_records.append(rec)
+
+        for row, record in enumerate(valid_records):
+            for column, (key, _) in enumerate(_SDR_COLUMNS):
+                self._set_item(
+                    self._sdr_table,
+                    row,
+                    column,
+                    _display_value(record.get(key)),
+                )
+
+        if valid_records:
+            self._status_label.setText(
+                f"SDR lookup completed | Records shown: {len(valid_records)}"
+            )
+            self._append_log(f"[+] SDR lookup returned {len(valid_records)} result(s).")
+        else:
+            self._show_lookup_status("SDR", status, result)
 
     def _display_cgi_result(self, result: dict[str, Any]) -> None:
         status = str(result.get("status", ""))
-        record = result.get("record", {})
-        record = record if isinstance(record, dict) else {}
-
-        if status == MATCHED:
-            self._populate_key_value_table(
-                self._cgi_table,
-                record,
-                _CGI_FIELDS,
-            )
-            self._status_label.setText("CGI / Cell record matched.")
-            self._append_log("[+] CGI / Cell lookup completed with a match.")
-            return
+        records = result.get("records", [])
+        if not isinstance(records, list):
+            records = []
 
         self._cgi_table.setRowCount(0)
-        self._show_lookup_status("CGI / Cell", status, result)
+        valid_records = []
+        for record in records:
+            if not isinstance(record, dict):
+                continue
+            rec = {k: v for k, v in record.items() if k != "__status"}
+            valid_records.append(rec)
+
+        if valid_records:
+            # Show first record in detail table
+            self._populate_key_value_table(self._cgi_table, valid_records[0], _CGI_FIELDS)
+            self._status_label.setText(
+                f"CGI / Cell lookup completed | Total results: {len(valid_records)}"
+            )
+            self._append_log(f"[+] CGI lookup returned {len(valid_records)} result(s).")
+        else:
+            self._show_lookup_status("CGI / Cell", status, result)
 
     def _show_lookup_status(
         self,

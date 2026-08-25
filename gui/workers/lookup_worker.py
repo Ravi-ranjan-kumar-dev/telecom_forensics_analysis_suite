@@ -13,6 +13,7 @@ LOOKUP_OPERATIONS = {
     "sdr",
     "cgi",
     "import",
+    "import_folder",
 }
 
 
@@ -61,21 +62,93 @@ class LookupWorker(QObject):
                         create_backup=True,
                     )
 
-                else:
-                    from modules.controllers.app_controller import (
-                        get_direct_analysis_workspace,
-                    )
-                    from modules.controllers.lookup_controller import (
-                        run_cgi_lookup,
-                        run_sdr_lookup,
+                elif self.operation == "import_folder":
+                    from modules.database.master_import_service import (
+                        import_master_folder,
                     )
 
-                    case = get_direct_analysis_workspace()
+                    total_rows = import_master_folder(
+                        self.value,
+                        import_type="auto",
+                    )
+                    result = {
+                        "status": "SUCCESS",
+                        "message": f"Folder import completed. Total rows: {total_rows}",
+                        "inserted_rows": total_rows,
+                        "source_file": self.value,
+                    }
+
+                else:
+                    from modules.database.lookup_service import (
+                        lookup_sdr_profiles,
+                        lookup_cgi_profiles,
+                    )
 
                     if self.operation == "sdr":
-                        result = run_sdr_lookup(case, self.value)
-                    else:
-                        result = run_cgi_lookup(case, self.value)
+                        profiles = lookup_sdr_profiles(self.value)
+                        flat_records = []
+                        for profile in profiles:
+                            if profile.get("found"):
+                                rec = profile.get("record", {})
+                                rec["__status"] = "FOUND"
+                            else:
+                                rec = {
+                                    "mobile_number": profile.get("entered_number", ""),
+                                    "subscriber_name": "",
+                                    "father_name": "",
+                                    "clean_address": "",
+                                    "id_number": "",
+                                    "operator_or_source_category": "",
+                                    "circle": "",
+                                    "activation_date": "",
+                                    "source_file": "",
+                                    "__status": profile.get("status", "NOT_FOUND"),
+                                }
+                            flat_records.append(rec)
+                        result = {
+                            "status": "MATCHED" if any(r["__status"]=="FOUND" for r in flat_records) else "NOT_FOUND",
+                            "records": flat_records,
+                        }
+                    else:  # cgi
+                        profiles = lookup_cgi_profiles(self.value)
+                        flat_records = []
+                        for profile in profiles:
+                            if profile.get("found"):
+                                rec = profile.get("record", {})
+                                rec["__status"] = "FOUND"
+                            else:
+                                rec = {
+                                    "cgi": profile.get("entered_cgi", ""),
+                                    "operator": "",
+                                    "technology": "",
+                                    "circle": "",
+                                    "state": "",
+                                    "district": "",
+                                    "police_station": "",
+                                    "address": "",
+                                    "town": "",
+                                    "landmark": "",
+                                    "site_name": "",
+                                    "latitude": "",
+                                    "longitude": "",
+                                    "azimuth": "",
+                                    "status": "",
+                                    "status_change_date": "",
+                                    "mcc_mnc": "",
+                                    "lac": "",
+                                    "cid": "",
+                                    "tac_id": "",
+                                    "site_id": "",
+                                    "gnb_id": "",
+                                    "cell_id": "",
+                                    "source_file": "",
+                                    "__status": profile.get("status", "NOT_FOUND"),
+                                }
+                            flat_records.append(rec)
+                        result = {
+                            "status": "MATCHED" if any(r["__status"]=="FOUND" for r in flat_records) else "NOT_FOUND",
+                            "records": flat_records,
+                        }
 
             output_stream.flush()
 

@@ -1,3 +1,4 @@
+#main_window.py
 """Main desktop window for the application."""
 
 from __future__ import annotations
