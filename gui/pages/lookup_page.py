@@ -490,15 +490,18 @@ class LookupPage(QFrame):
         if not isinstance(records, list):
             records = []
 
-        self._sdr_table.setRowCount(0)
+        # सभी valid records निकालें (__status हटाकर)
         valid_records = []
         for record in records:
             if not isinstance(record, dict):
                 continue
-            # Remove internal __status
             rec = {k: v for k, v in record.items() if k != "__status"}
             valid_records.append(rec)
 
+        # row count = valid_records की संख्या
+        self._sdr_table.setRowCount(len(valid_records))
+
+        # अब table में data भरें
         for row, record in enumerate(valid_records):
             for column, (key, _) in enumerate(_SDR_COLUMNS):
                 self._set_item(
@@ -522,7 +525,7 @@ class LookupPage(QFrame):
         if not isinstance(records, list):
             records = []
 
-        self._cgi_table.setRowCount(0)
+        # सभी valid records निकालें
         valid_records = []
         for record in records:
             if not isinstance(record, dict):
@@ -530,8 +533,9 @@ class LookupPage(QFrame):
             rec = {k: v for k, v in record.items() if k != "__status"}
             valid_records.append(rec)
 
+        # CGI detail table में पहला record दिखाएँ (key-value)
+        self._cgi_table.setRowCount(0)
         if valid_records:
-            # Show first record in detail table
             self._populate_key_value_table(self._cgi_table, valid_records[0], _CGI_FIELDS)
             self._status_label.setText(
                 f"CGI / Cell lookup completed | Total results: {len(valid_records)}"
