@@ -36,6 +36,7 @@ from modules.database.master_import_service import (
     SUPPORTED_MASTER_SUFFIXES,
 )
 
+# SDR table columns (unchanged)
 _SDR_COLUMNS = (
     ("mobile_number", "Mobile Number"),
     ("subscriber_name", "Subscriber Name"),
@@ -48,7 +49,8 @@ _SDR_COLUMNS = (
     ("source_file", "Source File"),
 )
 
-_CGI_FIELDS = (
+# CGI table columns (now a table, not key-value)
+_CGI_COLUMNS = (
     ("cgi", "CGI / Cell ID"),
     ("operator", "Operator"),
     ("technology", "Technology"),
@@ -135,7 +137,7 @@ class LookupPage(QFrame):
         self._cgi_input.setClearButtonEnabled(True)
         self._cgi_button = QPushButton("Search CGI / Cell")
         self._cgi_button.setObjectName("primaryButton")
-        self._cgi_table = self._build_key_value_table()
+        self._cgi_table = self._build_cgi_table()   # <-- CGI table build
 
         self._import_edit = QLineEdit()
         self._import_edit.setObjectName("inputControl")
@@ -147,7 +149,7 @@ class LookupPage(QFrame):
         self._import_folder_button.setObjectName("secondaryButton")
         self._import_button = QPushButton("Import / Update Master Data")
         self._import_button.setObjectName("primaryButton")
-        self._import_table = self._build_key_value_table()
+        self._import_table = self._build_import_table()
 
         self._tabs = QTabWidget()
         self._tabs.setObjectName("lookupTabs")
@@ -259,7 +261,7 @@ class LookupPage(QFrame):
 
         note = QLabel(
             "Search one or multiple CGI/ECGI values. Separate with commas. "
-            "Stored tower address and network identifiers will be shown."
+            "Results will appear in the table below."
         )
         note.setObjectName("cardText")
         note.setWordWrap(True)
@@ -339,7 +341,39 @@ class LookupPage(QFrame):
         table.setColumnWidth(8, 150)
         return table
 
-    def _build_key_value_table(self) -> QTableWidget:
+    def _build_cgi_table(self) -> QTableWidget:
+        table = QTableWidget(0, len(_CGI_COLUMNS))
+        self._configure_table(table)
+        table.setHorizontalHeaderLabels([label for _, label in _CGI_COLUMNS])
+        header = table.horizontalHeader()
+        header.setSectionResizeMode(QHeaderView.ResizeMode.Interactive)
+        table.setHorizontalScrollMode(QAbstractItemView.ScrollMode.ScrollPerPixel)
+        table.setColumnWidth(0, 140)
+        table.setColumnWidth(1, 100)
+        table.setColumnWidth(2, 100)
+        table.setColumnWidth(3, 100)
+        table.setColumnWidth(4, 100)
+        table.setColumnWidth(5, 100)
+        table.setColumnWidth(6, 130)
+        table.setColumnWidth(7, 260)
+        table.setColumnWidth(8, 120)
+        table.setColumnWidth(9, 120)
+        table.setColumnWidth(10, 120)
+        table.setColumnWidth(11, 100)
+        table.setColumnWidth(12, 100)
+        table.setColumnWidth(13, 90)
+        table.setColumnWidth(14, 100)
+        table.setColumnWidth(15, 130)
+        table.setColumnWidth(16, 100)
+        table.setColumnWidth(17, 90)
+        table.setColumnWidth(18, 130)
+        table.setColumnWidth(19, 100)
+        table.setColumnWidth(20, 90)
+        table.setColumnWidth(21, 120)
+        table.setColumnWidth(22, 160)
+        return table
+
+    def _build_import_table(self) -> QTableWidget:
         table = QTableWidget(0, 2)
         self._configure_table(table)
         table.setHorizontalHeaderLabels(["Field", "Value"])
@@ -490,7 +524,6 @@ class LookupPage(QFrame):
         if not isinstance(records, list):
             records = []
 
-        # सभी valid records निकालें (__status हटाकर)
         valid_records = []
         for record in records:
             if not isinstance(record, dict):
@@ -498,10 +531,7 @@ class LookupPage(QFrame):
             rec = {k: v for k, v in record.items() if k != "__status"}
             valid_records.append(rec)
 
-        # row count = valid_records की संख्या
         self._sdr_table.setRowCount(len(valid_records))
-
-        # अब table में data भरें
         for row, record in enumerate(valid_records):
             for column, (key, _) in enumerate(_SDR_COLUMNS):
                 self._set_item(
@@ -525,7 +555,6 @@ class LookupPage(QFrame):
         if not isinstance(records, list):
             records = []
 
-        # सभी valid records निकालें
         valid_records = []
         for record in records:
             if not isinstance(record, dict):
@@ -533,12 +562,19 @@ class LookupPage(QFrame):
             rec = {k: v for k, v in record.items() if k != "__status"}
             valid_records.append(rec)
 
-        # CGI detail table में पहला record दिखाएँ (key-value)
-        self._cgi_table.setRowCount(0)
+        self._cgi_table.setRowCount(len(valid_records))
+        for row, record in enumerate(valid_records):
+            for column, (key, _) in enumerate(_CGI_COLUMNS):
+                self._set_item(
+                    self._cgi_table,
+                    row,
+                    column,
+                    _display_value(record.get(key)),
+                )
+
         if valid_records:
-            self._populate_key_value_table(self._cgi_table, valid_records[0], _CGI_FIELDS)
             self._status_label.setText(
-                f"CGI / Cell lookup completed | Total results: {len(valid_records)}"
+                f"CGI / Cell lookup completed | Records shown: {len(valid_records)}"
             )
             self._append_log(f"[+] CGI lookup returned {len(valid_records)} result(s).")
         else:

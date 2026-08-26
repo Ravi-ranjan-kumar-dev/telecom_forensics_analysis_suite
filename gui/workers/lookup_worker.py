@@ -56,7 +56,6 @@ class LookupWorker(QObject):
                     from modules.database.master_import_service import (
                         import_master_data_file,
                     )
-
                     result = import_master_data_file(
                         self.value,
                         create_backup=True,
@@ -66,7 +65,6 @@ class LookupWorker(QObject):
                     from modules.database.master_import_service import (
                         import_master_folder,
                     )
-
                     total_rows = import_master_folder(
                         self.value,
                         import_type="auto",
