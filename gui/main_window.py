@@ -1,4 +1,4 @@
-#main_window.py
+# gui/main_window.py
 """Main desktop window for the application."""
 
 from __future__ import annotations
@@ -99,8 +99,11 @@ class MainWindow(QMainWindow):
 
     def __init__(
         self,
+        api_client=None,
     ) -> None:
         super().__init__()
+
+        self.api_client = api_client  # Store API client for later use
 
         self.setObjectName(
             "mainWindow"
@@ -450,7 +453,12 @@ class MainWindow(QMainWindow):
                     f"No GUI page is registered for: {item.key}"
                 ) from error
 
-            page = page_factory()
+            # Try to pass api_client to the page if it accepts it
+            if item.key == "lookup":
+                page = page_factory(api_client=self.api_client)
+            else:
+                page = page_factory()
+
             self._page_stack.addWidget(
                 page
             )
