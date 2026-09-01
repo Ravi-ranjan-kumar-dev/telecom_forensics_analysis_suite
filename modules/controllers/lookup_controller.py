@@ -11,6 +11,8 @@ from modules.database.lookup_service import (
     NOT_FOUND,
     lookup_sdr_profiles,   # batch function
     lookup_cgi_profiles,   # batch function
+    lookup_sdr_profile,    # singular function
+    lookup_cgi_profile,    # singular function
 )
 
 
@@ -73,6 +75,21 @@ def _log_lookup_event(
     except Exception:
         # Lookup must not fail only because audit logging failed.
         return
+
+
+# Public wrappers for tests and CLI
+def run_sdr_lookup(case: dict[str, Any] | None, number: object) -> dict[str, Any]:
+    """Run one SDR lookup and return structured result."""
+    result = lookup_sdr_profile(number)
+    _log_lookup_event(case, lookup_type="SDR", query=str(number or ""), status=str(result.get("status", "")))
+    return result
+
+
+def run_cgi_lookup(case: dict[str, Any] | None, cgi_value: object) -> dict[str, Any]:
+    """Run one CGI lookup and return structured result."""
+    result = lookup_cgi_profile(cgi_value)
+    _log_lookup_event(case, lookup_type="CGI", query=str(cgi_value or ""), status=str(result.get("status", "")))
+    return result
 
 
 def _print_sdr_result(
@@ -295,7 +312,7 @@ def _run_master_data_import(
 
     del case
 
-    while True:  # Loop ताकि गलत input पर दोबारा पूछा जा सके
+    while True:  # Loop taaki galat input par dobara poocha ja sake
         print("\n" + "=" * 86)
         print("MASTER DATA IMPORT")
         print("=" * 86)

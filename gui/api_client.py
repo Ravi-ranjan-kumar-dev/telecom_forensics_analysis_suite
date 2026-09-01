@@ -1,22 +1,32 @@
 # gui/api_client.py
-"""API client for communicating with the FastAPI backend."""
-
-from urllib import response
+"""API client for backend communication with robust error handling."""
 
 import requests
-from typing import Optional, Any, Dict
+from typing import Optional, Dict, Any
 
+class ApiError(Exception):
+    """Custom exception for API errors."""
+    def __init__(self, message, status_code=None):
+        self.message = message
+        self.status_code = status_code
+        super().__init__(message)
+
+class ServiceUnavailableError(ApiError):
+    """Raised when the API server is unreachable."""
+    pass
+
+class RecordNotFoundError(ApiError):
+    """Raised when a record is not found."""
+    pass
 
 class ApiClient:
-    """Handles all backend HTTP requests and token management."""
-
     def __init__(self, base_url: str = "http://localhost:8000"):
         self.base_url = base_url.rstrip("/")
         self.token: Optional[str] = None
 
-    def set_base_url(self, url: str) -> None:
-        """Update the backend base URL (e.g., when deployed to cloud)."""
-        self.base_url = url.rstrip("/")
+    def _headers(self) -> Dict[str, str]:
+        """Return headers with Bearer token if available."""
+        return {"Authorization": f"Bearer {self.token}"} if self.token else {}
 
     def login(self, username: str, password: str) -> bool:
         """Authenticate user and store JWT token on success."""
@@ -24,7 +34,6 @@ class ApiClient:
             response = requests.post(
                 f"{self.base_url}/api/auth/login",
                 data={"username": username, "password": password},
-                headers={"Content-Type": "application/x-www-form-urlencoded"},
                 timeout=10,
             )
             if response.status_code == 200:
@@ -34,12 +43,8 @@ class ApiClient:
         except requests.RequestException:
             return False
 
-    def _headers(self) -> Dict[str, str]:
-        """Return headers with Bearer token."""
-        return {"Authorization": f"Bearer {self.token}"} if self.token else {}
-
     def lookup_sdr(self, mobile: str) -> Optional[Dict[str, Any]]:
-        """Fetch SDR profile for a given mobile number."""
+        """Fetch SDR profile for a mobile number."""
         try:
             response = requests.get(
                 f"{self.base_url}/api/lookup/sdr/{mobile}",
@@ -48,14 +53,15 @@ class ApiClient:
             )
             if response.status_code == 200:
                 return response.json()
-            if response.status_code == 404:
-                return None
-            raise Exception(f"API error: {response.status_code} - {response.text}")
-        except requests.RequestException:
-            return None
+            elif response.status_code == 404:
+                raise RecordNotFoundError("Record not found")
+            else:
+                raise ApiError(f"API error: {response.status_code}", response.status_code)
+        except requests.RequestException as e:
+            raise ServiceUnavailableError(f"Service unavailable: {e}")
 
     def lookup_cgi(self, cgi: str) -> Optional[Dict[str, Any]]:
-        """Fetch CGI tower details for a given CGI value."""
+        """Fetch CGI tower details for a CGI value."""
         try:
             response = requests.get(
                 f"{self.base_url}/api/lookup/cgi/{cgi}",
@@ -64,36 +70,38 @@ class ApiClient:
             )
             if response.status_code == 200:
                 return response.json()
-            if response.status_code == 404:
-                return None
-            raise Exception(f"API error: {response.status_code} - {response.text}")
-        except requests.RequestException:
-            return None
+            elif response.status_code == 404:
+                raise RecordNotFoundError("Record not found")
+            else:
+                raise ApiError(f"API error: {response.status_code}", response.status_code)
+        except requests.RequestException as e:
+            raise ServiceUnavailableError(f"Service unavailable: {e}")
 
-    def get_current_user(self) -> Optional[Dict[str, Any]]:
-        """Fetch currently logged-in user details."""
+    def import_master_file(self, file_path: str) -> Dict[str, Any]:
+        """
+        Upload a master data file (SDR/CGI) to the backend for import.
+
+        Returns the JSON response from the API.
+        """
+        if not self.token:
+            raise ServiceUnavailableError("Not authenticated. Please login first.")
+
         try:
-            response = requests.get(
-                f"{self.base_url}/api/auth/me",
-                headers=self._headers(),
-                timeout=10,
-            )
+            with open(file_path, "rb") as f:
+                response = requests.post(
+                    f"{self.base_url}/api/import/master",
+                    files={"file": f},
+                    headers=self._headers(),
+                    timeout=120,  # Longer timeout for large files
+                )
             if response.status_code == 200:
                 return response.json()
-            return None
-        except requests.RequestException:
-            return None
-
-    def import_master_file(self, file_path: str) -> dict:
-        """Upload and import a master data file to the backend."""
-        with open(file_path, "rb") as f:
-            response = requests.post(
-            f"{self.base_url}/api/import/master",
-            files={"file": f},
-            headers=self._headers(),
-            timeout=60,  # Longer timeout for complex files
-        )
-        if response.status_code == 200:
-            return response.json()
-        else:
-            raise Exception(f"Import failed: {response.status_code} - {response.text}")
+            else:
+                raise ApiError(
+                    f"Import failed: {response.status_code} - {response.text}",
+                    response.status_code,
+                )
+        except requests.RequestException as e:
+            raise ServiceUnavailableError(f"Service unavailable: {e}")
+        except FileNotFoundError:
+            raise ApiError(f"File not found: {file_path}")

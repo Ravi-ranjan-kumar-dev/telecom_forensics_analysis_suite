@@ -9,6 +9,13 @@ from pathlib import Path
 from PySide6.QtCore import QObject, Signal, Slot
 
 from gui.workers.text_stream import SignalTextStream
+from gui.api_client import (
+    ApiClient,
+    ApiError,
+    RecordNotFoundError,
+    ServiceUnavailableError,
+)
+from modules.controllers import lookup_controller  # Fallback when API unavailable
 
 LOOKUP_OPERATIONS = {
     "sdr",
@@ -16,6 +23,7 @@ LOOKUP_OPERATIONS = {
     "import",
     "import_folder",
 }
+
 
 class LookupWorker(QObject):
     """Run a lookup or master-data import outside the GUI thread."""
@@ -30,7 +38,7 @@ class LookupWorker(QObject):
         *,
         operation: str,
         value: str | Path,
-        api_client=None,
+        api_client: ApiClient | None = None,
     ) -> None:
         super().__init__()
         self.operation = str(operation).strip().casefold()
@@ -42,7 +50,6 @@ class LookupWorker(QObject):
 
     @Slot()
     def run(self) -> None:
-        """Execute one selected lookup operation."""
         output_stream = SignalTextStream(self.log.emit)
 
         try:
@@ -51,75 +58,137 @@ class LookupWorker(QObject):
                 contextlib.redirect_stderr(output_stream),
             ):
                 if self.operation == "import":
-                    from modules.database.master_import_service import import_master_data_file
-                    result = import_master_data_file(self.value, create_backup=True)
+                    if self.api_client is None:
+                        raise ServiceUnavailableError("API client not available")
+                    result = self.api_client.import_master_file(self.value)
 
                 elif self.operation == "import_folder":
-                    from modules.database.master_import_service import import_master_folder
-                    total_rows = import_master_folder(self.value, import_type="auto")
+                    if self.api_client is None:
+                        raise ServiceUnavailableError("API client not available")
+                    folder = Path(self.value)
+                    if not folder.is_dir():
+                        raise FileNotFoundError(f"Folder not found: {folder}")
+                    files = [
+                        p for p in folder.iterdir()
+                        if p.is_file() and p.suffix.lower() in (".csv", ".txt", ".tsv", ".xlsx", ".xls")
+                    ]
+                    total_rows = 0
+                    for f in files:
+                        resp = self.api_client.import_master_file(str(f))
+                        total_rows += resp.get("rows", 0)
                     result = {
                         "status": "SUCCESS",
-                        "message": f"Folder import completed. Total rows: {total_rows}",
+                        "message": f"Imported {len(files)} files, total rows: {total_rows}",
                         "inserted_rows": total_rows,
-                        "source_file": self.value,
                     }
 
-                else:
-                    # API-based lookup
+                elif self.operation in ("sdr", "cgi"):
                     if self.api_client is None:
-                        raise ValueError("API client not available for lookup.")
+                        # Fallback to local controller (for tests and offline use)
+                        if self.operation == "sdr":
+                            numbers = [n.strip() for n in self.value.split(",") if n.strip()]
+                            records = []
+                            for num in numbers:
+                                res = lookup_controller.run_sdr_lookup(None, num)
+                                # Check both 'found' and 'status' for correctness
+                                if res.get("found") or res.get("status") == "MATCHED":
+                                    records.append({**res.get("record", {}), "__status": "FOUND"})
+                                else:
+                                    records.append({"mobile_number": num, "__status": "NOT_FOUND"})
+                            result = {
+                                "status": "MATCHED" if any(r.get("__status") == "FOUND" for r in records) else "NOT_FOUND",
+                                "records": records,
+                            }
+                        else:  # cgi
+                            cgis = [c.strip() for c in self.value.split(",") if c.strip()]
+                            records = []
+                            for cgi in cgis:
+                                res = lookup_controller.run_cgi_lookup(None, cgi)
+                                if res.get("found") or res.get("status") == "MATCHED":
+                                    records.append({**res.get("record", {}), "__status": "FOUND"})
+                                else:
+                                    records.append({"cgi": cgi, "__status": "NOT_FOUND"})
+                            result = {
+                                "status": "MATCHED" if any(r.get("__status") == "FOUND" for r in records) else "NOT_FOUND",
+                                "records": records,
+                            }
+                    else:
+                        # Use API client
+                        if self.operation == "sdr":
+                            numbers = [n.strip() for n in self.value.split(",") if n.strip()]
+                            records = []
+                            for num in numbers:
+                                try:
+                                    record = self.api_client.lookup_sdr(num)
+                                    if record:
+                                        mapped = {
+                                            "mobile_number": record.get("mobile_number", num),
+                                            "subscriber_name": record.get("subscriber_name", ""),
+                                            "father_name": record.get("father_name", ""),
+                                            "clean_address": clean_display_address(record.get("address", "")),
+                                            "id_number": record.get("id_number", ""),
+                                            "operator_or_source_category": record.get("operator", ""),
+                                            "circle": record.get("circle", ""),
+                                            "activation_date": record.get("activation_date", ""),
+                                            "source_file": record.get("source_file", ""),
+                                            "__status": "FOUND",
+                                        }
+                                        records.append(mapped)
+                                    else:
+                                        records.append({"mobile_number": num, "__status": "NOT_FOUND"})
+                                except RecordNotFoundError:
+                                    records.append({"mobile_number": num, "__status": "NOT_FOUND"})
+                                except ServiceUnavailableError:
+                                    self.failed.emit("Backend service is unavailable. Please try again later.")
+                                    return
+                                except ApiError as e:
+                                    self.failed.emit(str(e))
+                                    return
+                            result = {
+                                "status": "MATCHED" if any(r.get("__status") == "FOUND" for r in records) else "NOT_FOUND",
+                                "records": records,
+                            }
+                        else:  # cgi
+                            cgis = [c.strip() for c in self.value.split(",") if c.strip()]
+                            records = []
+                            for cgi in cgis:
+                                try:
+                                    record = self.api_client.lookup_cgi(cgi)
+                                    if record:
+                                        record["__status"] = "FOUND"
+                                        records.append(record)
+                                    else:
+                                        records.append({"cgi": cgi, "__status": "NOT_FOUND"})
+                                except RecordNotFoundError:
+                                    records.append({"cgi": cgi, "__status": "NOT_FOUND"})
+                                except ServiceUnavailableError:
+                                    self.failed.emit("Backend service is unavailable. Please try again later.")
+                                    return
+                                except ApiError as e:
+                                    self.failed.emit(str(e))
+                                    return
+                            result = {
+                                "status": "MATCHED" if any(r.get("__status") == "FOUND" for r in records) else "NOT_FOUND",
+                                "records": records,
+                            }
 
-                    if self.operation == "sdr":
-                        numbers = [n.strip() for n in self.value.split(",") if n.strip()]
-                        records = []
-                        for num in numbers:
-                            record = self.api_client.lookup_sdr(num)
-                            if record:
-                                # API response has 'address' and 'operator', but GUI expects 'clean_address' and 'operator_or_source_category'
-                                mapped = {
-                                    "mobile_number": record.get("mobile_number", num),
-                                    "subscriber_name": record.get("subscriber_name", ""),
-                                    "father_name": record.get("father_name", ""),
-                                    "clean_address": clean_display_address(record.get("address", "")),
-                                    "id_number": record.get("id_number", ""),
-                                    "operator_or_source_category": record.get("operator", ""),
-                                    "circle": record.get("circle", ""),
-                                    "activation_date": record.get("activation_date", ""),
-                                    "source_file": record.get("source_file", ""),
-                                    "__status": "FOUND",
-                                }
-                                records.append(mapped)
-                            else:
-                                records.append({
-                                    "mobile_number": num,
-                                    "__status": "NOT_FOUND",
-                                })
-                        result = {"status": "MATCHED" if any(r.get("__status") == "FOUND" for r in records) else "NOT_FOUND", "records": records}
-
-                    else:  # cgi
-                        cgis = [c.strip() for c in self.value.split(",") if c.strip()]
-                        records = []
-                        for cgi in cgis:
-                            record = self.api_client.lookup_cgi(cgi)
-                            if record:
-                                record["__status"] = "FOUND"
-                                records.append(record)
-                            else:
-                                records.append({"cgi": cgi, "__status": "NOT_FOUND"})
-                        result = {"status": "MATCHED" if any(r.get("__status") == "FOUND" for r in records) else "NOT_FOUND", "records": records}
+                else:
+                    raise ValueError(f"Unsupported operation: {self.operation}")
 
             output_stream.flush()
 
             if not isinstance(result, dict):
                 raise TypeError("Lookup operation did not return a valid result.")
 
-            self.completed.emit({
-                "operation": self.operation,
-                "value": self.value,
-                "result": result,
-            })
+            self.completed.emit(
+                {
+                    "operation": self.operation,
+                    "value": self.value,
+                    "result": result,
+                }
+            )
 
-        except Exception as error:  # noqa: BLE001 - worker failure boundary.
+        except Exception as error:
             output_stream.flush()
             self.failed.emit(f"{type(error).__name__}: {error}")
 
@@ -128,7 +197,6 @@ class LookupWorker(QObject):
 
 
 def clean_display_address(value: object) -> str:
-    """Simple address cleaner to remove separators."""
     if value is None:
         return ""
     text = str(value).replace("!", ", ").replace("|", ", ").replace("^", ", ")
