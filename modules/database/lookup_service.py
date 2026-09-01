@@ -1,3 +1,4 @@
+#modules/database/lookup_service.py
 """Canonical SDR and CGI lookup service."""
 
 from functools import lru_cache
@@ -52,18 +53,35 @@ _VERIFIED_SDR_OPERATOR_NAMES = {
     "UNINOR", "TELENOR",
 }
 
+_SOURCE_CATEGORY_TOKENS = {
+    "SDR", "CDR", "IPDR", "MASTER", "DUMP", "BACKUP", "RAW", "NORMALIZED",
+}
+
 
 def _verified_sdr_operator(value: object) -> str:
+    """Return verified operator name or empty string."""
     text = _clean_text(value)
     if not text:
         return ""
     cleaned = text.replace(" - Copy", "").strip()
     normalized = " ".join(cleaned.upper().replace("_", " ").replace("-", " ").split())
+
+    # If the normalized string contains a source category token, reject unless it's a pure operator name
+    if any(token in normalized for token in _SOURCE_CATEGORY_TOKENS):
+        if normalized in _VERIFIED_SDR_OPERATOR_NAMES:
+            return cleaned
+        return ""
+
     if normalized in _VERIFIED_SDR_OPERATOR_NAMES:
         return cleaned
+
+    # Fallback: if it contains a strong operator token but not mixed with category words
     strong_tokens = ("AIRTEL", "JIO", "VODAFONE", "BSNL", "MTNL", "AIRCEL", "DOCOMO", "TELENOR", "UNINOR")
-    if any(token in normalized for token in strong_tokens):
+    if any(token in normalized for token in strong_tokens) and not any(
+        token in normalized for token in _SOURCE_CATEGORY_TOKENS
+    ):
         return cleaned
+
     return ""
 
 
@@ -89,6 +107,13 @@ def _lookup_sdr_profile_cached(normalized_number: str) -> dict[str, Any]:
     records = []
     for _, row in dataframe.iterrows():
         raw_address = row.get("subscriber_address", row.get("address", ""))
+        raw_operator = row.get("operator", "")
+        source_category = row.get("source_category", "") or ""
+        # If source_category contains a non-operator token, operator should be blank
+        if any(token in str(source_category).upper() for token in _SOURCE_CATEGORY_TOKENS):
+            operator_value = ""
+        else:
+            operator_value = _verified_sdr_operator(raw_operator)
         records.append({
             "mobile_number": row.get("lookup_mobile", normalized_number),
             "subscriber_name": row.get("subscriber_name", ""),
@@ -97,8 +122,8 @@ def _lookup_sdr_profile_cached(normalized_number: str) -> dict[str, Any]:
             "clean_address": clean_display_address(raw_address),
             "id_type": row.get("id_type", ""),
             "id_number": row.get("id_number", ""),
-            "operator": _verified_sdr_operator(row.get("operator", "")),
-            "operator_or_source_category": row.get("operator", ""),
+            "operator": operator_value,
+            "operator_or_source_category": raw_operator,
             "circle": row.get("circle", ""),
             "activation_date": row.get("activation_date", ""),
             "caf_number": row.get("caf_number", ""),
@@ -192,22 +217,15 @@ def lookup_cgi_profile(cgi_value: object) -> dict[str, Any]:
 
 
 # ------------------------------------------------------------------
-# 🆕 Batch Lookup Functions (कई नंबर / CGI एक साथ)
+# Batch Lookup Functions
 # ------------------------------------------------------------------
 
 def lookup_sdr_profiles(numbers: Union[List[str], str]) -> List[dict]:
     """
-    एक साथ कई मोबाइल नंबरों का SDR profile देखें।
-    
-    Input:
-        - list of numbers: ["9876543210", "9123456789"]
-        - ya comma/space separated string: "9876543210, 9123456789"
-    
-    Returns:
-        - list of profile dicts (हर एक का result)
+    Batch SDR lookup - accepts list or comma/space separated string.
+    Returns list of profile dicts.
     """
     if isinstance(numbers, str):
-        # comma, space, semicolon से split करें
         numbers = [n.strip() for n in re.split(r"[,;\s]+", numbers) if n.strip()]
     elif isinstance(numbers, (list, tuple)):
         numbers = [str(n).strip() for n in numbers if str(n).strip()]
@@ -223,14 +241,8 @@ def lookup_sdr_profiles(numbers: Union[List[str], str]) -> List[dict]:
 
 def lookup_cgi_profiles(cgi_values: Union[List[str], str]) -> List[dict]:
     """
-    एक साथ कई CGI/Cell ID का profile देखें।
-    
-    Input:
-        - list of CGI: ["405-52-3347-232803094", "405-55-1234-56789012"]
-        - ya comma/space separated string: "405-52-3347-232803094, 405-55-1234-56789012"
-    
-    Returns:
-        - list of profile dicts
+    Batch CGI lookup - accepts list or comma/space separated string.
+    Returns list of profile dicts.
     """
     if isinstance(cgi_values, str):
         cgi_values = [c.strip() for c in re.split(r"[,;\s]+", cgi_values) if c.strip()]
@@ -244,24 +256,6 @@ def lookup_cgi_profiles(cgi_values: Union[List[str], str]) -> List[dict]:
         profile = lookup_cgi_profile(cgi)
         results.append(profile)
     return results
-
-
-def lookup_sdr_numbers_dataframe(numbers: List[str]) -> pd.DataFrame:
-    """
-    बैच SDR lookup – सीधे DataFrame में result (ज्यादा efficient)।
-    
-    यह `lookup_sdr_subscribers()` को use करता है जो पहले से batch-optimized है।
-    """
-    return lookup_sdr_subscribers(numbers)
-
-
-def lookup_cgi_values_dataframe(cgi_values: List[str]) -> pd.DataFrame:
-    """
-    बैच CGI lookup – सीधे DataFrame में result।
-    
-    यह `lookup_cgi_addresses()` को use करता है।
-    """
-    return lookup_cgi_addresses(cgi_values)
 
 
 # ------------------------------------------------------------------
