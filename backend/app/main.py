@@ -15,6 +15,7 @@ from .routers import auth, lookup, admin, imports
 Base.metadata.create_all(bind=engine)
 
 app = FastAPI(title="Telecom Forensics Backend", version="0.1.0")
+__version__ = "1.0.0"
 
 app.include_router(auth.router)
 app.include_router(lookup.router)

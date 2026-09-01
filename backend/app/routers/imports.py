@@ -7,10 +7,8 @@ import tempfile
 from pathlib import Path
 from fastapi import APIRouter, UploadFile, File, Depends, HTTPException
 from sqlalchemy.orm import Session
-from typing import List
 import pandas as pd
 
-# Add project root to sys.path for importing modules
 project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..', '..'))
 if project_root not in sys.path:
     sys.path.insert(0, project_root)
@@ -19,7 +17,6 @@ from ..database import get_db
 from ..auth import oauth2_scheme, decode_token
 from .. import models
 
-# Import advanced parsing functions from your existing modules
 from modules.database.master_import_service import detect_master_data_type
 from modules.database.master_importer import _read_input_file, _prepare_sdr_dataframe
 from modules.database.cgi_master_reader import read_cgi_master_file
@@ -34,29 +31,23 @@ async def import_master_file(
     token: str = Depends(oauth2_scheme),
 ):
     """Upload and import SDR or CGI master data file using advanced parsers."""
-    # Verify token
     decode_token(token)
 
-    # Read uploaded file
     content = await file.read()
     filename = file.filename.lower()
 
-    # Save to temporary file for advanced parsers
     with tempfile.NamedTemporaryFile(delete=False, suffix=Path(filename).suffix) as tmp:
         tmp.write(content)
         tmp_path = tmp.name
 
     try:
-        # Detect type using existing module logic
         detection = detect_master_data_type(tmp_path)
         detected_type = detection.get("import_type")
 
         if detected_type == "SDR":
-            # Parse using advanced SDR parser
             raw_df = _read_input_file(tmp_path)
             prepared = _prepare_sdr_dataframe(raw_df, file.filename)
 
-            # Insert into PostgreSQL
             for _, row in prepared.iterrows():
                 subscriber = models.SDRSubscriber(
                     mobile_number=str(row.get("mobile_number", "")).strip(),
@@ -76,11 +67,9 @@ async def import_master_file(
             return {"status": "success", "type": "SDR", "rows": len(prepared)}
 
         elif detected_type == "CGI":
-            # Parse using advanced CGI parser (handles multi-sheet, caret-packed, positional)
             prepared_frames = read_cgi_master_file(tmp_path)
             combined = pd.concat(prepared_frames, ignore_index=True) if prepared_frames else pd.DataFrame()
 
-            # Insert into PostgreSQL
             for _, row in combined.iterrows():
                 tower = models.CGIAddress(
                     cgi=str(row.get("cgi", "")).strip(),
@@ -118,5 +107,4 @@ async def import_master_file(
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"Parsing failed: {str(e)}")
     finally:
-        # Clean up temp file
         os.unlink(tmp_path)
