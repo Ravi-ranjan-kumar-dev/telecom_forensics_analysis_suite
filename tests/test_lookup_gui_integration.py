@@ -105,8 +105,9 @@ def test_lookup_page_displays_sdr_and_cgi_results():
             },
         }
     )
-    assert page._cgi_table.rowCount() > 2
-    assert page._cgi_table.item(0, 1).text() == "405-52-1-2"
+    assert page._cgi_table.rowCount() == 1
+    assert page._cgi_table.item(0, 0).text() == "405-52-1-2"
+    assert page._cgi_table.item(0, 5).text() == "Jamui"
     page.close()
 
 

@@ -15,6 +15,12 @@ COMMANDS = {
     "release-check": TOOLS_DIR / "release_check.py",
 }
 
+AUTH_COMMANDS = {
+    "auth-create-admin": "create-admin",
+    "auth-reset-token": "reset-token",
+    "auth-reset-password": "reset-password",
+}
+
 
 def main() -> int:
     if len(sys.argv) < 2:
@@ -24,10 +30,21 @@ def main() -> int:
         print("  python manage.py cgi-verify <CGI>")
         print("  python manage.py case-audit-verify [CASE_ID]")
         print("  python manage.py release-check [--with-db]")
+        print("  python manage.py auth-create-admin <USERNAME>")
+        print("  python manage.py auth-reset-token <USERNAME>")
+        print("  python manage.py auth-reset-password <USERNAME>")
         print("  python main.py")
         return 0
 
     command = sys.argv[1]
+    auth_command = AUTH_COMMANDS.get(command)
+    if auth_command is not None:
+        from backend.app.cli import main as auth_main
+
+        return auth_main(
+            [auth_command, *sys.argv[2:]]
+        )
+
     script = COMMANDS.get(command)
     if script is None:
         print(f"Unknown command: {command}")

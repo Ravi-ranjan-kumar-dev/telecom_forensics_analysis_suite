@@ -4,9 +4,13 @@ from functools import lru_cache
 from typing import Iterable, Optional
 
 import pandas as pd
+import duckdb
 
 from modules.database.cgi_repository import normalize_cgi, lookup_cgi_dataframe_cached
+from modules.database.duckdb_core import query_dataframe as _original_query_dataframe
 
+# Module-level reference for monkeypatching in tests
+query_dataframe = _original_query_dataframe
 
 CELL_ID_CANDIDATES = [
     "tower", "Tower", "Tower ID", "Cell Tower", "Cell ID / CGI",
@@ -24,26 +28,20 @@ CGI_LOOKUP_COLUMNS = [
 
 
 def detect_cell_id_column(dataframe: pd.DataFrame) -> Optional[str]:
-    """Detect the most likely Cell ID / CGI column in a dataframe."""
     if dataframe is None or dataframe.empty:
         return None
-
     existing_columns = {str(column).strip(): column for column in dataframe.columns}
-
     for candidate in CELL_ID_CANDIDATES:
         if candidate in existing_columns:
             return existing_columns[candidate]
-
     normalized_map = {
         str(column).strip().lower().replace(" ", "_"): column
         for column in dataframe.columns
     }
-
     for candidate in CELL_ID_CANDIDATES:
         normalized_candidate = candidate.strip().lower().replace(" ", "_")
         if normalized_candidate in normalized_map:
             return normalized_map[normalized_candidate]
-
     return None
 
 
@@ -51,15 +49,42 @@ def detect_cell_id_column(dataframe: pd.DataFrame) -> Optional[str]:
 def _lookup_cgi_addresses_cached(cgi_tuple: tuple[str, ...]) -> pd.DataFrame:
     if not cgi_tuple:
         return pd.DataFrame(columns=CGI_LOOKUP_COLUMNS)
-    return lookup_cgi_dataframe_cached(cgi_tuple)
+    unique = list(cgi_tuple)
+    placeholders = ",".join(["?"] * len(unique))
+    sql = f"""
+        SELECT cgi, operator, circle, state, district, police_station,
+               town, site_name, address, latitude, longitude, source_file
+        FROM cgi_addresses
+        WHERE cgi IN ({placeholders})
+    """
+    found = query_dataframe(sql, unique)
+    if found is not None and not found.empty:
+        return found.drop_duplicates(
+            subset=["cgi"],
+            keep="last",
+        )
+    return pd.DataFrame(columns=CGI_LOOKUP_COLUMNS)
 
 
 def lookup_cgi_addresses(cgi_values: Iterable) -> pd.DataFrame:
-    """Bulk lookup with caching."""
     normalized = sorted({normalize_cgi(v) for v in cgi_values if normalize_cgi(v)})
     if not normalized:
         return pd.DataFrame(columns=CGI_LOOKUP_COLUMNS)
-    return _lookup_cgi_addresses_cached(tuple(normalized))
+    try:
+        return _lookup_cgi_addresses_cached(
+            tuple(normalized)
+        )
+    except duckdb.CatalogException as error:
+        message = str(error).casefold()
+        missing_table = (
+            "cgi_addresses" in message
+            and "does not exist" in message
+        )
+        if missing_table:
+            return pd.DataFrame(
+                columns=CGI_LOOKUP_COLUMNS
+            )
+        raise
 
 
 def enrich_dataframe_with_cgi_address(
@@ -67,10 +92,6 @@ def enrich_dataframe_with_cgi_address(
     cell_id_column: Optional[str] = None,
     prefix: Optional[str] = None,
 ) -> pd.DataFrame:
-    """
-    Add CGI tower address columns.
-    If prefix is None, it is inferred from the column name.
-    """
     if dataframe is None or dataframe.empty:
         return dataframe
 
@@ -136,7 +157,6 @@ def enrich_dataframe_with_cgi_address(
 
 
 def _cgi_prefix_from_column(column: str) -> str:
-    """Infer prefix from column name."""
     col_lower = str(column).lower()
     mapping = {
         "cgi": "cgi_",
@@ -156,7 +176,6 @@ def build_missing_cgi_lookup_summary(
     cell_id_column: Optional[str] = None,
     source_table: str = "",
 ) -> pd.DataFrame:
-    """Build missing CGI summary, optionally with source_table."""
     if dataframe is None or dataframe.empty:
         return pd.DataFrame(columns=["cell_id", "records", "source_table"])
 

@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+- Added one-time first-administrator setup to the desktop login window; no
+  default application credentials or PostgreSQL-credential fallback is used.
+- Added a secure Forgot Password flow using short-lived, host-issued JWT reset
+  tokens that are invalidated by a successful password change.
+- Separated invalid credentials, unavailable backend and missing backend-secret
+  messages, fixed the user password-hash field mismatch and rejected inactive
+  accounts during login.
+- Removed unauthenticated reset-token disclosure, replaced legacy stored reset
+  tokens with password-state-bound signed tokens and upgraded `python-jose` to
+  the Python 3.12/3.13-compatible security release.
 - Connected IMEI / Device Analysis to a background automatic-detection GUI.
 - Added SDR, CGI and one-click master-data import tabs to Lookup Services.
 - Added a read-only Case Details view with targets, evidence, analysis counts

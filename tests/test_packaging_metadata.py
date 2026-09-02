@@ -28,6 +28,7 @@ def test_runtime_dependencies_cover_application_imports() -> None:
         "pyxlsb",
         "pytz",
         "PySide6",
+        "requests",
     }
 
     declared_names = {

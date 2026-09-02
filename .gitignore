@@ -98,3 +98,7 @@ database/*.sqlite3
 data/
 database/
 changes.diff
+backend/.env
+*.save
+changes.diff
+gprs_finalization_source_bundle.txt

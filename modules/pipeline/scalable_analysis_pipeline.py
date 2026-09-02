@@ -1,3 +1,4 @@
+#modules/pipeline/scalable_analysis_pipeline.py
 """
 Common scalable analysis pipeline.
 
@@ -14,6 +15,7 @@ DuckDB, Parquet and JSON files are internal backend/cache files.
 
 from __future__ import annotations
 
+import hashlib
 import inspect
 import json
 import os
@@ -65,6 +67,15 @@ class ScalablePipelineTimings:
     total_ms: float
 
 
+def _file_sha256(path: Path) -> str:
+    """Compute SHA-256 hash of file content."""
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
 def build_input_fingerprint(
     input_folder: str | Path,
     supported_suffixes: set[str] | None = None,
@@ -77,7 +88,6 @@ def build_input_fingerprint(
 
     This helps decide whether backend staged data belongs to the current input.
     """
-
     root = Path(input_folder)
     suffixes = supported_suffixes or DEFAULT_SUPPORTED_SUFFIXES
     files: list[dict[str, Any]] = []
@@ -111,32 +121,21 @@ def build_input_fingerprint(
             stat = path.stat()
             files.append(
                 {
-                    "path": str(
-                        path.relative_to(
-                            root
-                        )
-                    ),
-                    "size": int(
-                        stat.st_size
-                    ),
-                    "mtime_ns": int(
-                        stat.st_mtime_ns
-                    ),
+                    "path": str(path.relative_to(root)),
+                    "size": int(stat.st_size),
+                    "mtime_ns": int(stat.st_mtime_ns),
+                    "sha256": _file_sha256(path),  # <-- Add this
                 }
             )
 
     return {
         "input_folder": str(root),
         "selected_spot_folders": (
-            list(
-                normalized_selection
-            )
+            list(normalized_selection)
             if normalized_selection is not None
             else None
         ),
-        "include_root_files": bool(
-            include_root_files
-        ),
+        "include_root_files": bool(include_root_files),
         "file_count": len(files),
         "total_size": sum(item["size"] for item in files),
         "files": files,
@@ -145,13 +144,11 @@ def build_input_fingerprint(
 
 def latest_pipeline_state_path(case_id: str, workflow: str) -> Path:
     """Return latest pipeline state JSON path."""
-
     return case_staging_root(case_id, workflow) / "pipeline" / "latest_pipeline.json"
 
 
 def _json_safe(value: Any) -> Any:
     """Convert common Python objects to JSON-safe values."""
-
     if is_dataclass(value):
         return asdict(value)
 
@@ -184,7 +181,6 @@ def write_latest_pipeline_state(
     payload: dict[str, Any],
 ) -> Path:
     """Save latest pipeline state for GUI/report reuse."""
-
     path = latest_pipeline_state_path(case_id, workflow)
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(
@@ -199,12 +195,9 @@ def read_latest_pipeline_state(
     workflow: str,
 ) -> dict[str, Any] | None:
     """Read latest pipeline state if available."""
-
     path = latest_pipeline_state_path(case_id, workflow)
-
     if not path.exists():
         return None
-
     return json.loads(path.read_text(encoding="utf-8"))
 
 
@@ -214,7 +207,6 @@ def _call_loader(
     loader_kwargs: dict[str, Any] | None,
 ) -> Any:
     """Call a loader using the common convention: loader(input_folder, **kwargs)."""
-
     return loader(input_folder, **(loader_kwargs or {}))
 
 
@@ -223,13 +215,11 @@ def _extract_dataframe(
     dataframe_key: str,
 ) -> pd.DataFrame:
     """Extract normalized DataFrame from loader result."""
-
     if isinstance(load_result, pd.DataFrame):
         return load_result
 
     if isinstance(load_result, dict):
         dataframe = load_result.get(dataframe_key)
-
         if isinstance(dataframe, pd.DataFrame):
             return dataframe
 
@@ -245,12 +235,8 @@ def _call_sql_analysis(
     """
     Call SQL analysis function using only supported keyword arguments.
 
-    This lets different modules use slightly different analysis signatures,
-    for example:
-    - build_tower_cdr_duckdb_presence(case_id, top_limit=200)
-    - future_analysis(case_id, workflow, table_name, duckdb_path)
+    This lets different modules use slightly different analysis signatures.
     """
-
     signature = inspect.signature(sql_analysis)
     parameters = signature.parameters
 
@@ -276,19 +262,16 @@ def _call_sql_analysis(
 
 def _row_summary(value: Any) -> Any:
     """Return row-count summary for DataFrame/dict results."""
-
     if isinstance(value, pd.DataFrame):
         return int(len(value))
 
     if isinstance(value, dict):
         output: dict[str, Any] = {}
-
         for key, item in value.items():
             if isinstance(item, pd.DataFrame):
                 output[key] = int(len(item))
             else:
                 output[key] = _row_summary(item)
-
         return output
 
     if isinstance(value, list):
@@ -304,12 +287,10 @@ def print_pipeline_backend_status(
 ) -> None:
     """
     Print user-friendly scalable backend status.
-
     Normal mode hides DuckDB/Parquet/JSON paths.
     Developer can show paths using:
     TELECOM_DEBUG_BACKEND=1 python3 -u main.py
     """
-
     debug_backend = os.environ.get("TELECOM_DEBUG_BACKEND") == "1"
     stage = payload.get("stage", {}) or {}
     fingerprint = payload.get("input_fingerprint", {}) or {}
@@ -325,9 +306,7 @@ def print_pipeline_backend_status(
         "Index status    : "
         + (
             "Verified existing index reused"
-            if payload.get(
-                "stage_reused"
-            )
+            if payload.get("stage_reused")
             else "Index refreshed from normalized data"
         )
     )
@@ -382,7 +361,6 @@ def run_scalable_analysis_pipeline(
     - timings
     - pipeline_state_path
     """
-
     total_started = time.perf_counter()
 
     config = ScalablePipelineConfig(
@@ -570,6 +548,26 @@ def run_scalable_analysis_pipeline(
         raise ValueError(
             "Loaded DataFrame is empty. Nothing to stage or analyze."
         )
+
+    # NEW: Register evidence for successfully loaded files
+    if isinstance(load_result, dict) and load_result.get("ok"):
+        from modules.cases.service import register_evidence
+
+        for file_result in load_result.get("file_results", []):
+            if not file_result.get("ok"):
+                continue
+            file_path = file_result.get("file", "")
+            if file_path:
+                try:
+                    register_evidence(
+                        case_id,
+                        evidence_type="TELECOM_CDR",
+                        source_file=file_path,
+                        operator=(file_result.get("metadata", {}) or {}).get("operator", ""),
+                        source_category="NORMALIZED",
+                    )
+                except Exception as e:
+                    print(f"[!] Evidence registration failed for {file_path}: {e}")
 
     load_ms = round(
         (

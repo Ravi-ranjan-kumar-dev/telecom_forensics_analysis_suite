@@ -9,8 +9,10 @@ from modules.database.lookup_service import (
     INVALID_INPUT,
     MATCHED,
     NOT_FOUND,
-    lookup_sdr_profiles,   # 🆕 batch function
-    lookup_cgi_profiles,   # 🆕 batch function
+    lookup_sdr_profiles,   # batch function
+    lookup_cgi_profiles,   # batch function
+    lookup_sdr_profile,    # singular function
+    lookup_cgi_profile,    # singular function
 )
 
 
@@ -28,9 +30,7 @@ def _display_value(
 
 def _print_fields(
     record: dict[str, Any],
-    fields: list[
-        tuple[str, str]
-    ],
+    fields: list[tuple[str, str]],
 ) -> None:
     for key, label in fields:
         print(
@@ -48,48 +48,26 @@ def _log_lookup_event(
 ) -> None:
     """Log minimal lookup metadata without copying subscriber details."""
 
-    if not isinstance(
-        case,
-        dict,
-    ):
+    if not isinstance(case, dict):
         return
 
-    case_id = str(
-        case.get(
-            "case_id",
-            "",
-        )
-    ).strip()
+    case_id = str(case.get("case_id", "")).strip()
 
     if not case_id:
         return
 
     try:
-        from modules.cases import (
-            log_case_event,
-        )
+        from modules.cases import log_case_event
 
-        clean_query = str(
-            query
-        ).strip()
+        clean_query = str(query).strip()
 
         log_case_event(
             case_id,
-            action=(
-                f"{lookup_type.upper()}_LOOKUP"
-            ),
+            action=f"{lookup_type.upper()}_LOOKUP",
             details={
-                "lookup_type": (
-                    lookup_type.upper()
-                ),
-                "query_length": len(
-                    clean_query
-                ),
-                "query_last_four": (
-                    clean_query[-4:]
-                    if clean_query
-                    else ""
-                ),
+                "lookup_type": lookup_type.upper(),
+                "query_length": len(clean_query),
+                "query_last_four": clean_query[-4:] if clean_query else "",
                 "status": status,
             },
         )
@@ -99,61 +77,49 @@ def _log_lookup_event(
         return
 
 
+# Public wrappers for tests and CLI
+def run_sdr_lookup(case: dict[str, Any] | None, number: object) -> dict[str, Any]:
+    """Run one SDR lookup and return structured result."""
+    result = lookup_sdr_profile(number)
+    _log_lookup_event(case, lookup_type="SDR", query=str(number or ""), status=str(result.get("status", "")))
+    return result
+
+
+def run_cgi_lookup(case: dict[str, Any] | None, cgi_value: object) -> dict[str, Any]:
+    """Run one CGI lookup and return structured result."""
+    result = lookup_cgi_profile(cgi_value)
+    _log_lookup_event(case, lookup_type="CGI", query=str(cgi_value or ""), status=str(result.get("status", "")))
+    return result
+
+
 def _print_sdr_result(
     result: dict[str, Any],
     *,
     index: int = 1,
 ) -> None:
     """Print one SDR lookup result in structured format."""
-    status = str(
-        result.get(
-            "status",
-            "",
-        )
-    )
+    status = str(result.get("status", ""))
 
     if status == INVALID_INPUT:
-        print(
-            f"\n[{index}] {result.get('message')}"
-        )
+        print(f"\n[{index}] {result.get('message')}")
         return
 
     if status == DATABASE_ERROR:
-        print(
-            f"\n[{index}] SDR database lookup failed."
-        )
-        print(
-            f"    Error Type : "
-            f"{result.get('error_type', '')}"
-        )
-        print(
-            f"    Message    : "
-            f"{result.get('error', '')}"
-        )
+        print(f"\n[{index}] SDR database lookup failed.")
+        print(f"    Error Type : {result.get('error_type', '')}")
+        print(f"    Message    : {result.get('error', '')}")
         return
 
     if status == NOT_FOUND:
-        print(
-            f"\n[{index}] {result.get('message')}"
-        )
-        print(
-            "    Normalized Number: "
-            f"{result.get('normalized_number', '')}"
-        )
+        print(f"\n[{index}] {result.get('message')}")
+        print(f"    Normalized Number: {result.get('normalized_number', '')}")
         return
 
     if status != MATCHED:
-        print(
-            f"\n[{index}] Unknown SDR lookup status."
-        )
+        print(f"\n[{index}] Unknown SDR lookup status.")
         return
 
-    record = dict(
-        result.get(
-            "record",
-            {},
-        )
-    )
+    record = dict(result.get("record", {}))
 
     print("\n" + "-" * 86)
     print(f"SDR PROFILE FOUND (Result {index})")
@@ -162,67 +128,24 @@ def _print_sdr_result(
     _print_fields(
         record,
         [
-            (
-                "mobile_number",
-                "Mobile Number",
-            ),
-            (
-                "subscriber_name",
-                "Subscriber Name",
-            ),
-            (
-                "father_name",
-                "Father / Husband Name",
-            ),
-            (
-                "clean_address",
-                "Readable Address",
-            ),
-            (
-                "raw_address",
-                "Raw SDR Address",
-            ),
-            (
-                "id_type",
-                "Identity Type",
-            ),
-            (
-                "id_number",
-                "Identity Number",
-            ),
-            (
-                "operator_or_source_category",
-                "Operator / Source Category",
-            ),
-            (
-                "circle",
-                "Circle",
-            ),
-            (
-                "activation_date",
-                "Activation Date",
-            ),
-            (
-                "caf_number",
-                "CAF Number",
-            ),
-            (
-                "source_file",
-                "Source File",
-            ),
+            ("mobile_number", "Mobile Number"),
+            ("subscriber_name", "Subscriber Name"),
+            ("father_name", "Father / Husband Name"),
+            ("clean_address", "Readable Address"),
+            ("raw_address", "Raw SDR Address"),
+            ("id_type", "Identity Type"),
+            ("id_number", "Identity Number"),
+            ("operator_or_source_category", "Operator / Source Category"),
+            ("circle", "Circle"),
+            ("activation_date", "Activation Date"),
+            ("caf_number", "CAF Number"),
+            ("source_file", "Source File"),
         ],
     )
 
-    print(
-        f"Match Count                 : "
-        f"{result.get('match_count', 1)}"
-    )
-
+    print(f"Match Count                 : {result.get('match_count', 1)}")
     print("\n[+] SDR profile found.")
-    print(
-        "[!] Identity and address ko CAF/operator "
-        "record se verify karein."
-    )
+    print("[!] Identity and address ko CAF/operator record se verify karein.")
 
 
 def _print_cgi_result(
@@ -231,55 +154,28 @@ def _print_cgi_result(
     index: int = 1,
 ) -> None:
     """Print one CGI lookup result in structured format."""
-    status = str(
-        result.get(
-            "status",
-            "",
-        )
-    )
+    status = str(result.get("status", ""))
 
     if status == INVALID_INPUT:
-        print(
-            f"\n[{index}] {result.get('message')}"
-        )
+        print(f"\n[{index}] {result.get('message')}")
         return
 
     if status == DATABASE_ERROR:
-        print(
-            f"\n[{index}] CGI database lookup failed."
-        )
-        print(
-            f"    Error Type : "
-            f"{result.get('error_type', '')}"
-        )
-        print(
-            f"    Message    : "
-            f"{result.get('error', '')}"
-        )
+        print(f"\n[{index}] CGI database lookup failed.")
+        print(f"    Error Type : {result.get('error_type', '')}")
+        print(f"    Message    : {result.get('error', '')}")
         return
 
     if status == NOT_FOUND:
-        print(
-            f"\n[{index}] {result.get('message')}"
-        )
-        print(
-            "    Normalized CGI: "
-            f"{result.get('normalized_cgi', '')}"
-        )
+        print(f"\n[{index}] {result.get('message')}")
+        print(f"    Normalized CGI: {result.get('normalized_cgi', '')}")
         return
 
     if status != MATCHED:
-        print(
-            f"\n[{index}] Unknown CGI lookup status."
-        )
+        print(f"\n[{index}] Unknown CGI lookup status.")
         return
 
-    record = dict(
-        result.get(
-            "record",
-            {},
-        )
-    )
+    record = dict(result.get("record", {}))
 
     print("\n" + "-" * 86)
     print(f"CGI / CELL RECORD FOUND (Result {index})")
@@ -288,110 +184,35 @@ def _print_cgi_result(
     _print_fields(
         record,
         [
-            (
-                "cgi",
-                "CGI / Cell ID",
-            ),
-            (
-                "operator",
-                "Operator",
-            ),
-            (
-                "technology",
-                "Technology",
-            ),
-            (
-                "circle",
-                "Circle",
-            ),
-            (
-                "state",
-                "State",
-            ),
-            (
-                "district",
-                "District",
-            ),
-            (
-                "police_station",
-                "Police Station",
-            ),
-            (
-                "address",
-                "Tower Address",
-            ),
-            (
-                "town",
-                "Town",
-            ),
-            (
-                "landmark",
-                "Landmark",
-            ),
-            (
-                "site_name",
-                "Site Name",
-            ),
-            (
-                "latitude",
-                "Latitude",
-            ),
-            (
-                "longitude",
-                "Longitude",
-            ),
-            (
-                "azimuth",
-                "Azimuth",
-            ),
-            (
-                "status",
-                "Tower Status",
-            ),
-            (
-                "status_change_date",
-                "Status Change Date",
-            ),
-            (
-                "mcc_mnc",
-                "MCC-MNC",
-            ),
-            (
-                "lac",
-                "LAC",
-            ),
-            (
-                "cid",
-                "CID",
-            ),
-            (
-                "tac_id",
-                "TAC",
-            ),
-            (
-                "site_id",
-                "Site ID",
-            ),
-            (
-                "gnb_id",
-                "gNB ID",
-            ),
-            (
-                "cell_id",
-                "Cell ID",
-            ),
-            (
-                "source_file",
-                "Source File",
-            ),
+            ("cgi", "CGI / Cell ID"),
+            ("operator", "Operator"),
+            ("technology", "Technology"),
+            ("circle", "Circle"),
+            ("state", "State"),
+            ("district", "District"),
+            ("police_station", "Police Station"),
+            ("address", "Tower Address"),
+            ("town", "Town"),
+            ("landmark", "Landmark"),
+            ("site_name", "Site Name"),
+            ("latitude", "Latitude"),
+            ("longitude", "Longitude"),
+            ("azimuth", "Azimuth"),
+            ("status", "Tower Status"),
+            ("status_change_date", "Status Change Date"),
+            ("mcc_mnc", "MCC-MNC"),
+            ("lac", "LAC"),
+            ("cid", "CID"),
+            ("tac_id", "TAC"),
+            ("site_id", "Site ID"),
+            ("gnb_id", "gNB ID"),
+            ("cell_id", "Cell ID"),
+            ("source_file", "Source File"),
         ],
     )
 
     print("\n[+] CGI / Cell record found.")
-    print(
-        "[!] Tower address aur coordinates ko current "
-        "field/operator information se verify karein."
-    )
+    print("[!] Tower address aur coordinates ko current field/operator information se verify karein.")
 
 
 def _run_sdr_lookup(
@@ -403,9 +224,7 @@ def _run_sdr_lookup(
     print("Ek se zyada numbers comma (,) ya space se alag karke enter karein.")
     print("Example: 9999999999, 1234567890")
 
-    numbers_input = input(
-        "Mobile Number(s): "
-    ).strip()
+    numbers_input = input("Mobile Number(s): ").strip()
 
     if not numbers_input:
         print("[-] No numbers entered.")
@@ -414,10 +233,7 @@ def _run_sdr_lookup(
     results = lookup_sdr_profiles(numbers_input)
 
     for idx, result in enumerate(results, start=1):
-        _print_sdr_result(
-            result,
-            index=idx,
-        )
+        _print_sdr_result(result, index=idx)
 
 
 def _run_cgi_lookup(
@@ -429,9 +245,7 @@ def _run_cgi_lookup(
     print("Ek se zyada CGI comma (,) ya space se alag karke enter karein.")
     print("Example: 405-52-3347-232803094, 405-55-1234-56789012")
 
-    cgi_input = input(
-        "CGI / Cell ID(s): "
-    ).strip()
+    cgi_input = input("CGI / Cell ID(s): ").strip()
 
     if not cgi_input:
         print("[-] No CGI entered.")
@@ -440,50 +254,11 @@ def _run_cgi_lookup(
     results = lookup_cgi_profiles(cgi_input)
 
     for idx, result in enumerate(results, start=1):
-        _print_cgi_result(
-            result,
-            index=idx,
-        )
+        _print_cgi_result(result, index=idx)
 
 
-def _run_master_data_import(
-    case: dict[str, Any] | None = None,
-) -> None:
-    """Run the one-file SDR or CGI master-data import."""
-
-    del case
-
-    print("\n" + "=" * 86)
-    print("MASTER DATA IMPORT")
-    print("=" * 86)
-    print(
-        "Select one SDR or CGI master-data file. "
-        "The data type and columns are detected automatically."
-    )
-
-    entered_path = input(
-        "\nMaster data file path: "
-    ).strip()
-
-    entered_path = entered_path.strip(
-        "\"'"
-    )
-
-    if not entered_path:
-        print(
-            "[-] No master data file was selected."
-        )
-        return
-
-    from modules.database.master_import_service import (
-        import_master_data_file,
-    )
-
-    result = import_master_data_file(
-        entered_path,
-        create_backup=True,
-    )
-
+def _print_import_result(result: dict[str, Any]) -> None:
+    """Print master data import result in structured format."""
     print("\n" + "-" * 86)
     print("MASTER DATA IMPORT RESULT")
     print("-" * 86)
@@ -510,54 +285,90 @@ def _run_master_data_import(
     )
 
     for label, key in labels:
-        value = result.get(
-            key,
-            "",
-        )
-
-        if value in {
-            "",
-            None,
-        }:
+        value = result.get(key, "")
+        if value in {"", None}:
             continue
 
-        if isinstance(
-            value,
-            int,
-        ):
+        if isinstance(value, int):
             display_value = f"{value:,}"
         else:
-            display_value = str(
-                value
+            display_value = str(value)
+
+        print(f"{label:<22}: {display_value}")
+
+    status = str(result.get("status", ""))
+    if status == "SUCCESS":
+        print("\n[+] Master data import completed successfully.")
+    elif status.startswith("SKIPPED"):
+        print("\n[=] Master data import was safely skipped.")
+    else:
+        print("\n[-] Master data import failed. Review the message and JSON import log.")
+
+
+def _run_master_data_import(
+    case: dict[str, Any] | None = None,
+) -> None:
+    """Run the one-file or folder SDR/CGI master-data import."""
+
+    del case
+
+    while True:  # Loop taaki galat input par dobara poocha ja sake
+        print("\n" + "=" * 86)
+        print("MASTER DATA IMPORT")
+        print("=" * 86)
+        print("Select one SDR or CGI master-data file, or a folder containing multiple files.")
+        print("Data type (SDR/CGI) and columns are detected automatically.")
+
+        print("\nOptions:")
+        print("1. Import a single file")
+        print("2. Import an entire folder")
+        print("0. Back to Lookup Services")
+
+        choice = input("\nChoose option (0, 1 or 2): ").strip()
+
+        if choice == "0":
+            return  # Back to main lookup menu
+
+        if choice == "1":
+            entered_path = input("\nMaster data file path: ").strip()
+            entered_path = entered_path.strip("\"'")
+
+            if not entered_path:
+                print("[-] No master data file was selected.")
+                continue
+
+            from modules.database.master_import_service import (
+                import_master_data_file,
             )
 
-        print(
-            f"{label:<22}: "
-            f"{display_value}"
-        )
+            result = import_master_data_file(
+                entered_path,
+                create_backup=True,
+            )
+            _print_import_result(result)
 
-    status = str(
-        result.get(
-            "status",
-            "",
-        )
-    )
+        elif choice == "2":
+            folder_path = input("\nMaster data folder path: ").strip()
+            folder_path = folder_path.strip("\"'")
 
-    if status == "SUCCESS":
-        print(
-            "\n[+] Master data import completed successfully."
-        )
-    elif status.startswith(
-        "SKIPPED"
-    ):
-        print(
-            "\n[=] Master data import was safely skipped."
-        )
-    else:
-        print(
-            "\n[-] Master data import failed. "
-            "Review the message and JSON import log."
-        )
+            if not folder_path:
+                print("[-] No folder selected.")
+                continue
+
+            from modules.database.master_import_service import (
+                import_master_folder,
+            )
+
+            print("\n[+] Importing all supported files from folder...")
+            try:
+                total_rows = import_master_folder(folder_path, import_type="auto")
+                print(f"\n[+] Import completed. Total rows processed: {total_rows:,}")
+            except Exception as e:
+                print(f"\n[-] Folder import failed: {e}")
+
+        else:
+            print("[-] Invalid choice. Select 0, 1 or 2.")
+            continue  # Loop back to ask again
 
 
 def run_lookup_services(
@@ -572,54 +383,34 @@ def run_lookup_services(
             print("=" * 86)
             print("1. SDR Number Lookup (Multiple allowed)")
             print("2. CGI / Cell Address Lookup (Multiple allowed)")
-            print("3. Master Data Import")
+            print("3. Master Data Import (Single file or Folder)")
             print("0. Back")
 
-            choice = input(
-                "\nChoose Action: "
-            ).strip()
+            choice = input("\nChoose Action: ").strip()
 
             if choice == "1":
-                _run_sdr_lookup(
-                    case
-                )
+                _run_sdr_lookup(case)
 
             elif choice == "2":
-                _run_cgi_lookup(
-                    case
-                )
+                _run_cgi_lookup(case)
 
             elif choice == "3":
-                _run_master_data_import(
-                    case
-                )
+                _run_master_data_import(case)
 
             elif choice == "0":
                 return
 
             else:
-                print(
-                    "[-] Invalid choice. "
-                    "Select 0, 1, 2 or 3."
-                )
+                print("[-] Invalid choice. Select 0, 1, 2 or 3.")
 
         except KeyboardInterrupt:
-            print(
-                "\n[-] Returning to Case Workspace."
-            )
+            print("\n[-] Returning to Case Workspace.")
             return
 
         except EOFError:
             return
 
         except Exception as error:
-            print(
-                "\n[-] Lookup Services failed."
-            )
-            print(
-                f"    Error Type : "
-                f"{type(error).__name__}"
-            )
-            print(
-                f"    Message    : {error}"
-            )
+            print("\n[-] Lookup Services failed.")
+            print(f"    Error Type : {type(error).__name__}")
+            print(f"    Message    : {error}")

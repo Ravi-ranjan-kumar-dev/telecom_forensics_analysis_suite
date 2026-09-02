@@ -1,6 +1,6 @@
 # Telecom Forensics Analysis Suite
 
-**Release:** 0.9.0-rc1
+**Release:** 1.0.0
 **Python:** 3.11 or newer
 **Primary platform:** Kali Linux / Linux
 
@@ -48,6 +48,31 @@ python -m pytest -q
 
 ## Start the application
 
+The desktop login uses application accounts stored by the backend. PostgreSQL
+credentials are not application login credentials, and no default application
+username or password is provided.
+
+Start the local backend first:
+
+```bash
+cd backend
+cp -n .env.example .env
+python3 -c "import secrets; print(secrets.token_urlsafe(48))"
+chmod 600 .env
+```
+
+Paste the generated value after `SECRET_KEY=` in `backend/.env`, then run:
+
+```bash
+docker compose up -d --build
+docker compose ps
+cd ..
+```
+
+The first time the GUI opens, select **First-time Setup** and create the first
+application administrator. This action is accepted only while the backend has
+zero users; later attempts are rejected.
+
 ```bash
 python main.py
 ```
@@ -57,6 +82,19 @@ Desktop GUI:
 ```bash
 python3 -u run_gui.py
 ```
+
+If an application password is forgotten, issue a private 15-minute reset token
+on the backend host:
+
+```bash
+docker compose -f backend/docker-compose.yml exec api \
+  python -m app.cli reset-token USERNAME
+```
+
+Open **Forgot Password?** in the login window and paste the complete token.
+The token is tied to the current password hash, so it becomes unusable after a
+successful password change. The backend never returns reset tokens from the
+public forgot-password endpoint.
 
 In **Tower Dump Analysis**, select the source type, parent evidence folder
 and required Spot folders. Use **Create / Manage Date-Time Parts** to save
@@ -146,6 +184,9 @@ python manage.py cgi-verify <CGI>
 python manage.py case-audit-verify [CASE_ID]
 python manage.py release-check
 python manage.py release-check --with-db
+python manage.py auth-create-admin <USERNAME>
+python manage.py auth-reset-token <USERNAME>
+python manage.py auth-reset-password <USERNAME>
 ```
 
 ## Release gate

@@ -739,7 +739,15 @@ def import_sdr_master_file(file_path) -> int:
     return _upsert_dataframe(SDR_TABLE, prepared, "mobile_number")
 
 
-def import_master_folder(folder_path, import_type: str) -> int:
+def import_master_folder(folder_path, import_type: str = "auto") -> int:
+    """
+    Import all supported SDR/CGI master files from a folder.
+
+    import_type:
+        - "auto": auto-detect each file (SDR or CGI)
+        - "sdr": force SDR import for all files
+        - "cgi": force CGI import for all files
+    """
     folder = Path(folder_path)
 
     if not folder.exists():
@@ -754,11 +762,26 @@ def import_master_folder(folder_path, import_type: str) -> int:
     total_rows = 0
 
     for file_path in files:
-        if import_type == "cgi":
-            total_rows += import_cgi_master_file(file_path)
-        elif import_type == "sdr":
-            total_rows += import_sdr_master_file(file_path)
-        else:
-            raise ValueError("import_type must be 'cgi' or 'sdr'")
+        try:
+            if import_type == "auto":
+                # Local import to avoid circular dependency
+                from .master_import_service import detect_master_data_type
+                detection = detect_master_data_type(file_path)
+                detected_type = detection.get("import_type", "SDR")
+            else:
+                detected_type = import_type.upper()
+
+            if detected_type == "SDR":
+                total_rows += import_sdr_master_file(file_path)
+            elif detected_type == "CGI":
+                total_rows += import_cgi_master_file(file_path)
+            else:
+                print(f"[!] Skipping {file_path.name}: Unknown type")
+                continue
+
+            print(f"[+] Imported {file_path.name}")
+
+        except Exception as e:
+            print(f"[-] Failed to import {file_path.name}: {e}")
 
     return total_rows
