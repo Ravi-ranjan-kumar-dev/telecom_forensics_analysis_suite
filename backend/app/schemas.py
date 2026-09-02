@@ -1,13 +1,54 @@
-from pydantic import BaseModel, EmailStr, Field
-from typing import Optional
+"""Validated API request and response models."""
+
+from __future__ import annotations
+
+from typing import Annotated, Optional
+
+from pydantic import AfterValidator, BaseModel, ConfigDict, Field
+
+from .models import UserRole
+from .security import validate_password
+
+USERNAME_PATTERN = r"^[A-Za-z0-9_.-]+$"
+PASSWORD_MIN_LENGTH = 12
+PASSWORD_MAX_LENGTH = 72
+PasswordValue = Annotated[
+    str,
+    Field(
+        min_length=PASSWORD_MIN_LENGTH,
+        max_length=PASSWORD_MAX_LENGTH,
+    ),
+    AfterValidator(validate_password),
+]
+
 
 class UserCreate(BaseModel):
-    username: str
-    password: str = Field(min_length=6, max_length=72)
+    username: str = Field(
+        min_length=3,
+        max_length=64,
+        pattern=USERNAME_PATTERN,
+    )
+    password: PasswordValue
+    role: UserRole = UserRole.viewer
+
+
+class FirstAdminCreate(BaseModel):
+    username: str = Field(
+        min_length=3,
+        max_length=64,
+        pattern=USERNAME_PATTERN,
+    )
+    password: PasswordValue
+
 
 class UserLogin(BaseModel):
     username: str
     password: str
+
+
+class SetupStatus(BaseModel):
+    setup_required: bool
+
 
 class UserOut(BaseModel):
     id: int
@@ -15,22 +56,25 @@ class UserOut(BaseModel):
     role: str
     is_active: bool
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
+
 
 class Token(BaseModel):
     access_token: str
     token_type: str = "bearer"
 
+
 class TokenData(BaseModel):
     username: Optional[str] = None
 
-# नया role update schema
+
 class UserRoleUpdate(BaseModel):
     username: str
-    role: str  # "admin", "investigator", "viewer"
+    role: UserRole
+
 
 # ----------------------------- SDR Schemas -----------------------------
+
 
 class SDRProfileOut(BaseModel):
     mobile_number: str
@@ -45,11 +89,11 @@ class SDRProfileOut(BaseModel):
     caf_number: Optional[str] = None
     source_file: Optional[str] = None
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 # ----------------------------- CGI Schemas -----------------------------
+
 
 class CGIProfileOut(BaseModel):
     cgi: str
@@ -77,5 +121,22 @@ class CGIProfileOut(BaseModel):
     cell_id: Optional[str] = None
     source_file: Optional[str] = None
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
+
+
+class PasswordResetRequest(BaseModel):
+    username: str = Field(
+        min_length=3,
+        max_length=64,
+        pattern=USERNAME_PATTERN,
+    )
+
+
+class PasswordResetConfirm(BaseModel):
+    username: str = Field(
+        min_length=3,
+        max_length=64,
+        pattern=USERNAME_PATTERN,
+    )
+    token: str = Field(min_length=20)
+    new_password: PasswordValue

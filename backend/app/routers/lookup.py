@@ -6,7 +6,7 @@ from sqlalchemy.orm import Session
 from typing import Annotated
 
 from ..database import get_db
-from ..auth import oauth2_scheme, decode_token
+from ..auth import InvalidTokenError, decode_token, oauth2_scheme
 from .. import models, schemas
 
 router = APIRouter(prefix="/api/lookup", tags=["Lookup"])
@@ -15,7 +15,13 @@ def get_current_user(
     token: Annotated[str, Depends(oauth2_scheme)],
     db: Session = Depends(get_db),
 ):
-    payload = decode_token(token)
+    try:
+        payload = decode_token(token)
+    except InvalidTokenError as error:
+        raise HTTPException(
+            status_code=401,
+            detail="Invalid token",
+        ) from error
     username = payload.get("sub")
     if not username:
         raise HTTPException(status_code=401, detail="Invalid token")

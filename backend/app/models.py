@@ -1,17 +1,8 @@
 from sqlalchemy import Column, Integer, String, Boolean, DateTime, Float
 from sqlalchemy.sql import func
 from .database import Base
+from enum import Enum
 
-
-class User(Base):
-    __tablename__ = "users"
-
-    id = Column(Integer, primary_key=True, index=True)
-    username = Column(String, unique=True, index=True, nullable=False)
-    password_hash = Column(String, nullable=False)
-    role = Column(String, default="viewer")  # admin, investigator, viewer
-    is_active = Column(Boolean, default=True)
-    created_at = Column(DateTime(timezone=True), server_default=func.now())
 
 # ----------------------------- SDR Subscriber Model -----------------------------
 
@@ -62,3 +53,19 @@ class CGIAddress(Base):
     gnb_id = Column(String, nullable=True)
     cell_id = Column(String, nullable=True)
     source_file = Column(String, nullable=True)
+
+
+class User(Base):
+    __tablename__ = "users"
+
+    id = Column(Integer, primary_key=True, index=True)
+    username = Column(String, unique=True, index=True, nullable=False)
+    password_hash = Column(String, nullable=False)
+    role = Column(String, default="viewer")
+    is_active = Column(Boolean, default=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+class UserRole(str, Enum):
+    admin = "admin"
+    investigator = "investigator"
+    viewer = "viewer"

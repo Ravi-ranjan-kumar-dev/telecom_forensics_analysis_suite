@@ -38,6 +38,7 @@ REQUIRED_FILES = [
 ]
 
 SOURCE_DIRECTORIES = (
+    "backend",
     "modules",
     "gui",
     "tools",

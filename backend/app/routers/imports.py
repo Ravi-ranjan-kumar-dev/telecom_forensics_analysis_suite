@@ -14,7 +14,7 @@ if project_root not in sys.path:
     sys.path.insert(0, project_root)
 
 from ..database import get_db
-from ..auth import oauth2_scheme, decode_token
+from ..auth import InvalidTokenError, decode_token, oauth2_scheme
 from .. import models
 
 from modules.database.master_import_service import detect_master_data_type
@@ -31,7 +31,13 @@ async def import_master_file(
     token: str = Depends(oauth2_scheme),
 ):
     """Upload and import SDR or CGI master data file using advanced parsers."""
-    decode_token(token)
+    try:
+        decode_token(token)
+    except InvalidTokenError as error:
+        raise HTTPException(
+            status_code=401,
+            detail="Invalid token",
+        ) from error
 
     content = await file.read()
     filename = file.filename.lower()
