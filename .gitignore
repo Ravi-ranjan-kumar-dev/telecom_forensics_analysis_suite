@@ -102,3 +102,22 @@ backend/.env
 *.save
 changes.diff
 gprs_finalization_source_bundle.txt
+# Environments
+.venv/
+__pycache__/
+*.pyc
+
+# Database files
+database/*.duckdb
+database/backups/
+*.duckdb
+
+# Real Forensic Cases & Data
+cases/active/
+cases/archived/
+data/
+output/
+staging/
+
+# Secrets & Config
+.env
