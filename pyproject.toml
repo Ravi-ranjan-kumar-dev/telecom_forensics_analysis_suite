@@ -39,3 +39,7 @@ include = ["modules*", "gui*"]
 testpaths = ["tests"]
 addopts = "-ra"
 pythonpath = ["."]
+filterwarnings = [
+  "ignore:'asyncio.iscoroutinefunction' is deprecated:DeprecationWarning:fastapi.*",
+  "ignore:'asyncio.iscoroutinefunction' is deprecated:DeprecationWarning:starlette.*",
+]

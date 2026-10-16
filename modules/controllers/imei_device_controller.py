@@ -3395,3 +3395,18 @@ def handle_imei_device_workspace(
 
         except EOFError:
             return
+
+# === CONTROLLER_GUI_STORE_HOOK ===
+_ORIG_RUN_IMEI_DEVICE_ANALYSIS = run_imei_device_analysis
+
+def run_imei_device_analysis(*args, **kwargs):
+    res = _ORIG_RUN_IMEI_DEVICE_ANALYSIS(*args, **kwargs)
+    try:
+        from modules.reporting.gui_bundle_extractor import extract_gui_sheets_from_result
+        from modules.reporting.gui_result_store import store_gui_sheets
+        sheets = extract_gui_sheets_from_result(res, workflow="imei & device forensics")
+        if sheets:
+            store_gui_sheets(sheets, title="IMEI & Device Forensics", workflow="imei & device forensics")
+    except Exception:
+        pass
+    return res

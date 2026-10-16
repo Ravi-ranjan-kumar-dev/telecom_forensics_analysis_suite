@@ -267,3 +267,48 @@ def enrich_cdr_dataframe(dataframe, inplace: bool = False):
             lambda value: (lookup_rows.get(normalize_cgi(value)) or {}).get("longitude", None)
         )
     return data
+
+
+def lookup_cgi_once(cgi_value: object) -> dict | None:
+    """Lookup a single CGI record from DuckDB cgi_addresses."""
+    norm = normalize_cgi(cgi_value)
+    if not norm:
+        return None
+    try:
+        df = lookup_cgi_dataframe_cached((norm,))
+        if df is not None and not df.empty:
+            return df.iloc[-1].to_dict()
+    except Exception:
+        pass
+    return None
+
+
+# === CGI_REJECT_IP_ADDRESS_GUARD ===
+import re
+_ORIG_NORMALIZE_CGI = normalize_cgi
+_IPV4_PATTERN = re.compile(r"^(?:\d{1,3}\.){3}\d{1,3}$")
+
+
+def normalize_cgi(value: object) -> str:
+    """Normalize Cell Global Identity while strictly rejecting IPv4/IPv6 addresses."""
+    if value is None:
+        return ""
+    raw = str(value).strip()
+    if not raw or raw.lower() in {"nan", "none", "<na>", "null", "-"}:
+        return ""
+    # Reject IPv6 addresses, URLs, or VoWiFi labels
+    if ":" in raw or "wlan" in raw.lower() or "wifi" in raw.lower() or "epdg" in raw.lower():
+        return ""
+    # Reject IPv4 addresses (e.g. 10.x.x.x, 49.36.x.x, 106.215.x.x)
+    if _IPV4_PATTERN.match(raw):
+        return ""
+    res = _ORIG_NORMALIZE_CGI(raw)
+    if not res:
+        return ""
+    # Valid Indian/Telecom CGI must start with 3-digit MCC (404 or 405 in India)
+    parts = res.split("-")
+    if len(parts) == 4 and parts[0] not in {"404", "405"} and all(
+        p.isdigit() and 0 <= int(p) <= 255 for p in parts
+    ):
+        return ""
+    return res

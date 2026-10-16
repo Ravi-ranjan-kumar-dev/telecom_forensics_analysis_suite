@@ -110,3 +110,50 @@ def update_user_password(
     db.commit()
     db.refresh(user)
     return user
+
+
+def list_all_users(db: Session) -> list[models.User]:
+    """Return all application user accounts ordered by ID."""
+    return db.query(models.User).order_by(models.User.id.asc()).all()
+
+
+def create_officer_account(
+    db: Session,
+    officer: schemas.AdminOfficerCreate,
+) -> models.User:
+    """Create a new police officer / investigator account."""
+    db_user = models.User(
+        username=officer.username.strip(),
+        password_hash=hash_password(officer.password),
+        role=officer.role.value,
+        is_active=True,
+        full_name=(officer.full_name or "").strip(),
+        police_unit=(officer.police_unit or "").strip(),
+        district=(officer.district or "").strip(),
+        state=(officer.state or "").strip(),
+        mobile_number=(officer.mobile_number or "").strip(),
+        expires_at=(officer.expires_at or "").strip(),
+    )
+    db.add(db_user)
+    db.commit()
+    db.refresh(db_user)
+    return db_user
+
+
+def update_user_status(
+    db: Session,
+    username: str,
+    *,
+    is_active: bool,
+    expires_at: str | None = None,
+) -> models.User | None:
+    """Activate/deactivate an officer account and optionally set expiry date."""
+    user = get_user_by_username(db, username)
+    if not user:
+        return None
+    user.is_active = bool(is_active)
+    if expires_at is not None:
+        user.expires_at = str(expires_at).strip()
+    db.commit()
+    db.refresh(user)
+    return user

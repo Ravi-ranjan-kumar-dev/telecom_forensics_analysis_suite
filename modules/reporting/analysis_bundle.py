@@ -414,3 +414,48 @@ def analysis_completion_summary(bundle: dict[str, Any]) -> dict[str, int]:
         "skipped": int(counts.get("SKIPPED", 0)),
         "total": int(len(status)),
     }
+
+
+# === CDR_BUNDLE_GUI_STORE_AND_IP_STRIP ===
+_ORIG_BUILD_SINGLE_BUNDLE = build_single_analysis_bundle
+
+
+def build_single_analysis_bundle(*args, **kwargs) -> dict:
+    from modules.reporting.gui_result_store import (
+        store_gui_sheets,
+        strip_ips_from_cgi_columns,
+    )
+    df_val = kwargs.get("df") if "df" in kwargs else (args[0] if args else None)
+    target_val = kwargs.get("target") if "target" in kwargs else (args[1] if len(args) > 1 else "")
+
+    if isinstance(df_val, pd.DataFrame):
+        df_val = strip_ips_from_cgi_columns(df_val)
+        if "df" in kwargs:
+            kwargs["df"] = df_val
+        elif args:
+            args = (df_val,) + args[1:]
+
+    bundle = _ORIG_BUILD_SINGLE_BUNDLE(*args, **kwargs)
+    try:
+        sheets = {}
+        if isinstance(df_val, pd.DataFrame) and not df_val.empty:
+            sheets[f"1. Full CDR Data ({target_val or 'Target'})"] = df_val
+        if isinstance(bundle, dict):
+            sec_map = bundle.get("sections") or bundle.get("results") or bundle
+            if isinstance(sec_map, dict):
+                for k, v in sec_map.items():
+                    if isinstance(v, pd.DataFrame) and not v.empty:
+                        sheets[str(k).replace("_", " ").title()] = strip_ips_from_cgi_columns(v)
+                    elif isinstance(v, dict):
+                        sub_df = v.get("df") if isinstance(v.get("df"), pd.DataFrame) else v.get("data")
+                        if isinstance(sub_df, pd.DataFrame) and not sub_df.empty:
+                            sheets[str(v.get("title") or k)] = strip_ips_from_cgi_columns(sub_df)
+        if sheets:
+            store_gui_sheets(
+                sheets,
+                title=f"CDR Analysis Results - Target: {target_val or 'All'}",
+                workflow="cdr",
+            )
+    except Exception:
+        pass
+    return bundle

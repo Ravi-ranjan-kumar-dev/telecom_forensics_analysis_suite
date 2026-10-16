@@ -2,6 +2,37 @@
 
 from __future__ import annotations
 
+_GUI_INPUT_CALL_COUNT = 0
+
+def _safe_cli_input(prompt: str = "", default: str = "1") -> str:
+    global _GUI_INPUT_CALL_COUNT
+    import os, sys, threading
+    is_gui = False
+    try:
+        if os.environ.get("TELECOM_GUI_MODE") == "1":
+            is_gui = True
+        elif threading.current_thread() is not threading.main_thread():
+            is_gui = True
+        else:
+            from PySide6.QtCore import QCoreApplication
+            if QCoreApplication.instance() is not None:
+                is_gui = True
+    except Exception:
+        pass
+    if is_gui:
+        _GUI_INPUT_CALL_COUNT += 1
+        if _GUI_INPUT_CALL_COUNT > 3:
+            _GUI_INPUT_CALL_COUNT = 0
+            raise EOFError("Non-interactive GUI mode: skipping CLI prompt.")
+        return default
+    try:
+        if not sys.stdin or not sys.stdin.isatty():
+            return default
+        return _safe_cli_input(prompt)
+    except EOFError:
+        return default
+
+
 from pathlib import Path
 from typing import Any
 

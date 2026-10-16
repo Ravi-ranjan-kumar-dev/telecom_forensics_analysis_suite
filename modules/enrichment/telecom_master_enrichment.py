@@ -49,6 +49,15 @@ CGI_FIELDS = {
 
 
 IPDR_TABLE_SPECS = {
+    "application_usage_summary": {
+        "sdr": ("subscriber_number",),
+    },
+    "voip_vpn_highlights": {
+        "sdr": ("subscriber_number",),
+    },
+    "p2p_social_calling_leads": {
+        "sdr": ("A Party",),
+    },
     "subscriber_summary": {
         "sdr": (
             "subscriber_number",
@@ -82,6 +91,15 @@ IPDR_TABLE_SPECS = {
 
 
 TOWER_IPDR_TABLE_SPECS = {
+    "application_usage_summary": {
+        "sdr": ("subscriber_number",),
+    },
+    "voip_vpn_highlights": {
+        "sdr": ("subscriber_number",),
+    },
+    "p2p_social_calling_leads": {
+        "sdr": ("A Party",),
+    },
     "subscriber_summary": {
         "sdr": (
             "subscriber_number",
@@ -171,6 +189,15 @@ TOWER_IPDR_PARTITION_SPECS = {
 
 
 TOWER_IPDR_COMPLETE_SPECS = {
+    "application_usage_summary": {
+        "sdr": ("subscriber_number",),
+    },
+    "voip_vpn_highlights": {
+        "sdr": ("subscriber_number",),
+    },
+    "p2p_social_calling_leads": {
+        "sdr": ("A Party",),
+    },
     "subscriber_activity": {
         "sdr": (
             "subscriber_number",
@@ -848,12 +875,7 @@ def _lookup_map_frame(
         output[
             key_column
         ]
-        .fillna(
-            ""
-        )
-        .astype(
-            str
-        )
+        .astype("object").fillna("").astype(str)
         .str.strip()
     )
 
@@ -892,12 +914,7 @@ def _apply_sdr_lookup(
         output[
             number_column
         ]
-        .fillna(
-            ""
-        )
-        .astype(
-            str
-        )
+        .astype("object").fillna("").astype(str)
         .str.strip()
     )
 
@@ -1095,12 +1112,7 @@ def _apply_cgi_lookup(
         output[
             cell_column
         ]
-        .fillna(
-            ""
-        )
-        .astype(
-            str
-        )
+        .astype("object").fillna("").astype(str)
         .str.strip()
     )
 
@@ -1225,12 +1237,7 @@ def _apply_cgi_lookup(
         output[
             f"{prefix}address"
         ]
-        .fillna(
-            ""
-        )
-        .astype(
-            str
-        )
+        .astype("object").fillna("").astype(str)
         .str.strip()
     )
 
@@ -1519,12 +1526,7 @@ def enrich_analysis_bundle(
                 dataframe[
                     column
                 ]
-                .fillna(
-                    ""
-                )
-                .astype(
-                    str
-                )
+                .astype("object").fillna("").astype(str)
                 .str.strip()
             )
 
@@ -1564,12 +1566,7 @@ def enrich_analysis_bundle(
                 dataframe[
                     column
                 ]
-                .fillna(
-                    ""
-                )
-                .astype(
-                    str
-                )
+                .astype("object").fillna("").astype(str)
                 .str.strip()
             )
 
@@ -1655,12 +1652,7 @@ def enrich_analysis_bundle(
                 sdr_lookup[
                     "sdr_found"
                 ]
-                .fillna(
-                    ""
-                )
-                .astype(
-                    str
-                )
+                .astype("object").fillna("").astype(str)
                 .str.upper()
                 .eq(
                     "YES"
@@ -1790,12 +1782,7 @@ def build_missing_cgi_summary_from_bundle(
                 dataframe[
                     status_column
                 ]
-                .fillna(
-                    ""
-                )
-                .astype(
-                    str
-                )
+                .astype("object").fillna("").astype(str)
                 .str.upper()
                 .eq(
                     "NOT_FOUND"

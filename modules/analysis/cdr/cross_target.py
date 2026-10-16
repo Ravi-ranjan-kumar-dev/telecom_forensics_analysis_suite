@@ -297,11 +297,11 @@ def _prepare_target_frame(df: pd.DataFrame, target: str) -> pd.DataFrame:
     is_sms = data["_call_type"].str.contains("sms", na=False)
     data["_is_sms"] = is_sms
     data["_is_outgoing"] = (
-        data["_call_type"].isin(["outgoing", "outgoing_call", "smsout", "outgoing_sms"])
+        data["_call_type"].isin(["outgoing", "outgoing_call", "moc", "a_out", "smsout", "outgoing_sms"])
         | data["_direction"].eq("OUTGOING")
     )
     data["_is_incoming"] = (
-        data["_call_type"].isin(["incoming", "incoming_call", "smsin", "incoming_sms"])
+        data["_call_type"].isin(["incoming", "incoming_call", "mtc", "a_in", "smsin", "incoming_sms"])
         | data["_direction"].eq("INCOMING")
     )
 

@@ -55,8 +55,35 @@ class UserOut(BaseModel):
     username: str
     role: str
     is_active: bool
+    full_name: Optional[str] = ""
+    police_unit: Optional[str] = ""
+    district: Optional[str] = ""
+    state: Optional[str] = ""
+    mobile_number: Optional[str] = ""
+    expires_at: Optional[str] = ""
 
     model_config = ConfigDict(from_attributes=True)
+
+
+class AdminOfficerCreate(BaseModel):
+    username: str = Field(min_length=3, max_length=64, pattern=USERNAME_PATTERN)
+    password: PasswordValue
+    role: UserRole = UserRole.investigator
+    full_name: Optional[str] = ""
+    police_unit: Optional[str] = ""
+    district: Optional[str] = ""
+    state: Optional[str] = ""
+    mobile_number: Optional[str] = ""
+    expires_at: Optional[str] = ""
+
+
+class UserStatusUpdate(BaseModel):
+    is_active: bool
+    expires_at: Optional[str] = None
+
+
+class AdminPasswordReset(BaseModel):
+    new_password: PasswordValue
 
 
 class Token(BaseModel):
@@ -140,3 +167,21 @@ class PasswordResetConfirm(BaseModel):
     )
     token: str = Field(min_length=20)
     new_password: PasswordValue
+
+
+class SDRBatchLookupRequest(BaseModel):
+    numbers: list[str] = Field(default_factory=list, max_length=5000)
+
+
+class SDRBatchLookupResponse(BaseModel):
+    records: list[SDRProfileOut] = Field(default_factory=list)
+    count: int = 0
+
+
+class CGIBatchLookupRequest(BaseModel):
+    cgis: list[str] = Field(default_factory=list, max_length=5000)
+
+
+class CGIBatchLookupResponse(BaseModel):
+    records: list[CGIProfileOut] = Field(default_factory=list)
+    count: int = 0

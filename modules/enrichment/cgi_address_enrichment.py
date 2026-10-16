@@ -45,6 +45,45 @@ def detect_cell_id_column(dataframe: pd.DataFrame) -> Optional[str]:
     return None
 
 
+
+
+def _lookup_cgi_from_remote_api(cgis: list[str]) -> pd.DataFrame:
+    if not cgis:
+        return pd.DataFrame(columns=CGI_LOOKUP_COLUMNS)
+    try:
+        from gui.api_client import get_active_api_client
+        client = get_active_api_client()
+        if client is None or not client.token:
+            return pd.DataFrame(columns=CGI_LOOKUP_COLUMNS)
+        if 'localhost' in client.base_url or '127.0.0.1' in client.base_url:
+            return pd.DataFrame(columns=CGI_LOOKUP_COLUMNS)
+        records = client.lookup_cgi_batch(cgis)
+        if not records:
+            return pd.DataFrame(columns=CGI_LOOKUP_COLUMNS)
+        rows = []
+        for rec in records:
+            key = normalize_cgi(rec.get("cgi", ""))
+            if not key:
+                continue
+            rows.append({
+                "cgi": key,
+                "operator": rec.get("operator", "") or "",
+                "circle": rec.get("circle", "") or "",
+                "state": rec.get("state", "") or "",
+                "district": rec.get("district", "") or "",
+                "police_station": rec.get("police_station", "") or "",
+                "town": rec.get("town", "") or "",
+                "site_name": rec.get("site_name", "") or "",
+                "address": rec.get("address", "") or "",
+                "latitude": rec.get("latitude"),
+                "longitude": rec.get("longitude"),
+                "source_file": rec.get("source_file", "") or "",
+            })
+        return pd.DataFrame(rows, columns=CGI_LOOKUP_COLUMNS) if rows else pd.DataFrame(columns=CGI_LOOKUP_COLUMNS)
+    except Exception:
+        return pd.DataFrame(columns=CGI_LOOKUP_COLUMNS)
+
+
 @lru_cache(maxsize=32)
 def _lookup_cgi_addresses_cached(cgi_tuple: tuple[str, ...]) -> pd.DataFrame:
     if not cgi_tuple:
@@ -58,11 +97,22 @@ def _lookup_cgi_addresses_cached(cgi_tuple: tuple[str, ...]) -> pd.DataFrame:
         WHERE cgi IN ({placeholders})
     """
     found = query_dataframe(sql, unique)
+
+    frames = []
+    found_keys: set[str] = set()
     if found is not None and not found.empty:
-        return found.drop_duplicates(
-            subset=["cgi"],
-            keep="last",
-        )
+        deduped = found.drop_duplicates(subset=["cgi"], keep="last")
+        frames.append(deduped)
+        found_keys = set(deduped["cgi"].astype(str).tolist())
+
+    missing = [c for c in unique if c not in found_keys]
+    if missing:
+        remote_df = _lookup_cgi_from_remote_api(missing)
+        if not remote_df.empty:
+            frames.append(remote_df)
+
+    if frames:
+        return pd.concat(frames, ignore_index=True).drop_duplicates(subset=["cgi"], keep="last")
     return pd.DataFrame(columns=CGI_LOOKUP_COLUMNS)
 
 
@@ -71,6 +121,8 @@ def lookup_cgi_addresses(cgi_values: Iterable) -> pd.DataFrame:
     if not normalized:
         return pd.DataFrame(columns=CGI_LOOKUP_COLUMNS)
     try:
+        if query_dataframe is not _original_query_dataframe:
+            _lookup_cgi_addresses_cached.cache_clear()
         return _lookup_cgi_addresses_cached(
             tuple(normalized)
         )
@@ -81,6 +133,9 @@ def lookup_cgi_addresses(cgi_values: Iterable) -> pd.DataFrame:
             and "does not exist" in message
         )
         if missing_table:
+            remote_df = _lookup_cgi_from_remote_api(normalized)
+            if not remote_df.empty:
+                return remote_df
             return pd.DataFrame(
                 columns=CGI_LOOKUP_COLUMNS
             )
@@ -200,3 +255,42 @@ def build_missing_cgi_lookup_summary(
     )
     summary["source_table"] = source_table
     return summary.sort_values("records", ascending=False)
+
+
+# === CDR_FREEZE_FIX_CGI_V3 ===
+_ORIG_LOOKUP_CGI_ADDRESSES = lookup_cgi_addresses
+_CGI_MEM_POS: dict[str, dict] = {}
+_CGI_MEM_NEG: set[str] = set()
+
+
+def lookup_cgi_addresses(cgi_values: Iterable) -> pd.DataFrame:
+    """O(1) per-CGI memory-cached lookup across CDR/IPDR/Tower tables (monkeypatch-safe)."""
+    if query_dataframe is not _original_query_dataframe:
+        _lookup_cgi_addresses_cached.cache_clear()
+        return _ORIG_LOOKUP_CGI_ADDRESSES(cgi_values)
+
+    normalized = sorted({normalize_cgi(v) for v in cgi_values if normalize_cgi(v)})
+    if not normalized:
+        return pd.DataFrame(columns=CGI_LOOKUP_COLUMNS)
+
+    hit_rows = [_CGI_MEM_POS[c] for c in normalized if c in _CGI_MEM_POS]
+    missing = [c for c in normalized if c not in _CGI_MEM_POS and c not in _CGI_MEM_NEG]
+
+    if missing:
+        _lookup_cgi_addresses_cached.cache_clear()
+        new_df = _ORIG_LOOKUP_CGI_ADDRESSES(missing)
+        found_keys = set()
+        if isinstance(new_df, pd.DataFrame) and not new_df.empty:
+            for rec in new_df.to_dict(orient="records"):
+                k = str(rec.get("cgi", "")).strip()
+                if k:
+                    _CGI_MEM_POS[k] = rec
+                    found_keys.add(k)
+                    hit_rows.append(rec)
+        for c in missing:
+            if c not in found_keys:
+                _CGI_MEM_NEG.add(c)
+
+    if not hit_rows:
+        return pd.DataFrame(columns=CGI_LOOKUP_COLUMNS)
+    return pd.DataFrame(hit_rows, columns=CGI_LOOKUP_COLUMNS).drop_duplicates(subset=["cgi"], keep="last")

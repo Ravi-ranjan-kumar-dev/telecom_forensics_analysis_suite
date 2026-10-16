@@ -942,6 +942,24 @@ def _run_complete_analysis(
             report_type="TOWER_CDR_DUMP",
             report_path=excel_path,
         )
+        try:
+            from modules.core.time_utils import new_run_id
+            from modules.reporting.cdr_report_source import (
+                create_cdr_source_run,
+                link_report_to_source,
+            )
+            _src_run = create_cdr_source_run(
+                case_id=case_id,
+                analysis_run_id=new_run_id("tower_cdr"),
+                target_frames={"TOWER_CDR_DUMP": dataframe},
+            )
+            link_report_to_source(
+                excel_path,
+                _src_run,
+                targets=["TOWER_CDR_DUMP"],
+            )
+        except Exception:
+            pass
 
         from modules.cases.latest_reports import save_latest_report
 

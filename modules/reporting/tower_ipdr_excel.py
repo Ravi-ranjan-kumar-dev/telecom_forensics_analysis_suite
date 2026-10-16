@@ -112,6 +112,7 @@ from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 from openpyxl.utils import get_column_letter
 
 from .excel_security import excel_safe_value
+from .report_sanitizer import clean_report_dataframe
 from .report_guidance import append_methodology_sheet
 
 
@@ -246,13 +247,10 @@ def _write_table(
     *,
     subtitle: str,
 ) -> list[str]:
-    dataframe = _frame(dataframe)
+    dataframe = clean_report_dataframe(_frame(dataframe), clean_headers=False)
 
     if dataframe.empty:
-        name = _sheet_name(workbook, base_name)
-        worksheet = workbook.create_sheet(name)
-        _write_page(worksheet, dataframe, title=base_name, subtitle=subtitle)
-        return [name]
+        return []
 
     pages = max(1, math.ceil(len(dataframe) / MAX_DATA_ROWS))
     names: list[str] = []
@@ -421,6 +419,17 @@ def generate_tower_ipdr_excel_report(
         ("5. Allocation Records", analysis.get("allocation_records"), "Deduplicated observed allocation-volume records; not a billing total."),
         ("6. Subscribers", analysis.get("subscriber_summary"), "Subscriber-wise IPDR intelligence with valid-mobile SDR enrichment."),
         ("6A. Master Enrichment", analysis.get("master_enrichment_summary"), "SDR and CGI lookup coverage, exclusions and missing-master-data counts."),
+        ("6B. App & Service Usage", analysis.get("application_usage_summary"), "Tower IPDR application, website, VoIP and VPN usage with active duration."),
+        ("6C. VPN & VoIP Alerts", analysis.get("voip_vpn_highlights"), "High-priority VPN, Proxy, WhatsApp/Telegram/Signal/Zangi Call and P2P leads at Tower."),
+        ("6D. Social Calling IPs", analysis.get("p2p_social_calling_leads"), "P2P Social Calling & Reverse-IPDR leads (Suspected B-Party Subscriber IPs & Ports)."),
+        ("6E. Session & Same-Time Apps", (partition.get("session_coactivity") if isinstance(partition, dict) and "session_coactivity" in partition else analysis.get("session_coactivity")), "Operator, IP Version, Destination IP, Port, Application, Session From/To, Part, Same-Time Apps & Companies."),
+        ("6F. IPv4", (partition.get("ipv4_sessions") if isinstance(partition, dict) and "ipv4_sessions" in partition else analysis.get("ipv4_sessions")), "All IPv4 sessions."),
+        ("6G. IPv6", (partition.get("ipv6_sessions") if isinstance(partition, dict) and "ipv6_sessions" in partition else analysis.get("ipv6_sessions")), "All IPv6 sessions."),
+        ("6H. Airtel", (partition.get("airtel_ips") if isinstance(partition, dict) and "airtel_ips" in partition else analysis.get("airtel_ips")), "Bharti Airtel Destination IPs."),
+        ("6I. Jio", (partition.get("jio_ips") if isinstance(partition, dict) and "jio_ips" in partition else analysis.get("jio_ips")), "Reliance Jio Destination IPs."),
+        ("6J. Vi", (partition.get("vi_ips") if isinstance(partition, dict) and "vi_ips" in partition else analysis.get("vi_ips")), "Vodafone Idea Destination IPs."),
+        ("6K. BSNL", (partition.get("bsnl_ips") if isinstance(partition, dict) and "bsnl_ips" in partition else analysis.get("bsnl_ips")), "BSNL Destination IPs."),
+        ("6L. Others", (partition.get("other_company_ips") if isinstance(partition, dict) and "other_company_ips" in partition else analysis.get("other_company_ips")), "Other Company (Apps/VPN/Cloud) Destination IPs."),
         ("7. Subscriber Cell Matrix", analysis.get("subscriber_cell_presence"), "Dynamic N-of-M searched-cell presence matrix."),
         ("8. Multi Cell Candidates", analysis.get("subscriber_multi_cell_candidates"), "Subscribers present in at least two searched cells."),
         ("9. All Cell Candidates", analysis.get("subscriber_all_cell_candidates"), "Subscribers present in every loaded searched cell."),
@@ -772,7 +781,11 @@ def _complete_report_frame(
             row_limit
         ).copy()
 
-    return frame
+    return clean_report_dataframe(
+        frame,
+        clean_headers=False,
+        keep_columns={"source_relative_path", "spot_id", "file_name", "status"},
+    )
 
 
 def generate_tower_ipdr_complete_excel_report(
@@ -905,6 +918,79 @@ def generate_tower_ipdr_complete_excel_report(
             if len(frame.columns) <= 3
             else 36
         )
+
+
+    optional_intel_sheets = (
+        (
+            "session_coactivity",
+            "7A. Session & Same-Time Apps",
+            "Operator, IP Version, Destination IP, Port, Application, Session From/To, Part, Same-Time Apps & Same-Time Companies.",
+        ),
+        (
+            "application_usage_summary",
+            "7B. App & Service Usage",
+            "Application, website, VoIP and VPN usage with company name and active duration.",
+        ),
+        (
+            "voip_vpn_highlights",
+            "7C. VPN & VoIP Alerts",
+            "High-priority VPN, Proxy, WhatsApp/Telegram/Signal/Zangi Call and P2P leads.",
+        ),
+        (
+            "p2p_social_calling_leads",
+            "7D. Social Calling IPs",
+            "P2P Social Calling & Reverse-IPDR leads (Suspected B-Party Subscriber IPs & Ports).",
+        ),
+        (
+            "ipv4_sessions",
+            "7E. IPv4",
+            "All IPv4 sessions with Operator, Destination IP, Port, Application, Session From/To and Part.",
+        ),
+        (
+            "ipv6_sessions",
+            "7F. IPv6",
+            "All IPv6 sessions with Operator, Destination IP, Port, Application, Session From/To and Part.",
+        ),
+        (
+            "airtel_ips",
+            "7G. Airtel",
+            "Sessions connected to Bharti Airtel IPs.",
+        ),
+        (
+            "jio_ips",
+            "7H. Jio",
+            "Sessions connected to Reliance Jio IPs.",
+        ),
+        (
+            "vi_ips",
+            "7I. Vi",
+            "Sessions connected to Vodafone Idea (Vi) IPs.",
+        ),
+        (
+            "bsnl_ips",
+            "7J. BSNL",
+            "Sessions connected to BSNL / MTNL IPs.",
+        ),
+        (
+            "other_company_ips",
+            "7K. Others",
+            "Sessions connected to Other Companies (WhatsApp/Meta, Google, Telegram, Signal, Zangi, VPNs, Cloud CDNs).",
+        ),
+    )
+    for opt_key, opt_title, opt_desc in optional_intel_sheets:
+        if opt_key in tables and isinstance(tables.get(opt_key), pd.DataFrame) and not tables.get(opt_key).empty:
+            opt_frame = clean_report_dataframe(_complete_report_frame(opt_key, tables.get(opt_key)))
+            if opt_frame.empty:
+                continue
+            ws_name = _sheet_name(workbook, opt_title)
+            ws = workbook.create_sheet(ws_name)
+            _write_page(
+                ws,
+                opt_frame,
+                title=opt_title,
+                subtitle=f"{subtitle_suffix} | {opt_desc}",
+            )
+            ws.row_dimensions[2].height = 36
 
     workbook.properties.title = (
         "Tower IPDR Complete Analysis "

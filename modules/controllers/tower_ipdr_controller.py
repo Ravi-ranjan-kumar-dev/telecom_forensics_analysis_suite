@@ -353,7 +353,7 @@ def _print_sightings(case_id: str) -> None:
         print(
             f"{index:<4}"
             f"{'P' + str(index):<12}"
-            f"{str(item.get('date-time_timestamp', '')):<24}"
+            f"{str((item.get('cctv_timestamp') or item.get('date-time_timestamp') or '')):<24}"
             f"{str(item.get('window_start', '')):<24}"
             f"{str(item.get('window_end', '')):<24}"
         )
@@ -914,7 +914,7 @@ def _saved_partition_times(case_id: str) -> list[str]:
     values: list[str] = []
 
     for item in list_sightings(case_id):
-        value = item.get("date-time_timestamp") or item.get("window_start") or ""
+        value = item.get("cctv_timestamp") or item.get("date-time_timestamp") or item.get("window_start") or ""
         value = str(value).strip()
 
         if value:
@@ -2345,10 +2345,49 @@ def _run_complete_tower_ipdr_analysis(
             ]
         )
 
+        from modules.analysis.ipdr.ip_port_intelligence import (
+            build_application_usage_summary,
+            build_ipdr_specialized_sheets,
+            build_p2p_social_calling_leads,
+            build_voip_vpn_highlights,
+        )
+        ipdr_sample_for_intel = read_sql(
+            f"""
+            SELECT
+                {subscriber} AS subscriber_number,
+                {text_column('operator')} AS operator,
+                {text_column('source_ip')} AS source_ip,
+                {text_column('source_ip_version')} AS source_ip_version,
+                {text_column('destination_ip')} AS destination_ip,
+                {text_column('destination_ip_version')} AS destination_ip_version,
+                {text_column('destination_port')} AS destination_port,
+                {text_column('source_port')} AS source_port,
+                {text_column('allocation_key')} AS allocation_key,
+                {event_ts} AS event_time,
+                TRY_CAST({text_column('event_duration_seconds')} AS DOUBLE) AS event_duration_seconds
+            FROM tower_ipdr_events
+            WHERE {text_column('destination_ip')} IS NOT NULL
+            LIMIT 250000
+            """
+        )
+        app_usage_table = build_application_usage_summary(ipdr_sample_for_intel)
+        voip_vpn_table = build_voip_vpn_highlights(app_usage_table)
+        p2p_social_table = build_p2p_social_calling_leads(ipdr_sample_for_intel)
+        from modules.cases.date_time_partitions import list_date_time_parts
+        saved_ipdr_parts = list_date_time_parts(case_id, "tower_ipdr")
+        specialized_ipdr_tables = build_ipdr_specialized_sheets(
+            ipdr_sample_for_intel,
+            partition_parts=saved_ipdr_parts,
+        )
+
         complete_tables = {
+            **specialized_ipdr_tables,
             "executive_summary": (
                 executive_summary
             ),
+            "application_usage_summary": app_usage_table,
+            "voip_vpn_highlights": voip_vpn_table,
+            "p2p_social_calling_leads": p2p_social_table,
             "data_quality": data_quality,
             "spot_cell_summary": (
                 spot_cell_summary
@@ -2847,10 +2886,6 @@ def _create_date_time_parts(
     print(
         "[+] Total Parts: "
         f"{payload.get('parts_count', 0)}"
-    )
-    print(
-        "[+] Next patch analysis SQL ko "
-        "saved Spot scope se bind karega."
     )
 
 
@@ -3430,3 +3465,5 @@ def handle_tower_ipdr_workspace(
                 f"[-] Tower IPDR workspace error: "
                 f"{type(error).__name__}: {error}"
             )
+
+# === CONTROLLER_GUI_STORE_HOOK ===

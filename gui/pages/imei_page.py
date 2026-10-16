@@ -17,6 +17,7 @@ from PySide6.QtWidgets import (
     QPlainTextEdit,
     QProgressBar,
     QPushButton,
+    QTabWidget,
     QVBoxLayout,
     QWidget,
 )
@@ -105,7 +106,8 @@ class ImeiPage(QFrame):
 
         self._folder_edit = QLineEdit()
         self._folder_edit.setObjectName("inputControl")
-        self._folder_edit.setReadOnly(True)
+        self._folder_edit.setReadOnly(False)
+        self._folder_edit.editingFinished.connect(lambda: self.set_selected_folder(self._folder_edit.text().strip()) if self._folder_edit.text().strip() else None)
         self._folder_edit.setPlaceholderText(
             "Select a folder containing dedicated IMEI evidence"
         )
@@ -157,6 +159,16 @@ class ImeiPage(QFrame):
         self._log.setPlaceholderText(
             "IMEI detection and analysis progress will appear here."
         )
+
+        self._browse_files_button = QPushButton("Select File(s)")
+
+
+        self._browse_files_button.setObjectName("secondaryButton")
+
+
+        self._browse_files_button.clicked.connect(self._browse_files_anywhere)
+
+
 
         self._build_layout()
 
@@ -496,3 +508,99 @@ class ImeiPage(QFrame):
                 "Open Report Folder",
                 "The operating system could not open the report folder.",
             )
+
+    def _browse_files_anywhere(
+        self,
+    ) -> None:
+        from modules.core.flexible_input import stage_selected_files_as_folder
+        start_dir = Path(self.selected_folder) if self.selected_folder and Path(self.selected_folder).exists() else Path.home()
+        if start_dir.is_file():
+            start_dir = start_dir.parent
+        files, _ = QFileDialog.getOpenFileNames(
+            self,
+            "Select Evidence File(s) from Anywhere on Computer",
+            str(start_dir),
+            "IMEI / Device Files (*.csv *.txt *.xlsx *.xls);;All Files (*)",
+        )
+        if not files:
+            return
+        try:
+            staged_folder = stage_selected_files_as_folder(
+                files,
+                workflow="imei",
+            )
+            self.set_selected_folder(staged_folder)
+        except Exception as error:
+            QMessageBox.warning(
+                self,
+                "File Selection Error",
+                str(error),
+            )
+
+
+# === FULLSCREEN_COMPLETION_HOOK ===
+_ORIG_ImeiPage_COMPLETED = ImeiPage._analysis_completed
+
+
+def _enhanced_ImeiPage_completed(self, payload: object) -> None:
+    from pathlib import Path as _Path
+    from modules.reporting.gui_result_store import get_latest_gui_meta, get_latest_gui_sheets
+    from gui.dialogs.fullscreen_results_window import open_fullscreen_results_window
+
+    result = payload if isinstance(payload, dict) else {}
+    sheets = result.get("gui_sheets") if isinstance(result.get("gui_sheets"), dict) and result.get("gui_sheets") else get_latest_gui_sheets()
+    meta = get_latest_gui_meta()
+    win_title = str(meta.get("title") or "IMEI & Device Analysis Results")
+
+    report_paths = [
+        _Path(p) for p in (result.get("report_paths") or []) if p
+    ]
+
+    if report_paths:
+        _ORIG_ImeiPage_COMPLETED(self, payload)
+        if sheets:
+            open_fullscreen_results_window(self, sheets, title=win_title)
+        return
+
+    if sheets:
+        if hasattr(self, "_set_running_state"):
+            self._set_running_state(False)
+        if hasattr(self, "_open_report_button"):
+            self._open_report_button.setEnabled(True)
+            self._open_report_button.setText("Open Analyzed Results (Full Screen)")
+        if hasattr(self, "_summary_label"):
+            total_rows = sum(len(df) for df in sheets.values())
+            self._summary_label.setText(
+                f"Loaded {len(sheets)} analyzed table(s) ({total_rows:,} total rows) in Interactive GUI Viewer."
+            )
+        if hasattr(self, "_append_log"):
+            self._append_log(
+                f"[+] Analysis complete: {len(sheets)} table(s) ready. Opening Full-Screen Interactive Viewer..."
+            )
+        open_fullscreen_results_window(self, sheets, title=win_title)
+        return
+
+    _ORIG_ImeiPage_COMPLETED(self, payload)
+
+
+ImeiPage._analysis_completed = _enhanced_ImeiPage_completed
+
+if hasattr(ImeiPage, "_open_latest_report"):
+    _ORIG_ImeiPage_OPEN_REPORT = ImeiPage._open_latest_report
+
+    def _enhanced_ImeiPage_open_report(self) -> None:
+        from modules.reporting.gui_result_store import get_latest_gui_meta, get_latest_gui_sheets
+        from gui.dialogs.fullscreen_results_window import open_fullscreen_results_window
+
+        sheets = get_latest_gui_sheets()
+        if sheets and not getattr(self, "_latest_report_paths", None):
+            meta = get_latest_gui_meta()
+            open_fullscreen_results_window(
+                self,
+                sheets,
+                title=str(meta.get("title") or "IMEI & Device Analysis Results"),
+            )
+            return
+        _ORIG_ImeiPage_OPEN_REPORT(self)
+
+    ImeiPage._open_latest_report = _enhanced_ImeiPage_open_report

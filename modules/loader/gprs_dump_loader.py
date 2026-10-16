@@ -26,6 +26,7 @@ from modules.loader.tower_spot_layout import (
 
 
 FORMAT_AIRTEL_GPRS_SESSION = "AIRTEL_GPRS_SESSION"
+FORMAT_AIRTEL_GPRS = FORMAT_AIRTEL_GPRS_SESSION
 SUPPORTED_SUFFIXES = {".csv", ".txt"}
 
 # GPRS_EMPTY_NO_DATA_V1
@@ -121,6 +122,7 @@ def _is_valid_empty_gprs_report(
         has_report_identity
         and has_explicit_no_data_marker
     )
+
 
 NORMALIZED_COLUMNS = [
     "record_type",
@@ -328,6 +330,7 @@ def detect_gprs_format(path: str | Path) -> dict[str, Any]:
         "encoding": encoding,
         "metadata": metadata,
     }
+
 
 def _string_series(dataframe: pd.DataFrame, column: str) -> pd.Series:
     if column not in dataframe.columns:
@@ -726,6 +729,9 @@ def load_gprs_dump_case(
     selected_spot_folders: Iterable[str] | None = None,
     include_root_files: bool = True,
 ) -> dict[str, Any]:
+    from modules.core.flexible_input import ensure_folder_input
+    if Path(str(folder)).expanduser().is_file():
+        folder = ensure_folder_input(folder, workflow='loader')
     root = Path(folder).expanduser().resolve()
 
     if not root.is_dir():

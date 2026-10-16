@@ -366,11 +366,12 @@ class LookupPage(QFrame):
         table.setColumnWidth(15, 130)
         table.setColumnWidth(16, 100)
         table.setColumnWidth(17, 90)
-        table.setColumnWidth(18, 130)
+        table.setColumnWidth(18, 90)
         table.setColumnWidth(19, 100)
-        table.setColumnWidth(20, 90)
-        table.setColumnWidth(21, 120)
-        table.setColumnWidth(22, 160)
+        table.setColumnWidth(20, 110)
+        table.setColumnWidth(21, 100)
+        table.setColumnWidth(22, 120)
+        table.setColumnWidth(23, 160)
         return table
 
     def _build_import_table(self) -> QTableWidget:
@@ -541,6 +542,8 @@ class LookupPage(QFrame):
         for record in records:
             if not isinstance(record, dict):
                 continue
+            if str(record.get("__status", "")).upper() == "NOT_FOUND":
+                continue
             rec = {k: v for k, v in record.items() if k != "__status"}
             valid_records.append(rec)
 
@@ -575,6 +578,8 @@ class LookupPage(QFrame):
         valid_records = []
         for record in records:
             if not isinstance(record, dict):
+                continue
+            if str(record.get("__status", "")).upper() == "NOT_FOUND":
                 continue
             rec = {k: v for k, v in record.items() if k != "__status"}
             valid_records.append(rec)

@@ -11,6 +11,15 @@ from modules.analysis.common.uncommon_numbers import (
     split_current_and_baseline_by_window,
 )
 
+from modules.analysis.ipdr.ip_port_intelligence import (
+    annotate_ipdr_with_intelligence,
+    build_application_usage_summary,
+    build_ipdr_specialized_sheets,
+    build_p2p_social_calling_leads,
+    build_voip_vpn_highlights,
+    classify_ip_and_port,
+    identify_ip_owner,
+)
 from modules.analysis.partition_scope import (
     cell_mask,
     loaded_cell_map,
@@ -20,8 +29,7 @@ from modules.analysis.partition_scope import (
 
 def _clean_text(series: pd.Series) -> pd.Series:
     return (
-        series.fillna("")
-        .astype(str)
+        series.astype("object").fillna("").astype(str)
         .str.strip()
         .replace({"nan": "", "None": "", "<NA>": ""})
     )
@@ -358,11 +366,16 @@ def _destination_ip_summary(df: pd.DataFrame) -> pd.DataFrame:
         Last_Event=("event_time", "max"),
     ).reset_index().rename(columns={"_destination": "destination_ip"})
 
-    return result.sort_values(
+    result = result.sort_values(
         ["Subscriber_Count", "Cell_Count", "Events", "destination_ip"],
         ascending=[False, False, False, True],
         ignore_index=True,
     )
+    if not result.empty:
+        owners = result["destination_ip"].map(lambda ip: identify_ip_owner(str(ip)))
+        result.insert(1, "IP_Company", owners.map(lambda item: item[0]))
+        result.insert(2, "Network_Role", owners.map(lambda item: item[1]))
+    return result
 
 
 def _destination_port_summary(df: pd.DataFrame) -> pd.DataFrame:
@@ -662,6 +675,11 @@ def run_tower_ipdr_analysis(
     if df.empty:
         raise ValueError("Tower IPDR DataFrame empty hai.")
     df = _normalise_identity_columns(df)
+    df = annotate_ipdr_with_intelligence(df)
+    app_usage = build_application_usage_summary(df)
+    voip_vpn_alerts = build_voip_vpn_highlights(app_usage)
+    social_calling_leads = build_p2p_social_calling_leads(df)
+    specialized_sheets = build_ipdr_specialized_sheets(df)
     allocations = _allocation_records(df)
     subscriber_summary = _subscriber_summary(df, allocations)
     subscriber_cell_presence = _cell_presence(df, "subscriber_number")
@@ -684,6 +702,10 @@ def run_tower_ipdr_analysis(
         "cell_summary": _cell_summary(df),
         "allocation_records": allocations,
         "subscriber_summary": subscriber_summary,
+        "application_usage_summary": app_usage,
+        "voip_vpn_highlights": voip_vpn_alerts,
+        "p2p_social_calling_leads": social_calling_leads,
+        **specialized_sheets,
         "subscriber_cell_presence": subscriber_cell_presence,
         "subscriber_multi_cell_candidates": subscriber_cell_presence.loc[
             subscriber_cell_presence["cell_count"] >= 2
@@ -993,6 +1015,10 @@ def create_tower_ipdr_partitions(
         "partition_windows": pd.DataFrame(window_rows),
         "partition_summary": pd.DataFrame(summary_rows),
         "partition_status": pd.DataFrame(status_rows),
+        **build_ipdr_specialized_sheets(
+            pd.concat(actual_hits, ignore_index=True) if actual_hits else df,
+            partition_parts=ordered,
+        ),
         "actual_event_hits": pd.concat(actual_hits, ignore_index=True) if actual_hits else pd.DataFrame(),
         "allocation_overlap_hits": pd.concat(allocation_hits, ignore_index=True) if allocation_hits else pd.DataFrame(),
         "actual_time_only_excluded_by_location": pd.concat(actual_excluded, ignore_index=True) if actual_excluded else pd.DataFrame(),

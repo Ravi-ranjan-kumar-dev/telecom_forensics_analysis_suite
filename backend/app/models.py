@@ -63,6 +63,12 @@ class User(Base):
     password_hash = Column(String, nullable=False)
     role = Column(String, default="viewer")
     is_active = Column(Boolean, default=True)
+    full_name = Column(String, nullable=True, default="")
+    police_unit = Column(String, nullable=True, default="")
+    district = Column(String, nullable=True, default="")
+    state = Column(String, nullable=True, default="")
+    mobile_number = Column(String, nullable=True, default="")
+    expires_at = Column(String, nullable=True, default="")
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
 class UserRole(str, Enum):

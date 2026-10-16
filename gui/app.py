@@ -3,6 +3,33 @@
 
 from __future__ import annotations
 
+# === GUI_NON_BLOCKING_STDIN_GUARD ===
+import builtins as _builtins
+import os as _os
+import threading as _threading
+
+_os.environ["TELECOM_GUI_MODE"] = "1"
+_THREAD_INPUT_COUNTS: dict[int, int] = {}
+
+
+def _gui_safe_input(prompt: object = "") -> str:
+    tid = _threading.get_ident()
+    cnt = _THREAD_INPUT_COUNTS.get(tid, 0) + 1
+    _THREAD_INPUT_COUNTS[tid] = cnt
+    prompt_str = str(prompt or "").strip()
+    if prompt_str:
+        print(f"[GUI Auto-Continue] {prompt_str}", flush=True)
+    if cnt > 3:
+        _THREAD_INPUT_COUNTS[tid] = 0
+        raise EOFError("GUI mode: interactive CLI prompt skipped.")
+    if any(k in prompt_str.lower() for k in ("choose", "select", "enter number", "choice", "[1")):
+        return "1"
+    return ""
+
+
+_builtins.input = _gui_safe_input
+
+
 import sys
 from collections.abc import Sequence
 

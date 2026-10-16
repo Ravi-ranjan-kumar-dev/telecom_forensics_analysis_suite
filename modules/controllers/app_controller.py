@@ -40,6 +40,19 @@ from modules.core.time_utils import new_run_id
 
 
 DIRECT_ANALYSIS_CASE_ID = "DEV-WORKSPACE"
+_ACTIVE_GUI_CASE_ID: str | None = None
+
+
+def set_active_gui_case_id(case_id: str | None) -> None:
+    """Switch the active case workspace used by the desktop GUI."""
+    global _ACTIVE_GUI_CASE_ID
+    cleaned = str(case_id or "").strip()
+    _ACTIVE_GUI_CASE_ID = cleaned if cleaned and cleaned != DIRECT_ANALYSIS_CASE_ID else None
+
+
+def get_active_gui_case_id() -> str:
+    """Return the currently selected GUI case ID."""
+    return _ACTIVE_GUI_CASE_ID or DIRECT_ANALYSIS_CASE_ID
 DIRECT_ANALYSIS_CASE_NAME = "Development Analysis Workspace"
 CASE_MANAGEMENT_ENV = "TELECOM_FORENSICS_CASE_MANAGEMENT"
 
@@ -78,8 +91,12 @@ def _direct_analysis_workspace() -> dict[str, Any]:
 
 
 def get_direct_analysis_workspace() -> dict[str, Any]:
-    """Return the active direct-analysis workspace."""
-
+    """Return the active GUI-selected case or the default workspace."""
+    if _ACTIVE_GUI_CASE_ID and _ACTIVE_GUI_CASE_ID != DIRECT_ANALYSIS_CASE_ID:
+        try:
+            return open_case(_ACTIVE_GUI_CASE_ID, include_archived=True)
+        except Exception:
+            pass
     return _direct_analysis_workspace()
 
 
@@ -261,6 +278,19 @@ def _reporting_functions() -> dict[str, Any]:
     }
 
 
+
+def _clean_cdr_cell_columns(df: pd.DataFrame) -> pd.DataFrame:
+    if not isinstance(df, pd.DataFrame) or df.empty:
+        return df
+    import re as _re
+    ip_pat = _re.compile(r"^(?:(?:\d{1,3}\.){3}\d{1,3}|.*:.*|.*(?:wlan|wifi|epdg).*)$", _re.I)
+    for col in ("first_cell_id", "last_cell_id", "cgi", "cell_id", "first_cgi", "last_cgi"):
+        if col in df.columns:
+            s = df[col].astype("object").fillna("").astype(str).str.strip()
+            df[col] = s.where(~s.str.match(ip_pat, na=False), "")
+    return df
+
+
 def _run_target_pipeline(
     *,
     df: pd.DataFrame,
@@ -277,11 +307,31 @@ def _run_target_pipeline(
     if not callable(build_bundle):
         return {"bundle": None, "excel": None, "summary": {}}
 
-    print("\n[+] Executing registered CDR analyses once...")
+    print("\n[+] Pre-caching unique B-Party SDRs & Tower CGIs in a single batch...", flush=True)
+    try:
+        from modules.enrichment.sdr_subscriber_enrichment import lookup_sdr_subscribers
+        from modules.enrichment.cgi_address_enrichment import lookup_cgi_addresses
+        _nums = set()
+        for _nc in ("a_party", "b_party", "target_number"):
+            if _nc in df.columns:
+                _nums.update(df[_nc].dropna().astype(str).unique().tolist())
+        if _nums:
+            lookup_sdr_subscribers(list(_nums)[:3000])
+        _cgis = set()
+        for _cc in ("first_cell_id", "last_cell_id", "cgi", "cell_id"):
+            if _cc in df.columns:
+                _cgis.update(df[_cc].dropna().astype(str).unique().tolist())
+        if _cgis:
+            lookup_cgi_addresses(list(_cgis)[:3000])
+    except Exception:
+        pass
+    print("[+] Executing registered CDR analyses once...", flush=True)
 
+    df = _clean_cdr_cell_columns(df)
     bundle = build_bundle(df=df, target=target)
 
-    if callable(print_report):
+    fast_gui = os.environ.get("TELECOM_GUI_FAST_MODE") == "1"
+    if callable(print_report) and not fast_gui:
         print_report(
             bundle=bundle,
             target=target,
@@ -290,7 +340,7 @@ def _run_target_pipeline(
 
     excel_path = None
 
-    if callable(single_excel):
+    if callable(single_excel) and not fast_gui:
         excel_path = single_excel(
             df=df,
             target=target,
@@ -298,12 +348,26 @@ def _run_target_pipeline(
             analysis_bundle=bundle,
             output_dir=output_dir,
         )
+    elif fast_gui:
+        print("[+] GUI-First Fast Mode: Loaded all analyzed tables directly into GUI Viewer (Auto-Excel skipped).")
 
     summary = completion(bundle) if callable(completion) else {}
 
+    gui_sheets = {}
+    if isinstance(df, pd.DataFrame) and not df.empty:
+        gui_sheets[f"Full CDR ({target})"] = df
+    if isinstance(bundle, dict):
+        sections = bundle.get("sections") or bundle.get("results") or bundle
+        if isinstance(sections, dict):
+            for s_name, s_val in sections.items():
+                if isinstance(s_val, pd.DataFrame) and not s_val.empty:
+                    gui_sheets[str(s_name).replace("_", " ").title()] = s_val
+                elif isinstance(s_val, dict) and isinstance(s_val.get("df"), pd.DataFrame) and not s_val["df"].empty:
+                    gui_sheets[str(s_val.get("title") or s_name)] = s_val["df"]
     return {
         "bundle": bundle,
         "excel": excel_path,
+        "gui_sheets": gui_sheets,
         "summary": summary if isinstance(summary, dict) else {},
     }
 
@@ -354,6 +418,24 @@ def handle_single_cdr(
         df, target = _normalise_single_result(
             controller_result
         )
+
+        if isinstance(df, pd.DataFrame) and not df.empty and not target:
+            for cand_col in ("target_number", "a_party", "subscriber_number"):
+                if cand_col in df.columns:
+                    vals = (
+                        df[cand_col]
+                        .astype("object")
+                        .fillna("")
+                        .astype(str)
+                        .str.replace(r"\D+", "", regex=True)
+                        .str[-10:]
+                    )
+                    vals = vals[vals.str.fullmatch(r"[6-9]\d{9}", na=False)]
+                    if not vals.empty:
+                        target = str(vals.mode().iloc[0])
+                        break
+            if not target:
+                target = "UNKNOWN_TARGET"
 
         if not validate_dataframe(df, "Single CDR") or not target:
             raise ValueError("Valid Single CDR target/dataframe nahi mila.")

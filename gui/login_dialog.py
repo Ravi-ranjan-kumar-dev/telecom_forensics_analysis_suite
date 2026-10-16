@@ -381,10 +381,13 @@ class LoginDialog(QDialog):
 
         button_row = QHBoxLayout()
         button_row.addStretch()
+        self.continue_offline_button = QPushButton("Local Mode (Skip Login)")
+        self.continue_offline_button.clicked.connect(self.accept_offline_mode)
         self.login_button = QPushButton("Login")
         self.login_button.clicked.connect(self.attempt_login)
         self.cancel_button = QPushButton("Cancel")
         self.cancel_button.clicked.connect(self.reject)
+        button_row.addWidget(self.continue_offline_button)
         button_row.addWidget(self.login_button)
         button_row.addWidget(self.cancel_button)
         layout.addLayout(button_row)
@@ -467,3 +470,8 @@ class LoginDialog(QDialog):
                 "Login Failed",
                 str(error),
             )
+
+    def accept_offline_mode(self) -> None:
+        """Open the desktop GUI directly using the local DuckDB workspace."""
+        self.api = None
+        self.accept()

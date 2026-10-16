@@ -41,6 +41,9 @@ def print_tower_ipdr_analysis(
         analysis.get("subscriber_all_cell_candidates"),
         row_limit,
     )
+    _print_table("APPLICATION, WEBSITE & VPN USAGE", analysis.get("application_usage_summary"), row_limit)
+    _print_table("HIGH-PRIORITY VPN & VOIP ALERTS", analysis.get("voip_vpn_highlights"), row_limit)
+    _print_table("IMPORTANT IP SOCIAL CALLING (REVERSE-IPDR LEADS)", analysis.get("p2p_social_calling_leads"), row_limit)
     _print_table("TOP DESTINATION IP", analysis.get("destination_ip_summary"), row_limit)
     _print_table("TOP DESTINATION PORT", analysis.get("destination_port_summary"), row_limit)
     _print_table("DATA QUALITY", analysis.get("data_quality"), 100)

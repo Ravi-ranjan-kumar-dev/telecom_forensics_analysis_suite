@@ -1,12 +1,10 @@
-"""Consolidated Excel reporting for target/reverse multi-operator IPDR."""
+"""Focused, investigator-friendly Excel reporting for target/reverse multi-operator IPDR."""
 
 from __future__ import annotations
 
-from modules.core.time_utils import utc_now, utc_now_iso
-
-import re
 from datetime import date, datetime
 from pathlib import Path
+import re
 from typing import Any
 
 import pandas as pd
@@ -14,8 +12,9 @@ from openpyxl import Workbook
 from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 from openpyxl.utils import get_column_letter
 
+from modules.core.time_utils import utc_now, utc_now_iso
 from .excel_security import excel_safe_value
-from .report_guidance import append_methodology_sheet
+from .report_sanitizer import clean_report_dataframe
 
 
 REPORT_TABLE_ROW_LIMIT = 5_000
@@ -36,20 +35,16 @@ def _safe_filename(value: str) -> str:
 
 
 def _safe_value(value: Any) -> Any:
-    """Compatibility wrapper around the shared Excel security boundary."""
     return excel_safe_value(value)
 
 
 def _frame(value: Any) -> pd.DataFrame:
     if isinstance(value, pd.DataFrame):
         return value.copy()
-
     if isinstance(value, list):
         return pd.DataFrame(value)
-
     if isinstance(value, dict):
         return pd.DataFrame([value])
-
     return pd.DataFrame()
 
 
@@ -63,14 +58,11 @@ def _sheet_name(workbook: Workbook, requested: str) -> str:
         return cleaned
 
     number = 2
-
     while True:
         suffix = f" {number}"
         candidate = cleaned[: 31 - len(suffix)] + suffix
-
         if candidate.lower() not in existing:
             return candidate
-
         number += 1
 
 
@@ -124,14 +116,12 @@ def _set_widths(worksheet) -> None:
     for cells in worksheet.columns:
         letter = get_column_letter(cells[0].column)
         maximum = 0
-
         for cell in cells[:500]:
             if cell.value is not None:
                 maximum = max(maximum, len(str(cell.value)))
-
         worksheet.column_dimensions[letter].width = min(
-            max(maximum + 2, 10),
-            42,
+            max(maximum + 2, 11),
+            44,
         )
 
 
@@ -148,19 +138,6 @@ def _write_page(
         subtitle,
         max(2, len(dataframe.columns)),
     )
-
-    if dataframe.empty:
-        cell = worksheet.cell(
-            header_row,
-            1,
-            "No records found.",
-        )
-        cell.fill = WARNING_FILL
-        cell.font = Font(bold=True)
-        worksheet.column_dimensions["A"].width = 36
-        worksheet.freeze_panes = f"A{header_row + 1}"
-        worksheet.sheet_view.showGridLines = False
-        return
 
     for column_index, column in enumerate(
         dataframe.columns,
@@ -195,7 +172,6 @@ def _write_page(
                 vertical="top",
                 wrap_text=False,
             )
-
             if isinstance(cell.value, (datetime, date)):
                 cell.number_format = "yyyy-mm-dd hh:mm:ss"
 
@@ -209,35 +185,41 @@ def _write_page(
     _set_widths(worksheet)
 
 
-def _write_table(
+def _write_table_if_not_empty(
     workbook: Workbook,
-    base_name: str,
-    dataframe: pd.DataFrame,
+    sheet_number: int,
+    base_title: str,
+    dataframe: Any,
     *,
     subtitle: str,
-) -> list[str]:
-    dataframe = _frame(dataframe)
-    total_rows = len(dataframe)
+    row_limit: int = REPORT_TABLE_ROW_LIMIT,
+    keep_columns: set[str] | None = None,
+) -> bool:
+    """Clean and write a worksheet only when it has actual records and columns."""
+    cleaned = clean_report_dataframe(
+        _frame(dataframe),
+        keep_columns=keep_columns,
+    )
+    if cleaned.empty or len(cleaned.columns) == 0:
+        return False
 
-    if total_rows > REPORT_TABLE_ROW_LIMIT:
-        dataframe = dataframe.head(
-            REPORT_TABLE_ROW_LIMIT
-        ).reset_index(drop=True)
+    total_rows = len(cleaned)
+    if total_rows > row_limit:
+        cleaned = cleaned.head(row_limit).reset_index(drop=True)
         subtitle = (
-            f"{subtitle} | Showing first "
-            f"{REPORT_TABLE_ROW_LIMIT:,} of {total_rows:,} rows. "
-            "Complete table is preserved in the backend CSV."
+            f"{subtitle} | Showing first {row_limit:,} of {total_rows:,} rows."
         )
 
-    name = _sheet_name(workbook, base_name)
+    numbered_title = f"{sheet_number}. {base_title}"
+    name = _sheet_name(workbook, numbered_title)
     worksheet = workbook.create_sheet(name)
     _write_page(
         worksheet,
-        dataframe,
-        title=base_name,
+        cleaned,
+        title=numbered_title,
         subtitle=subtitle,
     )
-    return [name]
+    return True
 
 
 def _key_values(
@@ -257,36 +239,29 @@ def _key_values(
             wrap_text=True,
             vertical="top",
         )
-
         if isinstance(value_cell.value, (datetime, date)):
             value_cell.number_format = "yyyy-mm-dd hh:mm:ss"
 
-    worksheet.column_dimensions["A"].width = 34
-    worksheet.column_dimensions["B"].width = 72
+    worksheet.column_dimensions["A"].width = 36
+    worksheet.column_dimensions["B"].width = 74
 
 
-def _messages(load_result: dict[str, Any]) -> pd.DataFrame:
-    rows: list[dict[str, str]] = []
-
-    for message in load_result.get("warnings", []) or []:
-        rows.append(
-            {"Level": "WARNING", "Message": str(message)}
-        )
-
-    for message in load_result.get("errors", []) or []:
-        rows.append(
-            {"Level": "ERROR", "Message": str(message)}
-        )
-
-    if not rows:
-        rows.append(
-            {
-                "Level": "INFO",
-                "Message": "No loader warning or error was reported.",
-            }
-        )
-
-    return pd.DataFrame(rows)
+def _combine_imei_imsi(
+    imei_df: pd.DataFrame,
+    imsi_df: pd.DataFrame,
+) -> pd.DataFrame:
+    frames: list[pd.DataFrame] = []
+    if isinstance(imei_df, pd.DataFrame) and not imei_df.empty and "imei" in imei_df.columns:
+        part = imei_df.rename(columns={"imei": "Identifier"}).copy()
+        part.insert(0, "Identity Type", "IMEI (Handset)")
+        frames.append(part)
+    if isinstance(imsi_df, pd.DataFrame) and not imsi_df.empty and "imsi" in imsi_df.columns:
+        part = imsi_df.rename(columns={"imsi": "Identifier"}).copy()
+        part.insert(0, "Identity Type", "IMSI (SIM)")
+        frames.append(part)
+    if not frames:
+        return pd.DataFrame()
+    return pd.concat(frames, ignore_index=True, sort=False)
 
 
 def generate_ipdr_excel_report(
@@ -298,8 +273,7 @@ def generate_ipdr_excel_report(
     output_dir: str | Path,
     saved: dict[str, Any] | None = None,
 ) -> Path:
-    """Generate one consolidated IPDR workbook."""
-
+    """Generate a compact, non-empty, investigator-focused IPDR workbook."""
     case_id = str(case.get("case_id", "")).strip() or "CASE"
     case_name = str(case.get("case_name", "")).strip()
     mode = str(mode).strip().lower()
@@ -319,210 +293,224 @@ def generate_ipdr_excel_report(
     )
     start = _write_title(
         overview,
-        f"{mode.title()} IPDR Analysis",
-        f"Case: {case_id}"
-        + (f" | {case_name}" if case_name else ""),
+        f"{mode.title()} IPDR Investigation Report",
+        f"Case: {case_id}" + (f" | {case_name}" if case_name else ""),
         6,
     )
 
     metadata = load_result.get("metadata", {}) or {}
-    subscriber_summary = _frame(
-        analysis.get("subscriber_summary")
-    )
-    data_quality = _frame(
-        analysis.get("data_quality")
-    )
-    error_count = 0
-    warning_count = 0
+    subscriber_summary = _frame(analysis.get("subscriber_summary"))
+    app_usage = _frame(analysis.get("application_usage_summary"))
+    vpn_voip = _frame(analysis.get("voip_vpn_highlights"))
+    social_ips = _frame(analysis.get("p2p_social_calling_leads"))
+    ipv4_df = _frame(analysis.get("ipv4_sessions"))
+    ipv6_df = _frame(analysis.get("ipv6_sessions"))
+    airtel_df = _frame(analysis.get("airtel_ips"))
+    jio_df = _frame(analysis.get("jio_ips"))
+    vi_df = _frame(analysis.get("vi_ips"))
+    bsnl_df = _frame(analysis.get("bsnl_ips"))
+    others_df = _frame(analysis.get("other_company_ips"))
+    summary_df = _frame(analysis.get("summary"))
 
-    if not data_quality.empty and "Severity" in data_quality:
-        error_count = int(
-            data_quality.loc[
-                data_quality["Severity"].eq("ERROR"),
-                "Rows",
-            ].sum()
-        )
-        warning_count = int(
-            data_quality.loc[
-                data_quality["Severity"].eq("WARNING"),
-                "Rows",
-            ].sum()
-        )
+    kv_rows: list[tuple[str, Any]] = [
+        ("Case ID", case_id),
+        ("Case Name", case_name or "-"),
+        ("Analysis Mode", mode.upper()),
+        ("Generated At", utc_now_iso()),
+        ("Files Found", metadata.get("files_found", 0)),
+        ("Files Loaded", metadata.get("files_loaded", 0)),
+        ("Total Normalized IPDR Records", metadata.get("total_records", 0)),
+        ("Operators Detected", ", ".join(metadata.get("operators", []) or []) or "-"),
+        ("Unique Target Subscribers / User IDs", len(subscriber_summary)),
+        ("IPv4 Sessions", len(ipv4_df)),
+        ("IPv6 Sessions", len(ipv6_df)),
+        ("Airtel Destination IPs", len(airtel_df)),
+        ("Jio Destination IPs", len(jio_df)),
+        ("Vi Destination IPs", len(vi_df)),
+        ("BSNL Destination IPs", len(bsnl_df)),
+        ("Other Company (Apps/VPN/Cloud) IPs", len(others_df)),
+        ("High-Priority VPN / VoIP Call Alerts", len(vpn_voip)),
+        ("Suspected B-Party Social Calling IPs", len(social_ips)),
+    ]
 
-    _key_values(
-        overview,
-        start,
-        [
-            ("Case ID", case_id),
-            ("Case Name", case_name),
-            ("Analysis Mode", mode.upper()),
-            ("Generated At", utc_now_iso()),
-            ("Input Folder", load_result.get("folder", "")),
-            ("Files Found", metadata.get("files_found", 0)),
-            ("Files Loaded", metadata.get("files_loaded", 0)),
-            ("Files Failed", metadata.get("files_failed", 0)),
-            ("Normalized Records", metadata.get("total_records", 0)),
-            ("IPDR Event Records", metadata.get("event_records", 0)),
-            (
-                "Allocation-only Records",
-                metadata.get("allocation_records", 0),
-            ),
-            ("Search Requests", metadata.get("search_requests", 0)),
-            (
-                "Operators",
-                ", ".join(metadata.get("operators", []) or []),
-            ),
-            (
-                "Report Scopes",
-                ", ".join(metadata.get("scopes", []) or []),
-            ),
-            ("Unique Subscribers/User IDs", len(subscriber_summary)),
-            ("Data-quality Error Rows", error_count),
-            ("Data-quality Warning Rows", warning_count),
-            (
-                "Complete Backend Tables",
-                saved.get("run_directory", "")
-                if isinstance(saved, dict)
-                else "",
-            ),
-            (
-                "Raw/Normalized Event Policy",
-                "Complete normalized events are preserved in backend CSV. "
-                f"Excel includes first {EVENT_PREVIEW_ROWS:,} normalized rows and first {REPORT_TABLE_ROW_LIMIT:,} rows of each analytical table.",
-            ),
-        ],
-    )
+    if not summary_df.empty and {"Metric", "Value"}.issubset(summary_df.columns):
+        for _, srow in summary_df.iterrows():
+            m_name = str(srow.get("Metric", "")).strip()
+            if m_name in {
+                "Unique IMEI/Device IDs",
+                "Unique IMSI",
+                "Unique Source IP",
+                "Unique Destination IP",
+                "Unique CGI/Cells",
+                "First Event Time",
+                "Last Event Time",
+                "Deduplicated Uplink Volume",
+                "Deduplicated Downlink Volume",
+            }:
+                kv_rows.append((m_name, srow.get("Value", "")))
+
+    _key_values(overview, start, kv_rows)
     overview.freeze_panes = "A4"
     overview.sheet_view.showGridLines = False
 
-    tables = [
-        ("2. Source Files", analysis.get("file_summary"), "Source classification, operator and load status."),
-        ("3. Query Summary", analysis.get("query_summary"), "Target/reverse query and source-file metrics."),
-        ("4. Subscribers", analysis.get("subscriber_summary"), "Subscriber/user-ID level activity with valid-mobile SDR enrichment."),
-        ("4A. Master Enrichment", analysis.get("master_enrichment_summary"), "SDR and CGI lookup coverage, exclusions and missing-master-data counts."),
-        ("5. Multi-File Subs", analysis.get("multi_file_subscribers"), "Subscribers observed in more than one source file."),
-        ("6. Subscriber Matrix", analysis.get("subscriber_file_presence"), "Dynamic source-file presence matrix."),
-        ("7. IMEI Summary", analysis.get("imei_summary"), "Device identity activity."),
-        ("8. Shared IMEI", analysis.get("shared_imei"), "IMEI linked with multiple subscriber identities."),
-        ("9. IMEI Matrix", analysis.get("imei_file_presence"), "IMEI presence across source files."),
-        ("10. IMSI Summary", analysis.get("imsi_summary"), "IMSI activity summary."),
-        ("11. Shared IMSI", analysis.get("shared_imsi"), "IMSI linked with multiple subscriber identities."),
-        ("12. IMSI Matrix", analysis.get("imsi_file_presence"), "IMSI presence across source files."),
-        ("13. Source IP", analysis.get("source_ip_summary"), "Source public/private IP activity."),
-        ("14. NAT IP", analysis.get("translated_ip_summary"), "Translated/NAT IP activity."),
-        ("15. Destination IP", analysis.get("destination_ip_summary"), "Destination IP activity."),
-        ("16. Destination Ports", analysis.get("destination_port_summary"), "Destination-port frequency and subscriber coverage."),
-        ("17. Endpoints", analysis.get("destination_endpoint_summary"), "Destination IP and port combinations."),
-        ("18. Allocations", analysis.get("allocation_records"), "Deduplicated session/allocation records."),
-        ("19. APN", analysis.get("apn_summary"), "Access Point Name activity."),
-        ("20. Technology", analysis.get("technology_summary"), "2G/4G/5G/RAT summary."),
-        ("21. CGI Cells", analysis.get("cgi_summary"), "CGI/cell activity."),
-        ("22. Cell Movement", analysis.get("cell_movement"), "First/last cell continuity and changes."),
-        ("23. Hourly Activity", analysis.get("hourly_activity"), "Date and hour-wise activity."),
-        ("24. Reverse Query Check", analysis.get("reverse_query_validation"), "Validation of queried destination IP against result rows."),
-        ("25. Search Requests", analysis.get("search_requests"), "Reverse-IP search input workbook records."),
-        ("26. Data Quality", analysis.get("data_quality"), "Validation checks; raw values remain unchanged."),
-        ("27. Rejected Rows", analysis.get("rejected_rows"), "Malformed/non-data rows quarantined with physical source-line provenance."),
+    device_sim_df = _combine_imei_imsi(
+        _frame(analysis.get("imei_summary")),
+        _frame(analysis.get("imsi_summary")),
+    )
+
+    coactivity_protected = {
+        "Subscriber No.",
+        "Operator",
+        "IP Version",
+        "Destination IP",
+        "Destination Port",
+        "IP Company",
+        "Application",
+        "Session From",
+        "Session To",
+        "Part",
+        "Same Time Apps",
+        "Same Time Companies",
+    }
+
+    candidate_sheets = [
+        (
+            "Session & Same-Time Apps",
+            analysis.get("session_coactivity"),
+            "Operator, IP Version, Destination IP, Port, Application, Session From/To, Part, Same-Time Apps & Same-Time Companies.",
+            REPORT_TABLE_ROW_LIMIT,
+            coactivity_protected,
+        ),
+        (
+            "App & VPN Usage",
+            analysis.get("application_usage_summary"),
+            "Application, website, VoIP and VPN usage with company name and active duration.",
+            REPORT_TABLE_ROW_LIMIT,
+            None,
+        ),
+        (
+            "VPN & VoIP Alerts",
+            analysis.get("voip_vpn_highlights"),
+            "High-priority VPN, Proxy, WhatsApp/Telegram/Signal/Zangi Call and P2P leads.",
+            REPORT_TABLE_ROW_LIMIT,
+            None,
+        ),
+        (
+            "Social Calling IPs",
+            analysis.get("p2p_social_calling_leads"),
+            "Suspected B-Party Subscriber IPs & Ports for Reverse-IPDR lookup.",
+            REPORT_TABLE_ROW_LIMIT,
+            None,
+        ),
+        (
+            "IPv4",
+            ipv4_df,
+            "All IPv4 sessions with Operator, Destination IP, Port, Application, Session From/To and Same-Time Apps.",
+            REPORT_TABLE_ROW_LIMIT,
+            coactivity_protected,
+        ),
+        (
+            "IPv6",
+            ipv6_df,
+            "All IPv6 sessions with Operator, Destination IP, Port, Application, Session From/To and Same-Time Apps.",
+            REPORT_TABLE_ROW_LIMIT,
+            coactivity_protected,
+        ),
+        (
+            "Source IP",
+            analysis.get("source_ip_summary"),
+            "Source / Public IP addresses allocated to the subscriber.",
+            REPORT_TABLE_ROW_LIMIT,
+            None,
+        ),
+        (
+            "Destination IP",
+            analysis.get("destination_endpoint_summary"),
+            "Destination IP and Port combinations with identified Company and Application.",
+            REPORT_TABLE_ROW_LIMIT,
+            None,
+        ),
+        (
+            "Airtel",
+            airtel_df,
+            "Sessions connected to Bharti Airtel IPs (Subscriber P2P or Airtel Infrastructure).",
+            REPORT_TABLE_ROW_LIMIT,
+            coactivity_protected,
+        ),
+        (
+            "Jio",
+            jio_df,
+            "Sessions connected to Reliance Jio IPs (Subscriber P2P or Jio Infrastructure).",
+            REPORT_TABLE_ROW_LIMIT,
+            coactivity_protected,
+        ),
+        (
+            "Vi",
+            vi_df,
+            "Sessions connected to Vodafone Idea (Vi) IPs.",
+            REPORT_TABLE_ROW_LIMIT,
+            coactivity_protected,
+        ),
+        (
+            "BSNL",
+            bsnl_df,
+            "Sessions connected to BSNL / MTNL IPs.",
+            REPORT_TABLE_ROW_LIMIT,
+            coactivity_protected,
+        ),
+        (
+            "Others",
+            others_df,
+            "Sessions connected to Other Companies (WhatsApp/Meta, Google, Telegram, Signal, Zangi, VPNs, Cloud CDNs).",
+            REPORT_TABLE_ROW_LIMIT,
+            coactivity_protected,
+        ),
+        (
+            "Subscribers",
+            analysis.get("subscriber_summary"),
+            "Target subscriber activity summary with SDR details.",
+            REPORT_TABLE_ROW_LIMIT,
+            None,
+        ),
+        (
+            "IMEI & IMSI",
+            device_sim_df,
+            "Handset IMEI and SIM IMSI identities used in IPDR sessions.",
+            REPORT_TABLE_ROW_LIMIT,
+            None,
+        ),
+        (
+            "Cell Towers (CGI)",
+            analysis.get("cgi_summary"),
+            "Cell ID / CGI tower activity and enriched tower locations.",
+            REPORT_TABLE_ROW_LIMIT,
+            None,
+        ),
+        (
+            "Hourly Activity",
+            analysis.get("hourly_activity"),
+            "Date and hour-wise internet session activity.",
+            REPORT_TABLE_ROW_LIMIT,
+            None,
+        ),
     ]
 
-    for name, dataframe, subtitle in tables:
-        _write_table(
+    next_sheet_no = 2
+    for base_title, table_data, subtitle, limit, keep_cols in candidate_sheets:
+        wrote = _write_table_if_not_empty(
             workbook,
-            name,
-            _frame(dataframe),
+            next_sheet_no,
+            base_title,
+            table_data,
             subtitle=subtitle,
+            row_limit=limit,
+            keep_columns=keep_cols,
         )
+        if wrote:
+            next_sheet_no += 1
 
-    normalized = _frame(analysis.get("normalized_events"))
-    preview = normalized.head(EVENT_PREVIEW_ROWS).copy()
-    _write_table(
-        workbook,
-        "28. Event Preview",
-        preview,
-        subtitle=(
-            f"First {min(len(normalized), EVENT_PREVIEW_ROWS):,} "
-            f"of {len(normalized):,} normalized records. "
-            "Complete data is saved in backend normalized_events.csv."
-        ),
-    )
-
-    status = pd.DataFrame(
-        [
-            {
-                "Stage": "Multi-operator Loading",
-                "Status": "COMPLETED",
-                "Details": (
-                    f"{metadata.get('total_records', 0):,} "
-                    "normalized result records"
-                ),
-            },
-            {
-                "Stage": "Search Request Intake",
-                "Status": "COMPLETED",
-                "Details": (
-                    f"{metadata.get('search_requests', 0):,} "
-                    "request rows"
-                ),
-            },
-            {
-                "Stage": "Core Analysis",
-                "Status": "COMPLETED",
-                "Details": f"{len(tables)} analysis groups",
-            },
-            {
-                "Stage": "Backend Persistence",
-                "Status": "COMPLETED",
-                "Details": (
-                    saved.get("run_directory", "")
-                    if isinstance(saved, dict)
-                    else ""
-                ),
-            },
-            {
-                "Stage": "Consolidated Excel",
-                "Status": "COMPLETED",
-                "Details": str(report_path),
-            },
-        ]
-    )
-    _write_table(
-        workbook,
-        "28. Analysis Status",
-        status,
-        subtitle="Execution status for this analysis run.",
-    )
-
-    message_sheets = _write_table(
-        workbook,
-        "29. Warnings",
-        _messages(load_result),
-        subtitle="Loader warnings, duplicate-file notices and errors.",
-    )
-
-    for sheet_name in message_sheets:
-        worksheet = workbook[sheet_name]
-
-        for row in range(5, worksheet.max_row + 1):
-            level = str(
-                worksheet.cell(row, 1).value or ""
-            ).upper()
-            worksheet.cell(row, 1).fill = (
-                ERROR_FILL
-                if level == "ERROR"
-                else WARNING_FILL
-                if level == "WARNING"
-                else INFO_FILL
-            )
-
-    workbook.properties.title = (
-        f"{mode.title()} IPDR Analysis - {case_id}"
-    )
-    workbook.properties.subject = (
-        "Target, reverse-IP and broadband allocation analysis"
-    )
-    workbook.properties.creator = (
-        "Telecom Forensics Analysis Suite"
-    )
-    append_methodology_sheet(workbook, "Target / Reverse IPDR Analysis")
+    workbook.properties.title = f"IPDR Analysis ({mode.title()}) - {case_id}"
+    workbook.properties.subject = "Multi-operator IPDR forensic analysis"
+    workbook.properties.creator = "Telecom Forensics Analysis Suite"
     workbook.save(report_path)
     return report_path

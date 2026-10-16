@@ -17,7 +17,7 @@ from .service import log_case_event
 
 CORE_TABLES = (
     "summary", "file_summary", "cell_summary", "allocation_records",
-    "subscriber_summary", "subscriber_cell_presence", "subscriber_multi_cell_candidates",
+    "subscriber_summary", "application_usage_summary", "voip_vpn_highlights", "p2p_social_calling_leads", "subscriber_cell_presence", "subscriber_multi_cell_candidates",
     "subscriber_all_cell_candidates", "imei_summary", "imei_cell_presence",
     "imsi_summary", "imsi_cell_presence", "source_ip_summary", "translated_ip_summary",
     "destination_ip_summary", "destination_port_summary", "destination_endpoint_summary",

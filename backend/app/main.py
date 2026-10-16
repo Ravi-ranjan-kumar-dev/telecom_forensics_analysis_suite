@@ -14,6 +14,32 @@ from .routers import auth, lookup, admin, imports
 
 Base.metadata.create_all(bind=engine)
 
+
+def _ensure_user_columns() -> None:
+    from sqlalchemy import inspect, text
+    optional_cols = {
+        "full_name": "VARCHAR",
+        "police_unit": "VARCHAR",
+        "district": "VARCHAR",
+        "state": "VARCHAR",
+        "mobile_number": "VARCHAR",
+        "expires_at": "VARCHAR",
+    }
+    try:
+        inspector = inspect(engine)
+        if "users" not in inspector.get_table_names():
+            return
+        existing = {col["name"] for col in inspector.get_columns("users")}
+        with engine.begin() as conn:
+            for col_name, col_type in optional_cols.items():
+                if col_name not in existing:
+                    conn.execute(text(f"ALTER TABLE users ADD COLUMN {col_name} {col_type}"))
+    except Exception:
+        pass
+
+
+_ensure_user_columns()
+
 app = FastAPI(title="Telecom Forensics Backend", version="0.1.0")
 __version__ = "1.0.0"
 

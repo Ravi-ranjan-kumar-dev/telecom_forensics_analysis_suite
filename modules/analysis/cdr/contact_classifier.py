@@ -73,11 +73,6 @@ def only_service_sender_ids(dataframe: pd.DataFrame, column: str = "b_party") ->
     if data.empty or "contact_category" not in data.columns:
         return data
 
-    """Return rows where the counterparty is a service/SMS sender ID."""
-    data = add_contact_category(dataframe, column)
-    if data.empty or "contact_category" not in data.columns:
-        return data
-
     return data[data["contact_category"].eq("service_sender_id")].copy()
 
 

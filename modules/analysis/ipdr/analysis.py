@@ -11,6 +11,15 @@ from modules.enrichment.telecom_master_enrichment import (
     IPDR_TABLE_SPECS,
     enrich_analysis_bundle,
 )
+from modules.analysis.ipdr.ip_port_intelligence import (
+    annotate_ipdr_with_intelligence,
+    build_application_usage_summary,
+    build_ipdr_specialized_sheets,
+    build_p2p_social_calling_leads,
+    build_voip_vpn_highlights,
+    classify_ip_and_port,
+    identify_ip_owner,
+)
 
 
 def _empty() -> pd.DataFrame:
@@ -21,7 +30,7 @@ def _nonempty(frame: pd.DataFrame, column: str) -> pd.DataFrame:
     if frame.empty or column not in frame.columns:
         return frame.iloc[0:0].copy()
 
-    values = frame[column].fillna("").astype(str).str.strip()
+    values = frame[column].astype("object").fillna("").astype(str).str.strip()
     return frame.loc[values.ne("")].copy()
 
 
@@ -59,11 +68,11 @@ def _allocation_records(data: pd.DataFrame) -> pd.DataFrame:
     variant_table = (
         data.assign(
             volume_variant_key=(
-                data["allocation_key"].fillna("").astype(str)
+                data["allocation_key"].astype("object").fillna("").astype(str)
                 + "|"
-                + data["uplink_volume"].fillna("").astype(str)
+                + data["uplink_volume"].astype("object").fillna("").astype(str)
                 + "|"
-                + data["downlink_volume"].fillna("").astype(str)
+                + data["downlink_volume"].astype("object").fillna("").astype(str)
             )
         )
         .groupby("allocation_key", dropna=False)["volume_variant_key"]
@@ -284,9 +293,9 @@ def _destination_endpoints(data: pd.DataFrame) -> pd.DataFrame:
 
     frame = frame.copy()
     frame["destination_port_text"] = (
-        frame["destination_port"].fillna("").astype(str)
+        frame["destination_port"].astype("object").fillna("").astype(str)
     )
-    return (
+    out_df = (
         frame.groupby(
             ["destination_ip", "destination_port_text"],
             dropna=False,
@@ -304,6 +313,17 @@ def _destination_endpoints(data: pd.DataFrame) -> pd.DataFrame:
         .rename(columns={"destination_port_text": "destination_port"})
         .sort_values("records", ascending=False)
     )
+    if not out_df.empty:
+        classified = [
+            classify_ip_and_port(ip, port)
+            for ip, port in zip(out_df["destination_ip"], out_df["destination_port"])
+        ]
+        intel = pd.DataFrame(classified, index=out_df.index)
+        out_df.insert(2, "ip_company", intel["ip_company"])
+        out_df.insert(3, "application_name", intel["application_name"])
+        out_df.insert(4, "service_category", intel["service_category"])
+        out_df.insert(5, "forensic_significance", intel["forensic_significance"])
+    return out_df
 
 
 def _simple_count(
@@ -354,16 +374,16 @@ def _hourly_activity(data: pd.DataFrame) -> pd.DataFrame:
 
 def _cell_movement(data: pd.DataFrame) -> pd.DataFrame:
     frame = data[
-        data["first_cell_id"].fillna("").astype(str).str.strip().ne("")
-        | data["last_cell_id"].fillna("").astype(str).str.strip().ne("")
+        data["first_cell_id"].astype("object").fillna("").astype(str).str.strip().ne("")
+        | data["last_cell_id"].astype("object").fillna("").astype(str).str.strip().ne("")
     ].copy()
 
     if frame.empty:
         return pd.DataFrame()
 
     frame["cell_changed"] = (
-        frame["first_cell_id"].fillna("").astype(str)
-        != frame["last_cell_id"].fillna("").astype(str)
+        frame["first_cell_id"].astype("object").fillna("").astype(str)
+        != frame["last_cell_id"].astype("object").fillna("").astype(str)
     )
     return (
         frame.groupby(
@@ -528,15 +548,52 @@ def _data_quality(
         ("Events outside allocation interval", int(event_outside.sum()), "WARNING", ""),
         ("Negative duration rows", int(duration.lt(0).fillna(False).sum()), "WARNING", "Raw values preserved."),
         ("Zero duration rows", int(duration.eq(0).fillna(False).sum()), "INFO", "May represent instantaneous events."),
-        ("Rows missing subscriber/user ID", int(data["subscriber_number"].fillna("").astype(str).str.strip().eq("").sum()), "WARNING", ""),
-        ("Rows missing source IP", int(data["source_ip"].fillna("").astype(str).str.strip().eq("").sum()), "WARNING", ""),
-        ("Event rows missing destination IP", int(events["destination_ip"].fillna("").astype(str).str.strip().eq("").sum()), "WARNING", ""),
+        ("Rows missing subscriber/user ID", int(data["subscriber_number"].astype("object").fillna("").astype(str).str.strip().eq("").sum()), "WARNING", ""),
+        ("Rows missing source IP", int(data["source_ip"].astype("object").fillna("").astype(str).str.strip().eq("").sum()), "WARNING", ""),
+        ("Event rows missing destination IP", int(events["destination_ip"].astype("object").fillna("").astype(str).str.strip().eq("").sum()), "WARNING", ""),
         ("Invalid source IP values", int(invalid_source.sum()), "WARNING", ""),
         ("Invalid destination IP values", int(invalid_destination.sum()), "WARNING", ""),
         ("Exact duplicate event/allocation rows", int(exact_duplicates.sum()), "WARNING", "Rows are preserved and flagged."),
         ("Allocation keys with multiple volume variants", int(volume_variants.sum()), "WARNING", "Do not sum repeated event-level volume blindly."),
     ]
     return pd.DataFrame(rows, columns=["Check", "Rows", "Severity", "Note"])
+
+
+
+
+def _enrich_dest_ip_table(df: pd.DataFrame) -> pd.DataFrame:
+    if df is None or df.empty or "destination_ip" not in df.columns:
+        return df
+    out = df.copy()
+    owners = out["destination_ip"].map(lambda ip: identify_ip_owner(str(ip)))
+    out.insert(1, "ip_company", owners.map(lambda item: item[0]))
+    out.insert(2, "network_role", owners.map(lambda item: item[1]))
+    return out
+
+
+def _enrich_dest_port_table(df: pd.DataFrame) -> pd.DataFrame:
+    if df is None or df.empty or "destination_port" not in df.columns:
+        return df
+    out = df.copy()
+    info = out["destination_port"].map(lambda p: classify_ip_and_port("", p))
+    out.insert(1, "application_name", info.map(lambda item: item["application_name"]))
+    out.insert(2, "service_category", info.map(lambda item: item["service_category"]))
+    out.insert(3, "forensic_significance", info.map(lambda item: item["forensic_significance"]))
+    return out
+
+
+
+def _sanitize_pandas3_dtypes(df: pd.DataFrame) -> pd.DataFrame:
+    if not isinstance(df, pd.DataFrame) or df.empty:
+        return df if isinstance(df, pd.DataFrame) else pd.DataFrame()
+    out = df.copy()
+    for col in out.columns:
+        dtype_name = str(out[col].dtype)
+        if dtype_name in {"Float64", "Float32"}:
+            out[col] = pd.to_numeric(out[col].astype("object"), errors="coerce").astype("float64")
+        elif dtype_name in {"Int64", "Int32", "UInt64"} and col != "source_row_number":
+            out[col] = pd.to_numeric(out[col].astype("object"), errors="coerce").astype("float64")
+    return out
 
 
 def run_ipdr_analysis(
@@ -547,7 +604,9 @@ def run_ipdr_analysis(
 ) -> dict[str, Any]:
     """Run one reusable IPDR analytical bundle without modifying raw rows."""
 
-    data = data.copy() if isinstance(data, pd.DataFrame) else pd.DataFrame()
+    data = _sanitize_pandas3_dtypes(data)
+    if not data.empty:
+        data = annotate_ipdr_with_intelligence(data)
     file_summary = (
         file_summary.copy()
         if isinstance(file_summary, pd.DataFrame)
@@ -594,16 +653,20 @@ def run_ipdr_analysis(
             "translated_ip",
             "translated_ip",
         ),
-        "destination_ip_summary": _group_identity(
+        **build_ipdr_specialized_sheets(data),
+        "application_usage_summary": build_application_usage_summary(data),
+        "voip_vpn_highlights": build_voip_vpn_highlights(build_application_usage_summary(data)),
+        "p2p_social_calling_leads": build_p2p_social_calling_leads(data),
+        "destination_ip_summary": _enrich_dest_ip_table(_group_identity(
             data,
             "destination_ip",
             "destination_ip",
-        ),
-        "destination_port_summary": _simple_count(
+        )),
+        "destination_port_summary": _enrich_dest_port_table(_simple_count(
             data,
             "destination_port",
             "destination_port",
-        ),
+        )),
         "destination_endpoint_summary": _destination_endpoints(data),
         "allocation_records": allocations,
         "apn_summary": _simple_count(data, "apn", "apn"),
@@ -634,3 +697,20 @@ def run_ipdr_analysis(
     ]
 
     return result
+
+
+# === IPDR_GUI_RESULT_STORE_HOOK ===
+_ORIG_RUN_IPDR_ANALYSIS = run_ipdr_analysis
+
+
+def run_ipdr_analysis(*args, **kwargs) -> dict:
+    res = _ORIG_RUN_IPDR_ANALYSIS(*args, **kwargs)
+    try:
+        from modules.reporting.gui_bundle_extractor import extract_gui_sheets_from_result
+        from modules.reporting.gui_result_store import store_gui_sheets
+        sheets = extract_gui_sheets_from_result({"analysis": res}, workflow="ipdr")
+        if sheets:
+            store_gui_sheets(sheets, title="IPDR Forensic Analysis Results", workflow="ipdr")
+    except Exception:
+        pass
+    return res

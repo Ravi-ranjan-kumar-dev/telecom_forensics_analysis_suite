@@ -17,3 +17,49 @@ def sample_path(tmp_path: Path) -> Path:
         encoding="utf-8",
     )
     return source
+
+
+# --- PySide6 Clean Teardown Hook for Python 3.14 ---
+import gc
+import pytest
+
+@pytest.fixture(autouse=True)
+def _cleanup_qt_widgets():
+    yield
+    try:
+        from PySide6.QtCore import QCoreApplication, QEvent
+        from PySide6.QtWidgets import QApplication
+        app = QApplication.instance()
+        if app is not None:
+            if hasattr(app, "main_window"):
+                app.main_window = None
+            for widget in list(app.topLevelWidgets()):
+                try:
+                    widget.close()
+                    widget.deleteLater()
+                except Exception:
+                    pass
+            app.sendPostedEvents(None, QEvent.Type.DeferredDelete)
+            app.processEvents()
+        gc.collect()
+    except Exception:
+        pass
+
+@pytest.fixture(autouse=True)
+def _clear_enrichment_caches():
+    def _clear():
+        try:
+            from modules.enrichment import cgi_address_enrichment, sdr_subscriber_enrichment
+            if hasattr(cgi_address_enrichment, '_lookup_cgi_addresses_cached'):
+                cgi_address_enrichment._lookup_cgi_addresses_cached.cache_clear()
+            if hasattr(sdr_subscriber_enrichment, 'lookup_sdr_subscribers_cached'):
+                sdr_subscriber_enrichment.lookup_sdr_subscribers_cached.cache_clear()
+            if hasattr(sdr_subscriber_enrichment, '_SDR_GLOBAL_ROW_CACHE'):
+                sdr_subscriber_enrichment._SDR_GLOBAL_ROW_CACHE.clear()
+            if hasattr(sdr_subscriber_enrichment, '_SDR_NEGATIVE_CACHE'):
+                sdr_subscriber_enrichment._SDR_NEGATIVE_CACHE.clear()
+        except Exception:
+            pass
+    _clear()
+    yield
+    _clear()

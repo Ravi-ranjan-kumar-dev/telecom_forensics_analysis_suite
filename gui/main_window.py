@@ -9,6 +9,7 @@ from PySide6.QtCore import Qt
 from PySide6.QtGui import QCloseEvent
 from PySide6.QtWidgets import (
     QButtonGroup,
+    QComboBox,
     QFrame,
     QHBoxLayout,
     QLabel,
@@ -186,6 +187,7 @@ class MainWindow(QMainWindow):
             self.select_page
         )
 
+        self._refresh_case_selector()
         self.select_page(
             0
         )
@@ -321,6 +323,33 @@ class MainWindow(QMainWindow):
             "brandSubtitle"
         )
 
+        case_section_label = QLabel(
+            "ACTIVE CASE (FIR)"
+        )
+        case_section_label.setObjectName(
+            "sectionLabel"
+        )
+        self._case_selector = QComboBox()
+        self._case_selector.setObjectName(
+            "inputControl"
+        )
+        self._case_selector.currentIndexChanged.connect(
+            self._on_case_selection_changed
+        )
+
+        self._new_case_button = QPushButton(
+            "+ New Case (FIR)"
+        )
+        self._new_case_button.setObjectName(
+            "secondaryButton"
+        )
+        self._new_case_button.setCursor(
+            Qt.CursorShape.PointingHandCursor
+        )
+        self._new_case_button.clicked.connect(
+            self._open_create_case_dialog
+        )
+
         section_label = QLabel(
             "ANALYSIS WORKSPACE"
         )
@@ -335,7 +364,19 @@ class MainWindow(QMainWindow):
             brand_subtitle
         )
         layout.addSpacing(
-            24
+            14
+        )
+        layout.addWidget(
+            case_section_label
+        )
+        layout.addWidget(
+            self._case_selector
+        )
+        layout.addWidget(
+            self._new_case_button
+        )
+        layout.addSpacing(
+            14
         )
         layout.addWidget(
             section_label
@@ -382,6 +423,22 @@ class MainWindow(QMainWindow):
                 QSizePolicy.Policy.Minimum,
                 QSizePolicy.Policy.Expanding,
             )
+        )
+
+        self._admin_panel_button = QPushButton(
+            "Officer Admin Panel"
+        )
+        self._admin_panel_button.setObjectName(
+            "secondaryButton"
+        )
+        self._admin_panel_button.setCursor(
+            Qt.CursorShape.PointingHandCursor
+        )
+        self._admin_panel_button.clicked.connect(
+            self._open_admin_officer_panel
+        )
+        layout.addWidget(
+            self._admin_panel_button
         )
 
         close_button = QPushButton(
@@ -544,3 +601,84 @@ class MainWindow(QMainWindow):
         raise KeyError(
             f"Unknown GUI page key: {key}"
         )
+    def _refresh_case_selector(
+        self,
+        selected_case_id: str | None = None,
+    ) -> None:
+        from modules.cases import list_cases
+        from modules.controllers.app_controller import (
+            DIRECT_ANALYSIS_CASE_ID,
+            get_active_gui_case_id,
+        )
+
+        if not hasattr(self, '_case_selector'):
+            return
+        target_id = selected_case_id or get_active_gui_case_id()
+        self._case_selector.blockSignals(True)
+        try:
+            self._case_selector.clear()
+            self._case_selector.addItem(
+                f"{DIRECT_ANALYSIS_CASE_ID} (Default)",
+                DIRECT_ANALYSIS_CASE_ID,
+            )
+            try:
+                cases = list_cases(archived=False)
+            except Exception:
+                cases = []
+            for item in cases:
+                cid = str(item.get("case_id", "")).strip()
+                cname = str(item.get("case_name", "")).strip()
+                if not cid or cid == DIRECT_ANALYSIS_CASE_ID:
+                    continue
+                label = f"{cid} — {cname}" if cname else cid
+                self._case_selector.addItem(label, cid)
+
+            idx = self._case_selector.findData(target_id)
+            if idx >= 0:
+                self._case_selector.setCurrentIndex(idx)
+        finally:
+            self._case_selector.blockSignals(False)
+
+    def _on_case_selection_changed(
+        self,
+        _index: int,
+    ) -> None:
+        from modules.controllers.app_controller import set_active_gui_case_id
+
+        case_id = str(self._case_selector.currentData() or "DEV-WORKSPACE").strip()
+        set_active_gui_case_id(case_id)
+        for idx in range(self._page_stack.count()):
+            widget = self._page_stack.widget(idx)
+            set_cid = getattr(widget, "set_case_id", None)
+            if callable(set_cid):
+                set_cid(case_id)
+            else:
+                refresh_fn = getattr(widget, "refresh", None)
+                if callable(refresh_fn):
+                    refresh_fn()
+        self.statusBar().showMessage(
+            f"Active Case switched to: {case_id}"
+        )
+
+    def _open_create_case_dialog(
+        self,
+    ) -> None:
+        from gui.widgets.create_case_dialog import CreateCaseDialog
+        from modules.controllers.app_controller import set_active_gui_case_id
+
+        dialog = CreateCaseDialog(self)
+        if dialog.exec() and isinstance(dialog.created_case, dict):
+            new_cid = str(dialog.created_case.get("case_id", "")).strip()
+            if new_cid:
+                set_active_gui_case_id(new_cid)
+                self._refresh_case_selector(selected_case_id=new_cid)
+                self._on_case_selection_changed(self._case_selector.currentIndex())
+
+    def _open_admin_officer_panel(
+        self,
+    ) -> None:
+        from gui.widgets.admin_officer_dialog import AdminOfficerDialog
+
+        from gui.api_client import get_active_api_client
+        dialog = AdminOfficerDialog(self, api_client=getattr(self, 'api_client', None) or get_active_api_client())
+        dialog.exec()
