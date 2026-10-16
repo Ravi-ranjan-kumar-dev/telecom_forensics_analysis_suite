@@ -700,6 +700,14 @@ class CaseReportsPage(QFrame):
             stretch=1,
         )
 
+    def set_case_id(
+        self,
+        case_id: str,
+    ) -> None:
+        """Switch the active case for report browsing and reload."""
+        self._case_id = str(case_id or "").strip() or "DEV-WORKSPACE"
+        self.refresh()
+
     def refresh(
         self,
     ) -> None:
@@ -858,6 +866,19 @@ class CaseReportsPage(QFrame):
                 self._entries
             )
         )
+        self._summary.setText(
+            (
+                f"Case: {self._case_id} | "
+                f"Available report groups: {available_entries} | "
+                f"Rows shown: {len(self._entries)}"
+                + (
+                    f" | Missing history hidden: {hidden_count}"
+                    if hidden_count
+                    else ""
+                )
+                + ". Map and route actions appear only when their files exist."
+            )
+        )
 
     @staticmethod
     def _sortable_item(
@@ -882,19 +903,6 @@ class CaseReportsPage(QFrame):
                 sort_value = -1.0
 
         return _ReportSortItem(value, sort_value)
-        self._summary.setText(
-            (
-                f"Case: {self._case_id} | "
-                f"Available report groups: {available_entries} | "
-                f"Rows shown: {len(self._entries)}"
-                + (
-                    f" | Missing history hidden: {hidden_count}"
-                    if hidden_count
-                    else ""
-                )
-                + ". Map and route actions appear only when their files exist."
-            )
-        )
 
     def _action_button(
         self,

@@ -36,7 +36,7 @@ from modules.database.master_import_service import (
     SUPPORTED_MASTER_SUFFIXES,
 )
 
-# SDR table columns (unchanged)
+# SDR table columns
 _SDR_COLUMNS = (
     ("mobile_number", "Mobile Number"),
     ("subscriber_name", "Subscriber Name"),
@@ -49,7 +49,7 @@ _SDR_COLUMNS = (
     ("source_file", "Source File"),
 )
 
-# CGI table columns (now a table, not key-value)
+# CGI table columns
 _CGI_COLUMNS = (
     ("cgi", "CGI / Cell ID"),
     ("operator", "Operator"),
@@ -115,8 +115,10 @@ class LookupPage(QFrame):
     def __init__(
         self,
         parent: QWidget | None = None,
+        api_client=None,
     ) -> None:
         super().__init__(parent)
+        self.api_client = api_client
         self.setObjectName("pageSurface")
 
         self._thread: QThread | None = None
@@ -137,7 +139,7 @@ class LookupPage(QFrame):
         self._cgi_input.setClearButtonEnabled(True)
         self._cgi_button = QPushButton("Search CGI / Cell")
         self._cgi_button.setObjectName("primaryButton")
-        self._cgi_table = self._build_cgi_table()   # <-- CGI table build
+        self._cgi_table = self._build_cgi_table()
 
         self._import_edit = QLineEdit()
         self._import_edit.setObjectName("inputControl")
@@ -185,12 +187,10 @@ class LookupPage(QFrame):
 
     @property
     def is_running(self) -> bool:
-        """Return True while a lookup or import worker is active."""
         return self._thread is not None
 
     @property
     def last_results(self) -> dict[str, dict[str, Any]]:
-        """Return a copy of the latest result for every operation."""
         return {key: dict(value) for key, value in self._last_results.items()}
 
     def _build_layout(self) -> None:
@@ -366,11 +366,12 @@ class LookupPage(QFrame):
         table.setColumnWidth(15, 130)
         table.setColumnWidth(16, 100)
         table.setColumnWidth(17, 90)
-        table.setColumnWidth(18, 130)
+        table.setColumnWidth(18, 90)
         table.setColumnWidth(19, 100)
-        table.setColumnWidth(20, 90)
-        table.setColumnWidth(21, 120)
-        table.setColumnWidth(22, 160)
+        table.setColumnWidth(20, 110)
+        table.setColumnWidth(21, 100)
+        table.setColumnWidth(22, 120)
+        table.setColumnWidth(23, 160)
         return table
 
     def _build_import_table(self) -> QTableWidget:
@@ -396,8 +397,21 @@ class LookupPage(QFrame):
         self._import_edit.setText(str(Path(value).expanduser().resolve(strict=False)))
         self._import_edit.setProperty("isFolder", True)
 
+    def import_validation_error(self) -> str:
+        value = self._import_edit.text().strip()
+        if not value:
+            return "Select one SDR or CGI master-data file."
+        path = Path(value)
+        if not path.exists():
+            return "The selected master-data file does not exist."
+        if path.is_dir():
+            return ""
+        if path.suffix.casefold() not in SUPPORTED_MASTER_SUFFIXES:
+            return "The selected master-data file type is not supported."
+        return ""
+
     def refresh(self) -> None:
-        """Keep the current lookup results visible when revisiting the page."""
+        pass
 
     def _browse_import_file(self) -> None:
         selected, _ = QFileDialog.getOpenFileName(
@@ -468,7 +482,7 @@ class LookupPage(QFrame):
         self._set_running_state(True)
 
         thread = QThread(self)
-        worker = LookupWorker(operation=operation, value=value)
+        worker = LookupWorker(operation=operation, value=value, api_client=self.api_client)
         worker.moveToThread(thread)
         thread.started.connect(worker.run)
         worker.log.connect(self._append_log)
@@ -528,6 +542,8 @@ class LookupPage(QFrame):
         for record in records:
             if not isinstance(record, dict):
                 continue
+            if str(record.get("__status", "")).upper() == "NOT_FOUND":
+                continue
             rec = {k: v for k, v in record.items() if k != "__status"}
             valid_records.append(rec)
 
@@ -551,13 +567,19 @@ class LookupPage(QFrame):
 
     def _display_cgi_result(self, result: dict[str, Any]) -> None:
         status = str(result.get("status", ""))
-        records = result.get("records", [])
-        if not isinstance(records, list):
+        # Support both "records" (list) and "record" (dict)
+        if "records" in result and isinstance(result["records"], list):
+            records = result["records"]
+        elif "record" in result and isinstance(result["record"], dict):
+            records = [result["record"]]
+        else:
             records = []
 
         valid_records = []
         for record in records:
             if not isinstance(record, dict):
+                continue
+            if str(record.get("__status", "")).upper() == "NOT_FOUND":
                 continue
             rec = {k: v for k, v in record.items() if k != "__status"}
             valid_records.append(rec)

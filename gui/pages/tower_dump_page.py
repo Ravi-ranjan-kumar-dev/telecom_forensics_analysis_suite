@@ -19,6 +19,7 @@ from PySide6.QtWidgets import (
     QPlainTextEdit,
     QProgressBar,
     QPushButton,
+    QTabWidget,
     QVBoxLayout,
     QWidget,
 )
@@ -125,8 +126,9 @@ class TowerDumpPage(QFrame):
             "inputControl"
         )
         self._folder_edit.setReadOnly(
-            True
+            False
         )
+        self._folder_edit.editingFinished.connect(lambda: self.set_selected_folder(self._folder_edit.text().strip()) if self._folder_edit.text().strip() else None)
         self._folder_edit.setPlaceholderText(
             "Select the parent folder containing all Spot folders"
         )
@@ -238,6 +240,32 @@ class TowerDumpPage(QFrame):
             False
         )
 
+        self._open_viewer_button = QPushButton(
+            "Open in Internal Viewer (Drill-Down)"
+        )
+        self._open_viewer_button.setObjectName(
+            "secondaryButton"
+        )
+        self._open_viewer_button.setEnabled(
+            False
+        )
+
+        self._search_input = QLineEdit()
+        self._search_input.setObjectName(
+            "inputControl"
+        )
+        self._search_input.setPlaceholderText(
+            "Enter suspected mobile number(s) (comma-separated) to search 100% full dump & B-Parties..."
+        )
+        self._search_input.setClearButtonEnabled(True)
+
+        self._search_dump_button = QPushButton(
+            "Search Suspect & B-Parties in Full Dump"
+        )
+        self._search_dump_button.setObjectName(
+            "secondaryButton"
+        )
+
         self._progress = QProgressBar()
         self._progress.setObjectName(
             "analysisProgress"
@@ -274,6 +302,10 @@ class TowerDumpPage(QFrame):
             "Tower Dump analysis progress will appear here."
         )
 
+        self._browse_files_button = QPushButton("Select File(s)")
+        self._browse_files_button.setObjectName("secondaryButton")
+        self._browse_files_button.clicked.connect(self._browse_files_anywhere)
+
         self._build_layout()
 
         self._mode_box.currentIndexChanged.connect(
@@ -302,6 +334,15 @@ class TowerDumpPage(QFrame):
         )
         self._open_report_button.clicked.connect(
             self._open_latest_report
+        )
+        self._open_viewer_button.clicked.connect(
+            self._open_internal_viewer
+        )
+        self._search_dump_button.clicked.connect(
+            self._search_full_dump_suspect
+        )
+        self._search_input.returnPressed.connect(
+            self._search_full_dump_suspect
         )
 
         self._mode_changed()
@@ -573,6 +614,9 @@ class TowerDumpPage(QFrame):
         folder_row.addWidget(
             self._browse_button
         )
+        folder_row.addWidget(
+            self._browse_files_button
+        )
 
         spot_action_row = QHBoxLayout()
         spot_action_row.setSpacing(
@@ -616,6 +660,24 @@ class TowerDumpPage(QFrame):
         )
         partition_action_row.addStretch()
 
+        search_heading = QLabel(
+            "Full Dump Suspect & B-Party Search (100% Staged/Raw Dump)"
+        )
+        search_heading.setObjectName(
+            "fieldLabel"
+        )
+        search_row = QHBoxLayout()
+        search_row.setSpacing(
+            10
+        )
+        search_row.addWidget(
+            self._search_input,
+            stretch=1,
+        )
+        search_row.addWidget(
+            self._search_dump_button
+        )
+
         action_row = QHBoxLayout()
         action_row.setSpacing(
             10
@@ -625,6 +687,9 @@ class TowerDumpPage(QFrame):
         )
         action_row.addWidget(
             self._open_report_button
+        )
+        action_row.addWidget(
+            self._open_viewer_button
         )
         action_row.addStretch()
 
@@ -666,6 +731,12 @@ class TowerDumpPage(QFrame):
         )
         controls_layout.addWidget(
             self._parts_summary_label
+        )
+        controls_layout.addWidget(
+            search_heading
+        )
+        controls_layout.addLayout(
+            search_row
         )
         controls_layout.addLayout(
             action_row
@@ -855,6 +926,11 @@ class TowerDumpPage(QFrame):
             ]
         )
         self._open_report_button.setEnabled(
+            bool(
+                self.report_paths
+            )
+        )
+        self._open_viewer_button.setEnabled(
             bool(
                 self.report_paths
             )
@@ -1611,6 +1687,12 @@ class TowerDumpPage(QFrame):
             )
             else {}
         )
+        gui_sheets = result.get("gui_sheets")
+        if isinstance(gui_sheets, dict) and gui_sheets:
+            self._data_viewer_panel.load_dataframe(gui_sheets)
+            if hasattr(self, '_workspace_tabs'):
+                self._workspace_tabs.setCurrentIndex(1)
+            self._append_log(f"[+] Loaded {len(gui_sheets)} analyzed table(s) into Interactive GUI Viewer.")
         source_type = str(
             result.get(
                 "source_type",
@@ -1645,6 +1727,11 @@ class TowerDumpPage(QFrame):
             source_type
         ] = paths
         self._open_report_button.setEnabled(
+            bool(
+                self.report_paths
+            )
+        )
+        self._open_viewer_button.setEnabled(
             bool(
                 self.report_paths
             )
@@ -1740,3 +1827,194 @@ class TowerDumpPage(QFrame):
                 "Open Report",
                 "The operating system could not open the report.",
             )
+
+
+    def _open_internal_viewer(
+        self,
+    ) -> None:
+        if not self.report_paths:
+            return
+        report_path = Path(
+            self.report_paths[0]
+        )
+        if not report_path.is_file():
+            QMessageBox.warning(
+                self,
+                "Report Not Found",
+                f"The report file is not available:\n{report_path}",
+            )
+            return
+        from gui.widgets.report_viewer_dialog import ReportViewerDialog
+        ReportViewerDialog(report_path, self).exec()
+
+    def _search_full_dump_suspect(
+        self,
+    ) -> None:
+        if self.is_running:
+            return
+        error = self.validation_error()
+        if error:
+            QMessageBox.warning(
+                self,
+                "Tower Dump Input Review",
+                error,
+            )
+            self._status_label.setText(error)
+            return
+
+        query = self._search_input.text().strip()
+        if not query:
+            QMessageBox.warning(
+                self,
+                "Suspect Number Required",
+                "Enter at least one suspected mobile number to search across the full Tower Dump.",
+            )
+            return
+
+        try:
+            from modules.analysis.towerdump.full_dump_search import (
+                load_full_tower_dump_dataframe,
+                search_suspect_and_b_parties_in_dataframe,
+            )
+            from gui.widgets.tower_search_dialog import TowerDumpSearchDialog
+
+            self._status_label.setText("Searching 100% Full Tower Dump...")
+            self._append_log(f"[+] Searching full {self.selected_mode.upper()} dump for: {query}")
+
+            has_spot_folders = bool(self.detected_spot_names)
+            selected_spots = self.selected_spot_names if has_spot_folders else None
+            include_root_files = not has_spot_folders
+            case = self._active_case()
+
+            df = load_full_tower_dump_dataframe(
+                str(case.get("case_id", "DEV-WORKSPACE")),
+                source_type=self.selected_mode,
+                input_folder=self.selected_folder,
+                selected_spot_folders=selected_spots,
+                include_root_files=include_root_files,
+            )
+            if df.empty:
+                QMessageBox.information(
+                    self,
+                    "No Dump Records",
+                    "No valid records could be loaded from the selected Tower Dump folder.",
+                )
+                return
+
+            search_res = search_suspect_and_b_parties_in_dataframe(
+                df,
+                query,
+                source_type=self.selected_mode,
+            )
+            matched_cnt = int(search_res.get("matched_count", 0) or 0)
+            cp_cnt = len(search_res.get("counterparty_summary", []))
+            self._status_label.setText(
+                f"Full Dump Search completed | Matched rows: {matched_cnt:,} | Linked B-Parties: {cp_cnt:,}"
+            )
+            self._append_log(
+                f"[+] Full Dump Search: {matched_cnt:,} record(s) and {cp_cnt:,} B-Party contact(s) found out of {len(df):,} total dump rows."
+            )
+            TowerDumpSearchDialog(search_res, self).exec()
+        except Exception as error:
+            QMessageBox.warning(
+                self,
+                "Full Dump Search Error",
+                f"{type(error).__name__}: {error}",
+            )
+            self._status_label.setText("Full dump search failed.")
+
+    def _browse_files_anywhere(
+        self,
+    ) -> None:
+        from modules.core.flexible_input import stage_selected_files_as_folder
+        start_dir = Path(self.selected_folder) if self.selected_folder and Path(self.selected_folder).exists() else Path.home()
+        if start_dir.is_file():
+            start_dir = start_dir.parent
+        files, _ = QFileDialog.getOpenFileNames(
+            self,
+            "Select Evidence File(s) from Anywhere on Computer",
+            str(start_dir),
+            "Tower Dump Files (*.csv *.txt *.tsv *.xlsx *.xls);;All Files (*)",
+        )
+        if not files:
+            return
+        try:
+            staged_folder = stage_selected_files_as_folder(
+                files,
+                workflow="tower_dump",
+            )
+            self.set_selected_folder(staged_folder)
+        except Exception as error:
+            QMessageBox.warning(
+                self,
+                "File Selection Error",
+                str(error),
+            )
+
+
+# === FULLSCREEN_COMPLETION_HOOK ===
+_ORIG_TowerDumpPage_COMPLETED = TowerDumpPage._analysis_completed
+
+
+def _enhanced_TowerDumpPage_completed(self, payload: object) -> None:
+    from pathlib import Path as _Path
+    from modules.reporting.gui_result_store import get_latest_gui_meta, get_latest_gui_sheets
+    from gui.dialogs.fullscreen_results_window import open_fullscreen_results_window
+
+    result = payload if isinstance(payload, dict) else {}
+    sheets = result.get("gui_sheets") if isinstance(result.get("gui_sheets"), dict) and result.get("gui_sheets") else get_latest_gui_sheets()
+    meta = get_latest_gui_meta()
+    win_title = str(meta.get("title") or "Tower Dump Analysis Results")
+
+    report_paths = [
+        _Path(p) for p in (result.get("report_paths") or []) if p
+    ]
+
+    if report_paths:
+        _ORIG_TowerDumpPage_COMPLETED(self, payload)
+        if sheets:
+            open_fullscreen_results_window(self, sheets, title=win_title)
+        return
+
+    if sheets:
+        if hasattr(self, "_set_running_state"):
+            self._set_running_state(False)
+        if hasattr(self, "_open_report_button"):
+            self._open_report_button.setEnabled(True)
+            self._open_report_button.setText("Open Analyzed Results (Full Screen)")
+        if hasattr(self, "_summary_label"):
+            total_rows = sum(len(df) for df in sheets.values())
+            self._summary_label.setText(
+                f"Loaded {len(sheets)} analyzed table(s) ({total_rows:,} total rows) in Interactive GUI Viewer."
+            )
+        if hasattr(self, "_append_log"):
+            self._append_log(
+                f"[+] Analysis complete: {len(sheets)} table(s) ready. Opening Full-Screen Interactive Viewer..."
+            )
+        open_fullscreen_results_window(self, sheets, title=win_title)
+        return
+
+    _ORIG_TowerDumpPage_COMPLETED(self, payload)
+
+
+TowerDumpPage._analysis_completed = _enhanced_TowerDumpPage_completed
+
+if hasattr(TowerDumpPage, "_open_latest_report"):
+    _ORIG_TowerDumpPage_OPEN_REPORT = TowerDumpPage._open_latest_report
+
+    def _enhanced_TowerDumpPage_open_report(self) -> None:
+        from modules.reporting.gui_result_store import get_latest_gui_meta, get_latest_gui_sheets
+        from gui.dialogs.fullscreen_results_window import open_fullscreen_results_window
+
+        sheets = get_latest_gui_sheets()
+        if sheets and not getattr(self, "_latest_report_paths", None):
+            meta = get_latest_gui_meta()
+            open_fullscreen_results_window(
+                self,
+                sheets,
+                title=str(meta.get("title") or "Tower Dump Analysis Results"),
+            )
+            return
+        _ORIG_TowerDumpPage_OPEN_REPORT(self)
+
+    TowerDumpPage._open_latest_report = _enhanced_TowerDumpPage_open_report

@@ -1518,3 +1518,5 @@ def handle_tower_gprs_workspace(
                 f"{type(error).__name__}: "
                 f"{error}"
             )
+
+# === CONTROLLER_GUI_STORE_HOOK ===

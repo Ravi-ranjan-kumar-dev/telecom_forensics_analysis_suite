@@ -57,3 +57,6 @@ class SignalTextStream(io.TextIOBase):
             )
 
         self._buffer = ""
+
+    def isatty(self) -> bool:
+        return False

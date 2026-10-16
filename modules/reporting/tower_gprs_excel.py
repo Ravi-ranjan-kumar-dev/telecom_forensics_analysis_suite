@@ -16,6 +16,7 @@ from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 from openpyxl.utils import get_column_letter
 
 from .excel_security import excel_safe_value
+from .report_sanitizer import clean_report_dataframe
 from .report_guidance import append_methodology_sheet
 
 

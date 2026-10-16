@@ -7,3 +7,4 @@ pyarrow
 pyxlsb>=1.0.10
 pytz>=2024.1
 PySide6>=6.8,<7
+requests>=2.31,<3

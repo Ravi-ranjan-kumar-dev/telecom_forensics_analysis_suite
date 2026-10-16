@@ -1,8 +1,16 @@
 from __future__ import annotations
 
 import pandas as pd
+import pytest
 
 from modules.database import lookup_service
+
+
+@pytest.fixture(autouse=True)
+def clear_sdr_profile_cache():
+    lookup_service._lookup_sdr_profile_cached.cache_clear()
+    yield
+    lookup_service._lookup_sdr_profile_cached.cache_clear()
 
 
 def _mock_large_sdr_row(

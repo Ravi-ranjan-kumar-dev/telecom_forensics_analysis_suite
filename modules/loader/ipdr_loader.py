@@ -149,10 +149,13 @@ def _canonical_ip(value: Any) -> str:
         text, prefix = text.split("/", 1)
         prefix = "/" + prefix
 
+    if ":" in text:
+        text = re.sub(r":{3,}", "::", text)
+
     try:
         return ipaddress.ip_address(text).compressed + prefix
     except ValueError:
-        return _text(value)
+        return text + prefix
 
 
 def _ip_version(value: Any) -> str:
@@ -181,9 +184,9 @@ def _number(series: Any) -> pd.Series:
 def _datetime(
     series: Any,
     *,
-    dayfirst: bool = False,
+    dayfirst: bool = True,
 ) -> pd.Series:
-    """Parse mixed operator date formats without dropping source rows."""
+    """Parse mixed operator date formats robustly with dayfirst=True."""
 
     index = (
         series.index
@@ -213,11 +216,7 @@ def _datetime(
             format="mixed",
         )
     except (TypeError, ValueError):
-        parsed = pd.to_datetime(
-            text,
-            errors="coerce",
-            dayfirst=dayfirst,
-        )
+        parsed = pd.to_datetime(text, errors="coerce", dayfirst=dayfirst)
 
     unresolved = parsed.isna() & text.ne("")
 
@@ -238,7 +237,6 @@ def _datetime(
 
         parsed.loc[unresolved] = retry
 
-    # Excel serial-date fallback for operator exports.
     unresolved = parsed.isna() & text.ne("")
 
     if unresolved.any():
@@ -264,10 +262,10 @@ def _datetime(
 
 
 def _parse_jio_datetime(series: Any) -> pd.Series:
-    """Parse Jio dd/MM/yyyy timestamps without month-first ambiguity."""
+    """Parse Jio timestamps with explicit dayfirst=True."""
 
     index = series.index if isinstance(series, pd.Series) else pd.RangeIndex(0)
-    text = _as_series(series, index=index).fillna("").astype(str).str.strip()
+    text = _as_series(series, index=index).astype("object").fillna("").astype(str).str.strip()
     parsed = pd.Series(pd.NaT, index=index, dtype="datetime64[ns]")
 
     formats = (
@@ -291,14 +289,18 @@ def _parse_jio_datetime(series: Any) -> pd.Series:
         parsed.loc[values.index[accepted]] = values.loc[accepted]
         unresolved = parsed.isna() & text.ne("")
 
+    if unresolved.any():
+        fallback = _datetime(text.loc[unresolved], dayfirst=True)
+        parsed.loc[fallback.index[fallback.notna()]] = fallback.loc[fallback.notna()]
+
     return parsed
 
 
 def _combine_datetime(date_series: pd.Series, time_series: pd.Series) -> pd.Series:
     combined = (
-        date_series.fillna("").astype(str).str.strip()
+        date_series.astype("object").fillna("").astype(str).str.strip()
         + " "
-        + time_series.fillna("").astype(str).str.strip()
+        + time_series.astype("object").fillna("").astype(str).str.strip()
     ).str.strip()
     return _parse_jio_datetime(combined)
 
@@ -344,8 +346,6 @@ def _find_header_row(path: Path, required: set[str]) -> int:
 
 
 def _find_airtel_header_row(path: Path) -> int:
-    """Detect Airtel IPDR header without requiring optional Charging_ID."""
-
     for index, row in enumerate(_csv_rows(path, limit=160)):
         cleaned = {_clean_header(value) for value in row}
 
@@ -385,16 +385,13 @@ def _find_airtel_header_row(path: Path) -> int:
             return index
 
     raise ValueError(
-        f"Airtel IPDR header row not found in {path.name}. "
-        "Required identity/event/IP columns were not detected."
+        f"Airtel IPDR header row not found in {path.name}."
     )
 
 
 def _filename_public_query(
     path: Path,
 ) -> tuple[str, int | None]:
-    """Extract public IP and port from common Airtel result filenames."""
-
     match = re.search(
         r"public[_\s-]*ip([46])[_\s-]+(.+?)"
         r"[_\s-]*public[_\s-]*port[_\s-]*(\d+)",
@@ -421,8 +418,6 @@ def _parse_airtel_query(
     path: Path,
     prefix: str,
 ) -> dict[str, Any]:
-    """Parse Airtel query type, IP/MSISDN and optional public port."""
-
     query_type = ""
     query_value = ""
     query_port: int | None = None
@@ -526,7 +521,6 @@ def _detect_file(path: Path) -> dict[str, Any]:
         }
 
     prefix = _read_prefix(path)
-
     cleaned_prefix = _clean_header(prefix)
 
     if (
@@ -590,8 +584,6 @@ def _empty_frame() -> pd.DataFrame:
 
 
 def _column_key(value: Any) -> str:
-    """Create a duplicate-safe key for operator column matching."""
-
     key = _clean_header(value)
     key = re.sub(r"\.\d+$", "", key)
     key = re.sub(r"\s+", " ", key).strip()
@@ -603,8 +595,6 @@ def _as_series(
     *,
     index: pd.Index,
 ) -> pd.Series:
-    """Always return one Series, even when pandas returns duplicate columns."""
-
     if isinstance(value, pd.Series):
         return value.reindex(index)
 
@@ -630,7 +620,6 @@ def _as_series(
                 )
             )
 
-        # First non-blank value across duplicate/variant source columns.
         coalesced = candidates.replace("", pd.NA).bfill(axis=1).iloc[:, 0]
         return coalesced.fillna("").reindex(index)
 
@@ -644,13 +633,6 @@ def _as_series(
 
 
 def _series(frame: pd.DataFrame, column: str) -> pd.Series:
-    """Return a single duplicate-safe source column.
-
-    Operator exports can contain duplicate headers, pandas-generated `.1/.2`
-    suffixes, leading spaces and minor underscore/space variations. Matching
-    columns are coalesced left-to-right without dropping any raw rows.
-    """
-
     target = _column_key(column)
     positions = [
         position
@@ -673,7 +655,6 @@ def _series(frame: pd.DataFrame, column: str) -> pd.Series:
     )
 
 
-
 AIRTEL_NON_DATA_PATTERNS = (
     r"\bno\s+records?\s+found\b",
     r"\bno\s+data\s+found\b",
@@ -694,8 +675,6 @@ def _clean_data_text(value: Any) -> str:
 
 
 def _row_text(frame: pd.DataFrame) -> pd.Series:
-    """Build normalized text for footer/banner detection."""
-
     if frame.empty:
         return pd.Series("", index=frame.index, dtype="object")
 
@@ -714,8 +693,6 @@ def _row_text(frame: pd.DataFrame) -> pd.Series:
 
 
 def _airtel_non_data_mask(frame: pd.DataFrame) -> pd.Series:
-    """Identify Airtel report banners, footer rows and no-result markers."""
-
     text = _row_text(frame)
     mask = pd.Series(False, index=frame.index)
 
@@ -727,79 +704,37 @@ def _airtel_non_data_mask(frame: pd.DataFrame) -> pd.Series:
             na=False,
         )
 
-    # Airtel may place the report-generation time on a standalone
-    # footer line. Internal provenance columns are not report content.
     business_columns = [
         column
         for column in frame.columns
-        if not str(
-            column
-        ).startswith("_")
+        if not str(column).startswith("_")
     ]
 
     if business_columns:
         business_values = (
-            frame.loc[
-                :,
-                business_columns,
-            ]
-            .fillna("")
-            .astype(str)
-            .apply(
-                lambda column: column.str.strip()
-            )
+            frame.loc[:, business_columns]
+            .astype("object").fillna("").astype(str)
+            .apply(lambda column: column.str.strip())
         )
-
-        non_empty_business_values = (
-            business_values.ne("")
-            .sum(
-                axis=1
-            )
-        )
-
-        first_business_value = (
-            business_values.iloc[
-                :,
-                0,
-            ]
-        )
-
+        non_empty_business_values = business_values.ne("").sum(axis=1)
+        first_business_value = business_values.iloc[:, 0]
         standalone_generation_timestamp = (
-            non_empty_business_values.eq(
-                1
-            )
+            non_empty_business_values.eq(1)
             & first_business_value.str.fullmatch(
-                r"\d{1,2}-[A-Za-z]{3}-\d{4}\s+"
-                r"\d{2}:\d{2}:\d{2}",
+                r"\d{1,2}-[A-Za-z]{3}-\d{4}\s+\d{2}:\d{2}:\d{2}",
                 na=False,
             )
         )
-
     else:
-        standalone_generation_timestamp = pd.Series(
-            False,
-            index=frame.index,
-        )
+        standalone_generation_timestamp = pd.Series(False, index=frame.index)
 
-    mask = (
-        mask
-        | standalone_generation_timestamp
-    )
-
-    return mask
+    return mask | standalone_generation_timestamp
 
 
 def _airtel_data_mask(
     frame: pd.DataFrame,
     event_time: pd.Series,
 ) -> tuple[pd.Series, dict[str, int | bool]]:
-    """Return a conservative mask for genuine Airtel IPDR event rows.
-
-    Airtel exports may append footer rows inside the CSV table, including
-    ``No Records Found``, ``This is System generated report`` and report
-    generation timestamps. Those rows must never become subscriber records.
-    """
-
     if frame.empty:
         empty = pd.Series(False, index=frame.index)
         return empty, {
@@ -812,10 +747,7 @@ def _airtel_data_mask(
 
     footer_mask = _airtel_non_data_mask(frame)
 
-    subscriber_raw = (
-        _series(frame, "MSISDN_userID")
-        .map(_clean_data_text)
-    )
+    subscriber_raw = _series(frame, "MSISDN_userID").map(_clean_data_text)
     normalized_subscriber = subscriber_raw.map(
         lambda value: _normalise_subscriber(value)[0]
     )
@@ -827,51 +759,19 @@ def _airtel_data_mask(
     imei = _series(frame, "IMEI").map(_clean_data_text)
     imsi = _series(frame, "IMSI").map(_clean_data_text)
 
-    source_ipv4 = _series(
-        frame,
-        "Source_Public_IPv4",
-    ).map(_clean_data_text)
-    source_ipv6 = _series(
-        frame,
-        "Source_Public_IPv6",
-    ).map(_clean_data_text)
-    source_private = _series(
-        frame,
-        "Source_Private_IPV4",
-    ).map(_clean_data_text)
-    destination_ipv4 = _series(
-        frame,
-        "Destination_IP4",
-    ).map(_clean_data_text)
-    destination_ipv6 = _series(
-        frame,
-        "Destination_IP6",
-    ).map(_clean_data_text)
+    source_ipv4 = _series(frame, "Source_Public_IPv4").map(_clean_data_text)
+    source_ipv6 = _series(frame, "Source_Public_IPv6").map(_clean_data_text)
+    source_private = _series(frame, "Source_Private_IPV4").map(_clean_data_text)
+    destination_ipv4 = _series(frame, "Destination_IP4").map(_clean_data_text)
+    destination_ipv6 = _series(frame, "Destination_IP6").map(_clean_data_text)
 
-    source_port = _series(
-        frame,
-        "Source_Public_Port",
-    ).map(_clean_data_text)
-    destination_port = _series(
-        frame,
-        "Destination_Port",
-    ).map(_clean_data_text)
-    charging_id = _series(
-        frame,
-        "Charging_ID",
-    ).map(_clean_data_text)
+    source_port = _series(frame, "Source_Public_Port").map(_clean_data_text)
+    destination_port = _series(frame, "Destination_Port").map(_clean_data_text)
+    charging_id = _series(frame, "Charging_ID").map(_clean_data_text)
     cgi = _series(frame, "CGI").map(_clean_data_text)
 
-    session_start_raw = _series(
-        frame,
-        "Session_Start_Time",
-    ).map(_clean_data_text)
-    session_end_raw = _series(
-        frame,
-        "Session_End_Time",
-    ).map(_clean_data_text)
-    session_start = _datetime(session_start_raw)
-    session_end = _datetime(session_end_raw)
+    session_start = _datetime(_series(frame, "Session_Start_Time"))
+    session_end = _datetime(_series(frame, "Session_End_Time"))
 
     network_present = (
         source_ipv4.ne("")
@@ -880,27 +780,15 @@ def _airtel_data_mask(
         | destination_ipv4.ne("")
         | destination_ipv6.ne("")
     )
-    port_present = (
-        source_port.ne("")
-        | destination_port.ne("")
-    )
-    identity_present = (
-        plausible_subscriber
-        | imei.ne("")
-        | imsi.ne("")
-    )
-    session_identifier_present = (
-        charging_id.ne("")
-        | cgi.ne("")
-    )
+    port_present = source_port.ne("") | destination_port.ne("")
+    identity_present = plausible_subscriber | imei.ne("") | imsi.ne("")
+    session_identifier_present = charging_id.ne("") | cgi.ne("")
     time_present = (
         event_time.notna()
         | session_start.notna()
         | session_end.notna()
     )
 
-    # Strong IPDR evidence is required. A value in only the first source
-    # column, such as a generated timestamp, is not treated as an event.
     genuine_row = (
         ~footer_mask
         & (
@@ -985,7 +873,7 @@ def _finalise(
         "roaming_circle",
         "roaming_status",
     ):
-        frame[column] = frame[column].fillna("").astype(str).str.strip()
+        frame[column] = frame[column].astype("object").astype("object").fillna("").astype(str).str.strip()
 
     frame["source_ip"] = frame["source_ip"].map(_canonical_ip)
     frame["source_public_ipv4"] = frame["source_public_ipv4"].map(_canonical_ip)
@@ -1009,7 +897,10 @@ def _finalise(
         "latitude",
         "longitude",
     ):
-        frame[column] = pd.to_numeric(frame[column], errors="coerce")
+        frame[column] = pd.to_numeric(
+            frame[column].astype("object"),
+            errors="coerce",
+        ).astype("float64")
 
     for column in (
         "event_time",
@@ -1045,17 +936,12 @@ def _finalise(
     ]
 
     if frame.empty:
-        # pandas DataFrame.agg(axis=1) returns another DataFrame for an
-        # empty input. Assigning that object to one column causes the
-        # misleading "Columns must be same length as key" error.
         frame["allocation_key"] = pd.Series(
             index=frame.index,
             dtype="object",
         )
     else:
-        key_frame = frame[
-            key_columns
-        ].copy()
+        key_frame = frame[key_columns].copy()
 
         for column in key_columns:
             key_frame[column] = key_frame[column].map(
@@ -1066,12 +952,7 @@ def _finalise(
                     or (
                         not isinstance(
                             value,
-                            (
-                                list,
-                                tuple,
-                                dict,
-                                set,
-                            ),
+                            (list, tuple, dict, set),
                         )
                         and pd.isna(value)
                     )
@@ -1080,9 +961,7 @@ def _finalise(
             )
 
         frame["allocation_key"] = key_frame.apply(
-            lambda row: "|".join(
-                row.tolist()
-            ),
+            lambda row: "|".join(row.tolist()),
             axis=1,
         )
 
@@ -1093,8 +972,6 @@ def _load_airtel(
     path: Path,
     metadata: dict[str, Any],
 ) -> pd.DataFrame:
-    """Load Airtel IPDR with duplicate-column and stage diagnostics."""
-
     stage = "read CSV"
 
     try:
@@ -1106,33 +983,15 @@ def _load_airtel(
         )
 
         stage = "event-time extraction"
-        event_source = _series(
-            raw,
-            "Event_Start_Time",
-        )
+        event_source = _series(raw, "Event_Start_Time")
         event_time = _datetime(event_source)
 
         stage = "Airtel data-row classification"
-        data_row, row_stats = _airtel_data_mask(
-            raw,
-            event_time,
-        )
+        data_row, row_stats = _airtel_data_mask(raw, event_time)
         metadata.update(row_stats)
 
-        # Known Airtel report/footer rows are metadata, not malformed
-        # IPDR evidence. Only unknown invalid rows enter quarantine.
-        known_non_data = _airtel_non_data_mask(
-            raw
-        ).fillna(
-            False
-        )
-
-        invalid_data_row = ~(
-            data_row.fillna(
-                False
-            )
-            | known_non_data
-        )
+        known_non_data = _airtel_non_data_mask(raw).fillna(False)
+        invalid_data_row = ~(data_row.fillna(False) | known_non_data)
 
         validation_rejects = quarantine_dataframe_rows(
             raw,
@@ -1148,33 +1007,18 @@ def _load_airtel(
         frame = _base_frame(len(raw))
 
         stage = "subscriber normalization"
-        subscriber_source = _series(
-            raw,
-            "MSISDN_userID",
-        )
-        numbers = subscriber_source.map(
-            _normalise_subscriber
-        )
+        subscriber_source = _series(raw, "MSISDN_userID")
+        numbers = subscriber_source.map(_normalise_subscriber)
 
         frame["record_type"] = "IPDR_EVENT"
         frame["operator"] = "Airtel"
         frame["source_format"] = FORMAT_AIRTEL
         frame["report_scope"] = metadata["report_scope"]
-        frame["query_value"] = metadata.get(
-            "query_value",
-            "",
-        )
-        frame["query_port"] = metadata.get(
-            "query_port",
-            None,
-        )
+        frame["query_value"] = metadata.get("query_value", "")
+        frame["query_port"] = metadata.get("query_port", None)
         frame["subscriber_number_raw"] = subscriber_source
-        frame["subscriber_number"] = numbers.map(
-            lambda item: item[0]
-        )
-        frame["subscriber_identifier_type"] = numbers.map(
-            lambda item: item[1]
-        )
+        frame["subscriber_number"] = numbers.map(lambda item: item[0])
+        frame["subscriber_identifier_type"] = numbers.map(lambda item: item[1])
 
         stage = "identity fields"
         frame["imei"] = _series(raw, "IMEI")
@@ -1182,120 +1026,54 @@ def _load_airtel(
 
         stage = "session timestamps"
         frame["event_time"] = event_time
-        frame["session_start"] = _datetime(
-            _series(raw, "Session_Start_Time")
-        )
-        frame["session_end"] = _datetime(
-            _series(raw, "Session_End_Time")
-        )
-        frame["allocation_start"] = frame[
-            "session_start"
-        ]
-        frame["allocation_end"] = frame[
-            "session_end"
-        ]
-        frame["session_duration_seconds"] = _number(
-            _series(raw, "Duration")
-        )
+        frame["session_start"] = _datetime(_series(raw, "Session_Start_Time"))
+        frame["session_end"] = _datetime(_series(raw, "Session_End_Time"))
+        frame["allocation_start"] = frame["session_start"]
+        frame["allocation_end"] = frame["session_end"]
+        frame["session_duration_seconds"] = _number(_series(raw, "Duration"))
 
         stage = "source IP fields"
-        frame["source_public_ipv4"] = _series(
-            raw,
-            "Source_Public_IPv4",
-        )
-        frame["source_public_ipv6"] = _series(
-            raw,
-            "Source_Public_IPv6",
-        )
-        frame["source_private_ipv4"] = _series(
-            raw,
-            "Source_Private_IPV4",
-        )
-        source_ipv4 = frame[
-            "source_public_ipv4"
-        ].fillna("").astype(str).str.strip()
-        frame["source_ip"] = frame[
-            "source_public_ipv4"
-        ].where(
+        frame["source_public_ipv4"] = _series(raw, "Source_Public_IPv4")
+        frame["source_public_ipv6"] = _series(raw, "Source_Public_IPv6")
+        frame["source_private_ipv4"] = _series(raw, "Source_Private_IPV4")
+        source_ipv4 = frame["source_public_ipv4"].astype("object").fillna("").astype(str).str.strip()
+        frame["source_ip"] = frame["source_public_ipv4"].where(
             source_ipv4.ne(""),
             frame["source_public_ipv6"],
         )
-        frame["source_port"] = _number(
-            _series(raw, "Source_Public_Port")
-        )
+        frame["source_port"] = _number(_series(raw, "Source_Public_Port"))
 
         stage = "destination IP fields"
-        frame["destination_ipv4"] = _series(
-            raw,
-            "Destination_IP4",
-        )
-        frame["destination_ipv6"] = _series(
-            raw,
-            "Destination_IP6",
-        )
-        destination_ipv4 = frame[
-            "destination_ipv4"
-        ].fillna("").astype(str).str.strip()
-        frame["destination_ip"] = frame[
-            "destination_ipv4"
-        ].where(
+        frame["destination_ipv4"] = _series(raw, "Destination_IP4")
+        frame["destination_ipv6"] = _series(raw, "Destination_IP6")
+        destination_ipv4 = frame["destination_ipv4"].astype("object").fillna("").astype(str).str.strip()
+        frame["destination_ip"] = frame["destination_ipv4"].where(
             destination_ipv4.ne(""),
             frame["destination_ipv6"],
         )
-        frame["destination_port"] = _number(
-            _series(raw, "Destination_Port")
-        )
+        frame["destination_port"] = _number(_series(raw, "Destination_Port"))
 
         stage = "session metadata"
-        frame["charging_id"] = _series(
-            raw,
-            "Charging_ID",
-        )
-        frame["apn"] = _series(
-            raw,
-            "Access_Point_Name",
-        )
-        frame["gateway_ip"] = _series(
-            raw,
-            "PACO_GW_IP",
-        )
+        frame["charging_id"] = _series(raw, "Charging_ID")
+        frame["apn"] = _series(raw, "Access_Point_Name")
+        frame["gateway_ip"] = _series(raw, "PACO_GW_IP")
 
         stage = "cell and coordinate fields"
         frame["cgi"] = _series(raw, "CGI")
         frame["first_cell_id"] = frame["cgi"]
         frame["last_cell_id"] = frame["cgi"]
-        frame["latitude"] = _number(
-            _series(raw, "CGI Latitude")
-        )
-        frame["longitude"] = _number(
-            _series(raw, "CGI Longitude")
-        )
+        frame["latitude"] = _number(_series(raw, "CGI Latitude"))
+        frame["longitude"] = _number(_series(raw, "CGI Longitude"))
 
         stage = "subscriber attributes"
-        frame["technology"] = _series(
-            raw,
-            "2g/4g/5g",
-        )
-        frame["pre_post"] = _series(
-            raw,
-            "Pre_Post",
-        )
-        frame["home_circle"] = _series(
-            raw,
-            "Home_Circle",
-        )
-        frame["roaming_circle"] = _series(
-            raw,
-            "Roaming_Circle",
-        )
+        frame["technology"] = _series(raw, "2g/4g/5g")
+        frame["pre_post"] = _series(raw, "Pre_Post")
+        frame["home_circle"] = _series(raw, "Home_Circle")
+        frame["roaming_circle"] = _series(raw, "Roaming_Circle")
 
         stage = "volume fields"
-        frame["uplink_volume"] = _number(
-            _series(raw, "Uplink_Vol")
-        )
-        frame["downlink_volume"] = _number(
-            _series(raw, "Downlink_Vol")
-        )
+        frame["uplink_volume"] = _number(_series(raw, "Uplink_Vol"))
+        frame["downlink_volume"] = _number(_series(raw, "Downlink_Vol"))
         frame["volume_scope"] = "SESSION"
 
         stage = "final normalization"
@@ -1313,23 +1091,8 @@ def _load_airtel(
         return output
 
     except Exception as error:
-        duplicate_keys = sorted(
-            {
-                _column_key(column)
-                for column in raw.columns
-                if sum(
-                    1
-                    for candidate in raw.columns
-                    if _column_key(candidate)
-                    == _column_key(column)
-                )
-                > 1
-            }
-        ) if "raw" in locals() else []
-
         raise ValueError(
             f"Airtel IPDR load failed at stage '{stage}'. "
-            f"Duplicate/variant column groups={duplicate_keys or 'None'}. "
             f"Original error: {type(error).__name__}: {error}"
         ) from error
 
@@ -1341,10 +1104,7 @@ def _load_vi(path: Path, metadata: dict[str, Any]) -> pd.DataFrame:
         skiprows=header_row,
         sep=",",
     )
-    event_time = _datetime(
-        _series(raw, "Session Start date & time"),
-        dayfirst=True,
-    )
+    event_time = _datetime(_series(raw, "Session Start date & time"))
     valid = event_time.notna()
     validation_rejects = quarantine_dataframe_rows(
         raw,
@@ -1372,36 +1132,19 @@ def _load_vi(path: Path, metadata: dict[str, Any]) -> pd.DataFrame:
     frame["imsi"] = _series(raw, "IMSI")
     frame["event_time"] = event_time
     frame["session_start"] = event_time
-    frame["session_end"] = _datetime(
-        _series(raw, "Session End date & time"),
-        dayfirst=True,
-    )
+    frame["session_end"] = _datetime(_series(raw, "Session End date & time"))
     frame["allocation_start"] = frame["session_start"]
     frame["allocation_end"] = frame["session_end"]
-    frame["session_duration_seconds"] = _number(
-        _series(raw, "Duration in sec")
-    )
+    frame["session_duration_seconds"] = _number(_series(raw, "Duration in sec"))
     frame["source_ip"] = source
-    frame["source_public_ipv4"] = source.where(
-        source.map(_ip_version).eq("IPv4"),
-        "",
-    )
-    frame["source_public_ipv6"] = source.where(
-        source.map(_ip_version).eq("IPv6"),
-        "",
-    )
+    frame["source_public_ipv4"] = source.where(source.map(_ip_version).eq("IPv4"), "")
+    frame["source_public_ipv6"] = source.where(source.map(_ip_version).eq("IPv6"), "")
     frame["source_port"] = _number(_series(raw, "Source Port"))
     frame["translated_ip"] = _series(raw, "Translated IP")
     frame["translated_port"] = _number(_series(raw, "Translated Port"))
     frame["destination_ip"] = destination
-    frame["destination_ipv4"] = destination.where(
-        destination.map(_ip_version).eq("IPv4"),
-        "",
-    )
-    frame["destination_ipv6"] = destination.where(
-        destination.map(_ip_version).eq("IPv6"),
-        "",
-    )
+    frame["destination_ipv4"] = destination.where(destination.map(_ip_version).eq("IPv4"), "")
+    frame["destination_ipv6"] = destination.where(destination.map(_ip_version).eq("IPv6"), "")
     frame["destination_port"] = _number(_series(raw, "Destination Port"))
     frame["charging_id"] = _series(raw, "Charging ID")
     frame["apn"] = _series(raw, "Access Point Name")
@@ -1519,30 +1262,16 @@ def _load_jio(path: Path, metadata: dict[str, Any]) -> pd.DataFrame:
     frame["session_end"] = allocation_end
     frame["allocation_start"] = allocation_start
     frame["allocation_end"] = allocation_end
-    frame["session_duration_seconds"] = _number(
-        _series(raw, duration_column)
-    )
+    frame["session_duration_seconds"] = _number(_series(raw, duration_column))
     frame["source_ip"] = source
-    frame["source_public_ipv4"] = source.where(
-        source.map(_ip_version).eq("IPv4"),
-        "",
-    )
-    frame["source_public_ipv6"] = source.where(
-        source.map(_ip_version).eq("IPv6"),
-        "",
-    )
+    frame["source_public_ipv4"] = source.where(source.map(_ip_version).eq("IPv4"), "")
+    frame["source_public_ipv6"] = source.where(source.map(_ip_version).eq("IPv6"), "")
     frame["source_port"] = _number(_series(raw, "Source Port"))
     frame["translated_ip"] = _series(raw, "Translated IP Address")
     frame["translated_port"] = _number(_series(raw, "Translated Port"))
     frame["destination_ip"] = destination
-    frame["destination_ipv4"] = destination.where(
-        destination.map(_ip_version).eq("IPv4"),
-        "",
-    )
-    frame["destination_ipv6"] = destination.where(
-        destination.map(_ip_version).eq("IPv6"),
-        "",
-    )
+    frame["destination_ipv4"] = destination.where(destination.map(_ip_version).eq("IPv4"), "")
+    frame["destination_ipv6"] = destination.where(destination.map(_ip_version).eq("IPv6"), "")
     frame["destination_port"] = _number(_series(raw, "Destination Port"))
     frame["apn"] = _series(raw, "Access Point Name")
     frame["gateway_ip"] = _series(raw, "PGW IP address")
@@ -1588,7 +1317,7 @@ def _load_search_request(path: Path) -> pd.DataFrame:
             "source_row_number": range(2, len(raw) + 2),
         }
     )
-    return result[result["search_value"].fillna("").astype(str).str.strip().ne("")]
+    return result[result["search_value"].astype("object").fillna("").astype(str).str.strip().ne("")]
 
 
 def load_ipdr_file(path: str | Path) -> dict[str, Any]:
@@ -1667,24 +1396,12 @@ def load_ipdr_file(path: str | Path) -> dict[str, Any]:
     }
 
 
-
 def _concat_ipdr_frames_safely(
     frames: list[pd.DataFrame],
     *,
     ignore_index: bool = True,
     sort: bool = False,
 ) -> pd.DataFrame:
-    """
-    Safely concatenate IPDR DataFrames.
-
-    Pandas compares DataFrame.attrs during concat. Some loader stages may carry
-    non-scalar attrs, including DataFrame objects, which can raise:
-    ValueError: The truth value of a DataFrame is ambiguous.
-
-    Investigator data remains unchanged; only temporary internal attrs metadata
-    is cleared before concat.
-    """
-
     clean_frames: list[pd.DataFrame] = []
 
     if frames is None:
@@ -1716,6 +1433,7 @@ def _concat_ipdr_frames_safely(
         pass
 
     return combined
+
 
 def load_ipdr_case(
     folder: str | Path,
@@ -1968,7 +1686,6 @@ def load_ipdr_case(
     }
 
 
-# JIO_DYNAMIC_IPDR_FALLBACK_V1
 def _looks_like_jio_dynamic_ipdr_csv(path: str | Path) -> bool:
     try:
         sample = Path(path).read_text(encoding="utf-8", errors="ignore")[:4000]
@@ -1985,31 +1702,6 @@ def _looks_like_jio_dynamic_ipdr_csv(path: str | Path) -> bool:
     ]
 
     return all(marker in sample for marker in required_markers)
-
-
-def _combine_jio_date_time(
-    dataframe: pd.DataFrame,
-    date_column: str,
-    time_column: str,
-) -> pd.Series:
-    date_values = (
-        dataframe.get(date_column, "")
-        .astype(str)
-        .str.strip()
-    )
-    time_values = (
-        dataframe.get(time_column, "")
-        .astype(str)
-        .str.strip()
-    )
-
-    combined = date_values + " " + time_values
-
-    return pd.to_datetime(
-        combined,
-        errors="coerce",
-        yearfirst=True,
-    )
 
 
 def _load_jio_dynamic_ipdr_csv_fallback(path: str | Path) -> dict[str, Any]:
@@ -2079,33 +1771,30 @@ def _load_jio_dynamic_ipdr_csv_fallback(path: str | Path) -> dict[str, Any]:
         .astype(str)
         .str.strip()
     )
-    normalized["source_port"] = (
-        raw.get("Source Port", "")
-        .astype(str)
-        .str.strip()
-    )
+    normalized["source_port"] = pd.to_numeric(
+        raw.get("Source Port", ""),
+        errors="coerce",
+    ).astype("float64")
 
     normalized["translated_ip"] = (
         raw.get("Translated IP Address", "")
         .astype(str)
         .str.strip()
     )
-    normalized["translated_port"] = (
-        raw.get("Translated Port", "")
-        .astype(str)
-        .str.strip()
-    )
+    normalized["translated_port"] = pd.to_numeric(
+        raw.get("Translated Port", ""),
+        errors="coerce",
+    ).astype("float64")
 
     normalized["destination_ip"] = (
         raw.get("Destination IP Address", "")
         .astype(str)
         .str.strip()
     )
-    normalized["destination_port"] = (
-        raw.get("Destination Port", "")
-        .astype(str)
-        .str.strip()
-    )
+    normalized["destination_port"] = pd.to_numeric(
+        raw.get("Destination Port", ""),
+        errors="coerce",
+    ).astype("float64")
 
     normalized["allocation_type"] = (
         raw.get("Static/Dynamic IP Address Allocation", "")
@@ -2124,12 +1813,10 @@ def _load_jio_dynamic_ipdr_csv_fallback(path: str | Path) -> dict[str, Any]:
         "IST End Time of Public IP address allocation (hh:mm:ss)",
     )
 
-    normalized["event_time"] = pd.to_datetime(
+    normalized["event_time"] = _parse_jio_datetime(
         raw.get("TIME1 (dd/MM/yyyy HH:mm:ss)", "")
         .astype(str)
-        .str.strip(),
-        errors="coerce",
-        yearfirst=True,
+        .str.strip()
     )
 
     normalized["imei"] = (
@@ -2166,7 +1853,7 @@ def _load_jio_dynamic_ipdr_csv_fallback(path: str | Path) -> dict[str, Any]:
     )
     normalized["cell_id"] = normalized["first_cell_id"]
 
-    normalized["duration_seconds"] = pd.to_numeric(
+    normalized["session_duration_seconds"] = pd.to_numeric(
         raw.get("Session Duration (Seconds)", ""),
         errors="coerce",
     )
@@ -2202,9 +1889,6 @@ def _load_jio_dynamic_ipdr_csv_fallback(path: str | Path) -> dict[str, Any]:
     normalized["source_file_name"] = source_path.name
     normalized["raw_row_number"] = range(1, len(normalized) + 1)
 
-    # Jio dynamic IPDR rows are real internet activity rows, not empty
-    # allocation-only rows. These aliases help the common IPDR analysis
-    # engine count them as event records.
     normalized["is_allocation_only"] = False
     normalized["record_type"] = "IPDR_EVENT"
     normalized["row_type"] = "EVENT"

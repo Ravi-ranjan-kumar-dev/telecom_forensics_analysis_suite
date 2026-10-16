@@ -1,3 +1,4 @@
+#modules/pipeline/normalized_stage_cache.py
 """Fingerprint-verified reuse of normalized Parquet and DuckDB stages.
 
 The cache stores only derived normalized data and loader diagnostics. Raw
@@ -47,12 +48,10 @@ VALID_IDENTIFIER = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 
 def _json_default(value: Any) -> Any:
     """Convert common scalar objects used in loader metadata."""
-
     if isinstance(value, Path):
         return str(value)
 
     item = getattr(value, "item", None)
-
     if callable(item):
         try:
             return item()
@@ -68,7 +67,6 @@ def _cache_root(case_id: str, workflow: str) -> Path:
 
 def normalized_cache_manifest_path(case_id: str, workflow: str) -> Path:
     """Return the canonical normalized cache manifest path."""
-
     return _cache_root(case_id, workflow) / "cache_manifest.json"
 
 
@@ -147,7 +145,6 @@ def validate_normalized_stage(
     required_columns: Iterable[str] = (),
 ) -> dict[str, Any]:
     """Verify canonical Parquet, DuckDB and manifest state for a DataFrame."""
-
     if not VALID_IDENTIFIER.fullmatch(str(table_name)):
         raise ValueError(f"Invalid cached table name: {table_name!r}")
 
@@ -230,7 +227,6 @@ def load_reusable_normalized_stage(
     dataframe_key: str,
 ) -> dict[str, Any]:
     """Return a reusable loader result when evidence and stage match."""
-
     cache_path = normalized_cache_manifest_path(case_id, workflow)
 
     if not cache_path.is_file():
@@ -329,7 +325,6 @@ def save_reusable_normalized_stage(
     load_result: Any,
 ) -> Path:
     """Persist loader diagnostics needed to reuse one normalized stage."""
-
     if not isinstance(load_result, dict):
         raise TypeError(
             "Reusable normalized cache requires a loader result dictionary."

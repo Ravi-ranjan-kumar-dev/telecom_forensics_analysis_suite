@@ -189,8 +189,12 @@ def save_sighting(
     before, after = int(minutes_before), int(minutes_after)
     if not 0 <= before <= 1440 or not 0 <= after <= 1440:
         raise CaseError("Before/After minutes 0 se 1440 ke beech hona chahiye.")
+    
+    window_start = timestamp - timedelta(minutes=before)
+    window_end = timestamp + timedelta(minutes=after)
     sources = _normalize_sources(source_types)
     now = utc_now_iso()
+    
     record = {
         "sighting_id": sighting_id,
         "location_name": location_name,
@@ -198,9 +202,8 @@ def save_sighting(
         "source_timezone": _source_timezone(case_id),
         "minutes_before": before,
         "minutes_after": after,
-        "window_start": timestamp.isoformat(sep=" "),
-        "window_end": timestamp.isoformat(sep=" "),
-                "partition_type": "data_time_partition",
+        "window_start": window_start.isoformat(sep=" "),
+        "window_end": window_end.isoformat(sep=" "),
         "partition_type": "data_time_partition",
         "cgi_group_id": group["group_id"],
         "cgi_group_version": int(group.get("version", 1)),
@@ -297,6 +300,8 @@ def replace_simple_sightings(
     timezone_name = _source_timezone(case_id)
     records: list[dict[str, Any]] = []
     for index, timestamp in enumerate(timestamps, start=1):
+        window_start = timestamp - timedelta(minutes=before)
+        window_end = timestamp + timedelta(minutes=after)
         records.append(
             {
                 "sighting_id": f"S{index}",
@@ -305,8 +310,8 @@ def replace_simple_sightings(
                 "source_timezone": timezone_name,
                 "minutes_before": before,
                 "minutes_after": after,
-                "window_start": timestamp.isoformat(sep=" "),
-                "window_end": timestamp.isoformat(sep=" "),
+                "window_start": window_start.isoformat(sep=" "),
+                "window_end": window_end.isoformat(sep=" "),
                 "cgi_group_id": "AUTO_ALL",
                 "cgi_group_version": 0,
                 "source_types": ["NORMAL_CDR", "GPRS", "IPDR"],

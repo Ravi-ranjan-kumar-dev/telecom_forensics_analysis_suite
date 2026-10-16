@@ -6,6 +6,31 @@
     source .venv/bin/activate
     python3 -u main.py
 
+## Backend and GUI Login
+
+The GUI requires the PostgreSQL-backed API. Database credentials are not
+application login credentials, and there is no default application password.
+
+First deployment:
+
+    cd ~/Desktop/telecom_forensics_analysis_suite/backend
+    cp -n .env.example .env
+    python3 -c "import secrets; print(secrets.token_urlsafe(48))"
+    chmod 600 .env
+
+Paste the generated value after `SECRET_KEY=` in `.env`, then start the API:
+
+    docker compose up -d --build
+    docker compose ps
+
+Open the GUI and select **First-time Setup** to create the first administrator.
+If the password is forgotten, issue a 15-minute reset token on the backend host:
+
+    docker compose exec api python -m app.cli reset-token USERNAME
+
+Paste the complete private token into **Forgot Password?**. Never place the
+token or `.env` contents in source archives, logs, reports or case material.
+
 ## Health Check
 
     python3 tools/health_check.py

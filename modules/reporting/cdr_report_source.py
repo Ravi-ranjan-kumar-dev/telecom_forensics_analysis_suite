@@ -23,7 +23,7 @@ LINK_SCHEMA_VERSION = 1
 MAX_RELATED_RECORDS = 1000
 _SAFE_NAME = re.compile(r"[^A-Za-z0-9_-]+")
 _PHONE_COLUMN = re.compile(
-    r"(?:^|_)(?:a_party|b_party|target|contact|calling|called|source|"
+    r"(?:^|_)(?:a_party|b_party|other_party|target|contact|calling|called|source|"
     r"destination|msisdn|subscriber|mobile|phone)(?:_|$)",
     re.IGNORECASE,
 )

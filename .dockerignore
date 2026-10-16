@@ -1,0 +1,43 @@
+# Python caches
+__pycache__/
+*.pyc
+*.pyo
+
+# Virtual environment
+.venv/
+
+# Git and secrets
+.git/
+.gitignore
+.env
+*.env
+
+# Large data folders (never needed for Docker image)
+database/
+cases/
+data/
+output/
+tests/
+docs/
+tools/
+
+# Desktop GUI (not needed for backend)
+gui/
+
+# Project-level files not needed for API
+main.py
+manage.py
+run_gui.py
+run.sh
+health.sh
+requirements-dev.txt
+pyproject.toml
+README.md
+MILESTONE_*.md
+VERSION
+SECURITY.md
+CHANGELOG.md
+
+# Temporary/dev files
+gprs_finalization_source_bundle.txt
+changes.diff

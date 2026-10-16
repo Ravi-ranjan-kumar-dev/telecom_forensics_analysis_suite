@@ -16,7 +16,7 @@ from .run_store import (
 from .service import log_case_event
 
 TABLES = (
-    "summary", "file_summary", "query_summary", "subscriber_summary",
+    "summary", "file_summary", "query_summary", "subscriber_summary", "application_usage_summary", "voip_vpn_highlights", "p2p_social_calling_leads",
     "multi_file_subscribers", "subscriber_file_presence", "imei_summary",
     "shared_imei", "imei_file_presence", "imsi_summary", "shared_imsi",
     "imsi_file_presence", "source_ip_summary", "translated_ip_summary",

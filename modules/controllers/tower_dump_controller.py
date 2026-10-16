@@ -634,3 +634,18 @@ def handle_tower_dump_analysis(
                 f"[-] Tower Dump Analysis error: "
                 f"{type(error).__name__}: {error}"
             )
+
+# === CONTROLLER_GUI_STORE_HOOK ===
+_ORIG_RUN_COMPLETE_TOWER_DUMP_ANALYSIS = run_complete_tower_dump_analysis
+
+def run_complete_tower_dump_analysis(*args, **kwargs):
+    res = _ORIG_RUN_COMPLETE_TOWER_DUMP_ANALYSIS(*args, **kwargs)
+    try:
+        from modules.reporting.gui_bundle_extractor import extract_gui_sheets_from_result
+        from modules.reporting.gui_result_store import store_gui_sheets
+        sheets = extract_gui_sheets_from_result(res, workflow="tower cdr dump analysis")
+        if sheets:
+            store_gui_sheets(sheets, title="Tower CDR Dump Analysis", workflow="tower cdr dump analysis")
+    except Exception:
+        pass
+    return res

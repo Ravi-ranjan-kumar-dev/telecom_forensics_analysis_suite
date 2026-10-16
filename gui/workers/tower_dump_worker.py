@@ -1,6 +1,7 @@
 """Background Tower Dump workflow worker for the desktop GUI."""
 
 from __future__ import annotations
+import os
 
 import contextlib
 from pathlib import Path
