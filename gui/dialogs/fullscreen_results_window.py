@@ -24,7 +24,7 @@ class FullScreenResultsWindow(QDialog):
         self,
         sheets: dict[str, pd.DataFrame],
         *,
-        title: str = "Interactive Forensic Analysis Results",
+        title: str = "EthicalArmor Forensic Analysis Workspace",
         parent: QWidget | None = None,
     ) -> None:
         super().__init__(None)  # Force parent=None to prevent cross-thread QObject parenting crash
@@ -74,7 +74,7 @@ def open_fullscreen_results_window(
     parent: QWidget | None,
     sheets: dict[str, pd.DataFrame],
     *,
-    title: str = "Interactive Forensic Analysis Results",
+    title: str = "EthicalArmor Forensic Analysis Workspace",
 ) -> None:
     if not sheets:
         return

@@ -1,4 +1,4 @@
-# Telecom Forensics Analysis Suite
+# EthicalArmor - Telecom Forensics Suite
 
 **Release:** 1.0.0
 **Python:** 3.11 or newer

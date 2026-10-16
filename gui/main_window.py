@@ -110,7 +110,7 @@ class MainWindow(QMainWindow):
             "mainWindow"
         )
         self.setWindowTitle(
-            "Telecom Forensics Analysis Suite"
+            "EthicalArmor - Telecom Forensics Suite"
         )
         self.setMinimumSize(
             1120,

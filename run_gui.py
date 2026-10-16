@@ -1,4 +1,4 @@
-"""Desktop GUI launcher for Telecom Forensics Analysis Suite."""
+"""Desktop GUI launcher for EthicalArmor - Telecom Forensics Suite."""
 
 from __future__ import annotations
 

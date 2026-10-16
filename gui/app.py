@@ -57,10 +57,10 @@ def build_application(
         )
 
     application.setApplicationName(
-        "Telecom Forensics Analysis Suite"
+        "EthicalArmor - Telecom Forensics Suite"
     )
     application.setApplicationDisplayName(
-        "Telecom Forensics Analysis Suite"
+        "EthicalArmor - Telecom Forensics Suite"
     )
     application.setOrganizationName(
         "Telecom Forensics"
