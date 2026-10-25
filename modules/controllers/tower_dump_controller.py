@@ -142,6 +142,7 @@ def run_complete_tower_dump_analysis(
     input_folder: str | Path,
     selected_spot_folders: Iterable[str] | None = None,
     include_root_files: bool = True,
+    gui_only: bool = False,
 ) -> dict[str, Any] | None:
     """Run one complete Tower Dump workflow without CLI prompts."""
 
@@ -164,6 +165,7 @@ def run_complete_tower_dump_analysis(
         return _run_complete_analysis(
             case,
             input_folder=folder,
+            gui_only=gui_only,
             **selection_kwargs,
         )
 
@@ -635,17 +637,37 @@ def handle_tower_dump_analysis(
                 f"{type(error).__name__}: {error}"
             )
 
+
 # === CONTROLLER_GUI_STORE_HOOK ===
 _ORIG_RUN_COMPLETE_TOWER_DUMP_ANALYSIS = run_complete_tower_dump_analysis
+_ORIG_RUN_TOWER_DUMP_PARTITION_ANALYSIS = run_tower_dump_partition_analysis
+
 
 def run_complete_tower_dump_analysis(*args, **kwargs):
     res = _ORIG_RUN_COMPLETE_TOWER_DUMP_ANALYSIS(*args, **kwargs)
     try:
         from modules.reporting.gui_bundle_extractor import extract_gui_sheets_from_result
         from modules.reporting.gui_result_store import store_gui_sheets
-        sheets = extract_gui_sheets_from_result(res, workflow="tower cdr dump analysis")
+        src_type = str(kwargs.get("source_type") or (args[1] if len(args) > 1 else "cdr")).upper()
+        wf = f"tower {src_type.lower()} dump analysis"
+        sheets = extract_gui_sheets_from_result(res, workflow=wf)
         if sheets:
-            store_gui_sheets(sheets, title="Tower CDR Dump Analysis", workflow="tower cdr dump analysis")
+            store_gui_sheets(sheets, title=f"Tower {src_type} Dump Analysis", workflow=wf)
+    except Exception:
+        pass
+    return res
+
+
+def run_tower_dump_partition_analysis(*args, **kwargs):
+    res = _ORIG_RUN_TOWER_DUMP_PARTITION_ANALYSIS(*args, **kwargs)
+    try:
+        from modules.reporting.gui_bundle_extractor import extract_gui_sheets_from_result
+        from modules.reporting.gui_result_store import store_gui_sheets
+        src_type = str(kwargs.get("source_type") or (args[1] if len(args) > 1 else "cdr")).upper()
+        wf = f"tower {src_type.lower()} partition analysis"
+        sheets = extract_gui_sheets_from_result(res, workflow=wf)
+        if sheets:
+            store_gui_sheets(sheets, title=f"Tower {src_type} Partition Analysis", workflow=wf)
     except Exception:
         pass
     return res

@@ -196,17 +196,29 @@ class TowerDumpWorker(QObject):
                         ),
                     }
 
+                # Explicit request: do not export Excel during GUI Tower CDR analysis.
+                if self.source_type == "cdr" and self.analysis_mode == "complete":
+                    selection_kwargs["gui_only"] = True
+
                 analysis_function = (
                     run_tower_dump_partition_analysis
                     if self.analysis_mode == "partition"
                     else run_complete_tower_dump_analysis
                 )
-                result = analysis_function(
-                    case,
-                    source_type=self.source_type,
-                    input_folder=self.input_folder,
-                    **selection_kwargs,
+                # Only Tower CDR complete-analysis gets deferred Excel in this patch.
+                from modules.reporting.gui_only_policy import gui_only_reports
+                policy = (
+                    gui_only_reports()
+                    if self.source_type == "cdr" and self.analysis_mode == "complete"
+                    else contextlib.nullcontext()
                 )
+                with policy:
+                    result = analysis_function(
+                        case,
+                        source_type=self.source_type,
+                        input_folder=self.input_folder,
+                        **selection_kwargs,
+                    )
 
             output_stream.flush()
 

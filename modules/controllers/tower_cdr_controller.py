@@ -632,6 +632,7 @@ def _run_complete_analysis(
     input_folder: str | Path | None = None,
     selected_spot_folders: Iterable[str] | None = None,
     include_root_files: bool = True,
+    gui_only: bool = False,
 ) -> dict[str, Any] | None:
     from time import perf_counter
 
@@ -921,6 +922,27 @@ def _run_complete_analysis(
         }
 
         print_tower_dump_report(result, row_limit=25)
+
+        # GUI shows analysis tables first; formatted Excel is an explicit export.
+        from modules.reporting.gui_only_policy import gui_only_report_mode
+        if gui_only or gui_only_report_mode():
+            register_analysis_run(
+                case_id,
+                analysis_type="TOWER_CDR_DUMP",
+                status="COMPLETED",
+                input_records=len(dataframe),
+                output_records=analysis.get("completed_count", 0),
+                report_path="",
+            )
+            result["excel_report"] = ""
+            result["gui_export_only"] = True
+            result["export_case_id"] = case_id
+            result["performance_timings"]["report_seconds"] = 0.0
+            result["performance_timings"]["total_seconds"] = round(
+                perf_counter() - workflow_started, 3
+            )
+            print("[+] Analysis complete. GUI tables are ready; Excel will be generated only when Export is clicked.")
+            return result
 
         print(
             "[+] Phase 4/4: generating the compact Excel report..."
