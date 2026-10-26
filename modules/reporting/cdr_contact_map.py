@@ -405,257 +405,17 @@ def _safe_json(
     )
 
 
-def render_contact_map_html(
-    points: list[dict[str, Any]],
-    *,
-    target: str = "",
-) -> str:
-    """Render an interactive Leaflet map with an offline table fallback."""
-
-    title = "CDR Contact Tower Map"
-    payload = _safe_json(
-        {
-            "target": _text(
-                target
-            ),
-            "points": points,
-        }
-    )
-
-    return f"""<!DOCTYPE html>
-<html lang="en">
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<meta http-equiv="Content-Security-Policy" content="default-src 'self' data: blob:; script-src 'self' 'unsafe-inline' https://unpkg.com; style-src 'self' 'unsafe-inline' https://unpkg.com; img-src 'self' data: blob: https://*.tile.openstreetmap.org; connect-src https://*.tile.openstreetmap.org;">
-<title>{html.escape(title)}</title>
-<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
-<style>
-body {{ margin: 0; background: #0b1220; color: #e5e7eb; font-family: Arial, sans-serif; }}
-header {{ padding: 16px 20px; background: #111827; border-bottom: 1px solid #263449; }}
-h1 {{ margin: 0 0 5px; font-size: 21px; }}
-#target {{ color: #93a4b8; font-size: 12px; }}
-.controls {{ display: grid; grid-template-columns: 1fr auto auto auto; gap: 10px; padding: 11px 16px; background: #0f1a2b; align-items: center; }}
-input[type="search"] {{ min-height: 38px; padding: 8px 10px; color: #f8fafc; background: #08101d; border: 1px solid #334155; border-radius: 7px; }}
-label {{ font-size: 12px; white-space: nowrap; }}
-button {{ min-height: 36px; padding: 8px 12px; color: #fff; background: #2563eb; border: 0; border-radius: 7px; font-weight: 700; }}
-#summary {{ padding: 9px 16px; color: #bfdbfe; background: #111827; border-top: 1px solid #263449; border-bottom: 1px solid #263449; font-size: 12px; }}
-#map {{ height: 58vh; min-height: 410px; background: #111827; }}
-#fallback {{ display: none; min-height: 250px; padding: 26px; color: #facc15; background: #111827; }}
-.caution {{ margin: 14px 16px; padding: 11px 13px; color: #fef3c7; background: #312e14; border: 1px solid #854d0e; border-radius: 8px; font-size: 12px; }}
-.table-wrap {{ margin: 0 16px 20px; overflow: auto; border: 1px solid #263449; border-radius: 8px; }}
-table {{ width: 100%; border-collapse: collapse; background: #0f1a2b; font-size: 12px; }}
-th, td {{ padding: 9px; border-bottom: 1px solid #263449; text-align: left; vertical-align: top; }}
-th {{ position: sticky; top: 0; color: #fff; background: #1d4ed8; }}
-.leaflet-popup-content-wrapper, .leaflet-popup-tip {{ color: #e5e7eb; background: #111827; }}
-.popup-contact {{ padding: 5px 0; border-top: 1px solid #334155; }}
-@media (max-width: 850px) {{ .controls {{ grid-template-columns: 1fr 1fr; }} }}
-</style>
-</head>
-<body>
-<header>
-<h1>{html.escape(title)}</h1>
-<div id="target"></div>
-</header>
-<div class="controls">
-<input id="search" type="search" placeholder="Search contact, name, CGI, site or address">
-<label><input id="most" type="checkbox" checked> Most Used</label>
-<label><input id="last" type="checkbox" checked> Last Interaction</label>
-<button id="reset" type="button">Reset View</button>
-</div>
-<div id="summary"></div>
-<div id="map"></div>
-<div id="fallback">Interactive basemap resources could not be loaded. The verified coordinate table remains available below. Reopen this file when internet access is available.</div>
-<div class="caution">Tower markers show the target handset's serving network location during communication. They do not establish the exact location of the contact person or handset. Verify important findings with source CDR, CGI records and independent case evidence.</div>
-<div class="table-wrap">
-<table>
-<thead><tr><th>Type</th><th>CGI</th><th>Site / Address</th><th>Coordinates</th><th>Contacts</th><th>Events</th></tr></thead>
-<tbody id="rows"></tbody>
-</table>
-</div>
-<script id="payload" type="application/json">{payload}</script>
-<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
-<script>
-"use strict";
-
-const payload = JSON.parse(document.getElementById("payload").textContent);
-const allPoints = Array.isArray(payload.points) ? payload.points : [];
-document.getElementById("target").textContent = payload.target ? `Target: ${{payload.target}}` : "Target: Not provided";
-
-function esc(value) {{
-    return String(value ?? "")
-        .replaceAll("&", "&amp;")
-        .replaceAll("<", "&lt;")
-        .replaceAll(">", "&gt;")
-        .replaceAll('"', "&quot;")
-        .replaceAll("'", "&#039;");
-}}
-
-function filterPoints() {{
-    const query = document.getElementById("search").value.trim().toLowerCase();
-    const showMost = document.getElementById("most").checked;
-    const showLast = document.getElementById("last").checked;
-
-    return allPoints.filter((point) => {{
-        if (point.type === "Most Used Tower" && !showMost) return false;
-        if (point.type === "Last Interaction Tower" && !showLast) return false;
-
-        const contacts = Array.isArray(point.contacts) ? point.contacts : [];
-        const text = [
-            point.type,
-            point.cgi,
-            point.site_name,
-            point.address,
-            ...contacts.map((item) => `${{item.target ?? ""}} ${{item.contact ?? ""}} ${{item.name ?? ""}}`),
-        ].join(" ").toLowerCase();
-
-        return !query || text.includes(query);
-    }});
-}}
-
-function popup(point) {{
-    const contacts = Array.isArray(point.contacts) ? point.contacts : [];
-    const visible = contacts.slice(0, 25).map((item) => `
-        <div class="popup-contact">
-        ${{item.target ? `<strong>Target: ${{esc(item.target)}}</strong><br>` : ""}}
-        <strong>${{esc(item.contact || "Contact not available")}}</strong>
-        ${{item.name ? `<br>${{esc(item.name)}}` : ""}}
-        <br>Events: ${{esc(item.events ?? 0)}}
-        ${{item.last_communication ? `<br>Last: ${{esc(item.last_communication)}}` : ""}}
-        </div>
-    `).join("");
-
-    return `
-        <strong>${{esc(point.type)}}</strong><br>
-        CGI: ${{esc(point.cgi || "Not available")}}<br>
-        Site: ${{esc(point.site_name || "Not available")}}<br>
-        Address: ${{esc(point.address || "Not available")}}<br>
-        Coordinates: ${{esc(point.latitude)}}, ${{esc(point.longitude)}}<br>
-        Lookup: ${{esc(point.lookup_status || "Not available")}}<br>
-        Contacts: ${{esc(point.contact_count ?? 0)}} | Events: ${{esc(point.event_count ?? 0)}}
-        ${{visible}}
-        ${{contacts.length > 25 ? `<div>+ ${{contacts.length - 25}} more contact(s)</div>` : ""}}
-    `;
-}}
-
-function renderTable(points) {{
-    const body = document.getElementById("rows");
-    body.replaceChildren();
-
-    if (!points.length) {{
-        const row = document.createElement("tr");
-        const cell = document.createElement("td");
-        cell.colSpan = 6;
-        cell.textContent = "No mapped tower records match the current filter.";
-        row.appendChild(cell);
-        body.appendChild(row);
-        return;
-    }}
-
-    for (const point of points) {{
-        const row = document.createElement("tr");
-        const values = [
-            point.type || "",
-            point.cgi || "",
-            [point.site_name, point.address].filter(Boolean).join(" | "),
-            `${{point.latitude}}, ${{point.longitude}}`,
-            String(point.contact_count ?? 0),
-            String(point.event_count ?? 0),
-        ];
-
-        for (const value of values) {{
-            const cell = document.createElement("td");
-            cell.textContent = value;
-            row.appendChild(cell);
-        }}
-
-        body.appendChild(row);
-    }}
-}}
-
-let map = null;
-let markers = [];
-let initialBounds = null;
-
-function clearMarkers() {{
-    if (!map) return;
-    for (const marker of markers) map.removeLayer(marker);
-    markers = [];
-}}
-
-function render(points, fitView = false) {{
-    renderTable(points);
-
-    const mostCount = points.filter((point) => point.type === "Most Used Tower").length;
-    const lastCount = points.filter((point) => point.type === "Last Interaction Tower").length;
-    document.getElementById("summary").textContent =
-        `Mapped points: ${{points.length}} | Most Used: ${{mostCount}} | Last Interaction: ${{lastCount}}`;
-
-    if (!map) return;
-
-    clearMarkers();
-    const bounds = [];
-
-    for (const point of points) {{
-        const mostUsed = point.type === "Most Used Tower";
-        const marker = L.circleMarker(
-            [point.latitude, point.longitude],
-            {{
-                radius: Math.min(8 + Math.log2(Number(point.contact_count || 1) + 1), 15),
-                color: mostUsed ? "#2563eb" : "#f97316",
-                fillColor: mostUsed ? "#60a5fa" : "#fb923c",
-                fillOpacity: 0.82,
-                weight: 2,
-            }}
-        );
-
-        marker.bindPopup(popup(point), {{ maxWidth: 420 }});
-        marker.bindTooltip(esc(`${{point.type}} | ${{point.cgi || "CGI not available"}}`));
-        marker.addTo(map);
-        markers.push(marker);
-        bounds.push([point.latitude, point.longitude]);
-    }}
-
-    if (bounds.length) {{
-        initialBounds = L.latLngBounds(bounds);
-        if (fitView) map.fitBounds(initialBounds, {{ padding: [30, 30], maxZoom: 15 }});
-    }}
-}}
-
-function start() {{
-    if (typeof window.L === "undefined") {{
-        document.getElementById("map").style.display = "none";
-        document.getElementById("fallback").style.display = "block";
-        render(filterPoints(), false);
-        return;
-    }}
-
-    map = L.map("map", {{ preferCanvas: true }});
-    L.tileLayer(
-        "https://{{s}}.tile.openstreetmap.org/{{z}}/{{x}}/{{y}}.png",
-        {{ maxZoom: 19, attribution: "&copy; OpenStreetMap contributors" }}
-    ).addTo(map);
-    render(filterPoints(), true);
-}}
-
-for (const id of ["search", "most", "last"]) {{
-    document.getElementById(id).addEventListener("input", () => render(filterPoints(), false));
-    document.getElementById(id).addEventListener("change", () => render(filterPoints(), false));
-}}
-
-document.getElementById("reset").addEventListener("click", () => {{
-    document.getElementById("search").value = "";
-    document.getElementById("most").checked = true;
-    document.getElementById("last").checked = true;
-    render(filterPoints(), false);
-    if (map && initialBounds) map.fitBounds(initialBounds, {{ padding: [30, 30], maxZoom: 15 }});
-}});
-
-window.addEventListener("load", start);
-</script>
-</body>
-</html>
-"""
+def render_contact_map_html(points: list[dict[str, Any]], *, target: str = "") -> str:
+    """Bundle Leaflet locally; the tower layer does not require street tiles."""
+    from .offline_views import render_offline_view
+    mapped = []
+    for p in points:
+        mapped.append({
+            "lat": p["latitude"], "lon": p["longitude"], "label": p.get("cgi", ""),
+            "sheet": p.get("type", "Contact towers"), "subscriber": target,
+            "description": str(p.get("contacts", [])),
+        })
+    return render_offline_view("map", {"points": mapped, "target": target})
 
 
 def generate_cdr_contact_map(
@@ -678,6 +438,16 @@ def generate_cdr_contact_map(
         contact_summary,
         target=target,
     )
+    if not points:
+        # A report may contain CGI identifiers without coordinates. Resolve them
+        # from the selected master rather than saving an unexplained empty map.
+        from .map_data import collect_map_points
+        from .offline_views import render_offline_view
+        mapped, diagnostics = collect_map_points([('Contact summary', contact_summary)])
+        output.write_text(render_offline_view('map', {
+            'points': mapped, 'target': target, 'diagnostics': diagnostics,
+        }), encoding='utf-8')
+        return output
     output.write_text(
         render_contact_map_html(
             points,
@@ -687,3 +457,107 @@ def generate_cdr_contact_map(
     )
 
     return output
+
+
+# EA_CONTACT_NUMBERS_PANEL_V2: Investigator contact numbers next to serving CGI.
+# The panel is rendered from the same verified points already used by the map.
+# It does NOT assume the contact's own location equals the target's serving tower.
+import html as _ea_contact_html
+
+_ea_original_contact_map_renderer = render_contact_map_html
+
+
+def _ea_build_contact_number_panel(points):
+    def esc(value):
+        if value is None:
+            return ""
+        return _ea_contact_html.escape(str(value), quote=True)
+
+    rows = []
+    for point in (points or []):
+        if not isinstance(point, dict):
+            continue
+        raw_contacts = point.get("contacts", [])
+        seen = set()
+        numbers = []
+        for item in raw_contacts if isinstance(raw_contacts, (tuple, list)) else []:
+            if not isinstance(item, dict):
+                continue
+            number = str(item.get("contact") or "").strip()
+            if not number or number in seen:
+                continue
+            seen.add(number)
+            name = str(item.get("name") or "").strip()
+            numbers.append((number, name))
+
+        if not numbers:
+            contact_html = '<span class="ea-muted">Not available in source CDR</span>'
+        else:
+            visible = []
+            for number, name in numbers[:6]:
+                label = "{}{}".format(esc(number), " — " + esc(name) if name else "")
+                visible.append('<span class="ea-number">{}</span>'.format(label))
+            contact_html = " ".join(visible)
+            if len(numbers) > 6:
+                remaining = []
+                for number, name in numbers[6:]:
+                    label = "{}{}".format(esc(number), " — " + esc(name) if name else "")
+                    remaining.append('<span class="ea-number">{}</span>'.format(label))
+                contact_html += (
+                    '<details><summary>Show {} more contact(s)</summary><div>{}</div></details>'
+                    .format(len(numbers) - 6, " ".join(remaining))
+                )
+        cgi = esc(point.get("cgi") or "Not available")
+        address = esc(point.get("address") or point.get("site_name") or "Not available")
+        kind = esc(point.get("type") or "Tower")
+        rows.append(
+            '<tr><td>{}</td><td>{}</td><td>{}</td><td>{}</td></tr>'.format(
+                kind, cgi, contact_html, address
+            )
+        )
+
+    if not rows:
+        body = '<tr><td colspan="4">No verified tower-contact points available.</td></tr>'
+    else:
+        body = "".join(rows)
+
+    return """
+<section id="ea-contact-numbers" aria-label="Contact Numbers by CGI">
+<style>
+#ea-contact-numbers{margin:16px;padding:15px;background:#101c2d;color:#e5e7eb;border:1px solid #334155;border-radius:10px;font:13px system-ui,Arial,sans-serif}
+#ea-contact-numbers h2{font-size:17px;margin:0 0 7px;color:#e8f2ff}
+#ea-contact-numbers p{margin:6px 0 12px;color:#b6c6d9}
+#ea-contact-numbers .ea-table-wrap{overflow:auto;max-height:44vh}
+#ea-contact-numbers table{width:100%;min-width:650px;border-collapse:collapse;background:transparent}
+#ea-contact-numbers th,#ea-contact-numbers td{padding:9px 11px;border-bottom:1px solid #344055;text-align:left;vertical-align:top}
+#ea-contact-numbers th{background:#1d3659;color:#fff;position:sticky;top:0}
+#ea-contact-numbers td:nth-child(3){min-width:230px;max-width:520px;overflow-wrap:anywhere}
+#ea-contact-numbers .ea-number{display:inline-block;background:#183859;color:#eff6ff;padding:4px 8px;border-radius:5px;margin:2px}
+#ea-contact-numbers details{margin-top:7px}
+#ea-contact-numbers summary{color:#93c5fd;cursor:pointer}
+#ea-contact-numbers .ea-muted{color:#fbbf24}
+</style>
+<h2>Contact Numbers by CGI / Tower</h2>
+<p>These contact numbers are from the CDR Other Party field. The tower address belongs to the <strong>target handset's serving network</strong>, not the contact's exact location.</p>
+<div class="ea-table-wrap"><table>
+<thead><tr><th>Interaction / Tower Type</th><th>CGI</th><th>Contact Number(s)</th><th>Tower / CGI Address</th></tr></thead>
+<tbody>__EA_ROWS__</tbody></table></div></section>
+""".replace("__EA_ROWS__", body)
+
+
+def render_contact_map_html(points, *, target=""):
+    """Preserve the existing map, adding a static contact-by-CGI panel."""
+    original = _ea_original_contact_map_renderer(points, target=target)
+    if not isinstance(original, str):
+        return original
+    panel = _ea_build_contact_number_panel(points)
+    # Place it at the end of the page without relying on any table, JS or CSS.
+    lower = original.lower()
+    position = lower.rfind("</body>")
+    if position >= 0:
+        return original[:position] + panel + "\n" + original[position:]
+    position = lower.rfind("</html>")
+    if position >= 0:
+        return original[:position] + panel + "\n" + original[position:]
+    return original + "\n" + panel
+

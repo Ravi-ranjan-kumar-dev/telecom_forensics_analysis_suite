@@ -598,3 +598,33 @@ def generate_multi_cdr_report(
         print(f"    Message    : {error}")
         print(traceback.format_exc(limit=4).rstrip())
         return None
+
+
+# === EXCEL_GUI_SYNC_HOOK ===
+_ORIG_GENERATE_MULTI_CDR_REPORT = generate_multi_cdr_report
+
+
+def generate_multi_cdr_report(*args, **kwargs):
+    workbook_path = _ORIG_GENERATE_MULTI_CDR_REPORT(*args, **kwargs)
+    try:
+        result_dict = args[0] if (args and isinstance(args[0], dict)) else kwargs.get("result")
+        if workbook_path:
+            from modules.reporting.gui_bundle_extractor import extract_sheets_from_excel_workbook
+            from modules.reporting.gui_result_store import store_gui_sheets
+            gui_sheets = extract_sheets_from_excel_workbook(
+                workbook_path,
+                result=result_dict if isinstance(result_dict, dict) else None,
+            )
+            if gui_sheets:
+                if isinstance(result_dict, dict):
+                    result_dict["excel_path"] = str(workbook_path)
+                    result_dict["report_path"] = str(workbook_path)
+                    result_dict["gui_sheets"] = gui_sheets
+                store_gui_sheets(
+                    gui_sheets,
+                    title="Multiple CDR Common Analysis",
+                    workflow="multiple cdr common analysis",
+                )
+    except Exception:
+        pass
+    return workbook_path

@@ -17,8 +17,10 @@ from ..auth import (
     oauth2_scheme,
     validate_password_reset_token,
 )
+from .. import login_throttle
 from ..database import get_db
 from ..security import verify_password
+from ..access_policy import account_is_usable
 
 router = APIRouter(
     prefix="/api/auth",
@@ -103,20 +105,29 @@ def login(
     db: Session = Depends(get_db),
 ) -> dict[str, str]:
     username = form_data.username.strip()
+    locked_for = login_throttle.seconds_locked(username)
+    if locked_for:
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail="Too many failed login attempts. Try again later.",
+            headers={"Retry-After": str(locked_for)},
+        )
     user = crud.get_user_by_username(db, username)
     if (
         not user
-        or not user.is_active
+        or not account_is_usable(user)
         or not verify_password(
             form_data.password,
             user.password_hash,
         )
     ):
+        login_throttle.record_failure(username)
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail=INVALID_CREDENTIALS,
             headers={"WWW-Authenticate": "Bearer"},
         )
+    login_throttle.record_success(username)
 
     try:
         access_token = create_access_token(
@@ -155,7 +166,7 @@ def read_users_me(
 
     username = str(payload.get("sub", ""))
     user = crud.get_user_by_username(db, username)
-    if user is None or not user.is_active:
+    if not account_is_usable(user):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid token",
@@ -192,7 +203,7 @@ def reset_password(
         db,
         request.username,
     )
-    if user is None or not user.is_active:
+    if not account_is_usable(user):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=INVALID_RESET,
@@ -218,3 +229,5 @@ def reset_password(
     return {
         "message": "Password reset successfully.",
     }
+
+

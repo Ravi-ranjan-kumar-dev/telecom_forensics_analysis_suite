@@ -13,6 +13,8 @@ import pandas as pd
 
 from .cgi_master_reader import read_cgi_master_file
 from .db_paths import master_duckdb_path
+from .duckdb_core import duckdb_connection
+from .master_access import master_operation
 from .master_importer import (
     _detect_delimiter, _detect_header_line, _normalise_column_name,
     _prepare_sdr_dataframe, _read_input_file,
@@ -623,7 +625,7 @@ def _create_database_backup(*, run_id: str, source_size_bytes: int) -> Path:
             f"Required approximately {required_bytes / 1024 / 1024 / 1024:.2f} GiB; "
             f"available {free_bytes / 1024 / 1024 / 1024:.2f} GiB."
         )
-    with duckdb.connect(str(database_path), read_only=False) as connection:
+    with duckdb_connection(database_path) as connection:
         connection.execute("CHECKPOINT")
     backup_path = backup_dir / f"{database_path.stem}_pre_master_import_{run_id}.duckdb"
     shutil.copy2(database_path, backup_path)
@@ -1039,6 +1041,7 @@ def _large_sdr_source_exists(connection: duckdb.DuckDBPyConnection, source_file:
     return row is not None
 
 
+@master_operation(lambda: master_duckdb_path())
 def import_master_data_file(file_path: object, *, create_backup: bool = True) -> dict[str, Any]:
     """
     Auto-detect, validate, back up and import one master-data file.
@@ -1064,7 +1067,7 @@ def import_master_data_file(file_path: object, *, create_backup: bool = True) ->
         result.target_table = "sdr_subscribers" if result.import_type == "SDR" else "cgi_addresses"
 
         database_path.parent.mkdir(parents=True, exist_ok=True)
-        with duckdb.connect(str(database_path), read_only=False) as connection:
+        with duckdb_connection(database_path) as connection:
             _ensure_master_tables(connection)
             if _successful_fingerprint_exists(connection, result.fingerprint):
                 result.status = "SKIPPED_DUPLICATE"
@@ -1091,7 +1094,7 @@ def import_master_data_file(file_path: object, *, create_backup: bool = True) ->
             backup_path = _create_database_backup(run_id=run_id, source_size_bytes=result.source_size_bytes)
             result.backup_path = str(backup_path)
 
-        with duckdb.connect(str(database_path), read_only=False) as connection:
+        with duckdb_connection(database_path) as connection:
             _ensure_master_tables(connection)
             if result.import_type == "SDR":
                 if path.suffix.lower() in TEXT_MASTER_SUFFIXES:
@@ -1126,7 +1129,7 @@ def import_master_data_file(file_path: object, *, create_backup: bool = True) ->
             pass
         try:
             database_path.parent.mkdir(parents=True, exist_ok=True)
-            with duckdb.connect(str(database_path), read_only=False) as connection:
+            with duckdb_connection(database_path) as connection:
                 _ensure_master_tables(connection)
                 _save_run(connection, result, started_at=started_at, completed_at=_utc_datetime())
         except Exception:
@@ -1191,3 +1194,4 @@ def import_master_folder(folder_path: str, import_type: str = "auto") -> int:
             print(f"[-] Failed to import {file_path.name}: {e}")
 
     return total_rows
+

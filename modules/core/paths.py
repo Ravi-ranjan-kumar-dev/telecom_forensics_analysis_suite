@@ -1,11 +1,31 @@
-"""Central project paths for the Telecom Forensics Analysis Suite."""
+"""Central project paths for the EthicalArmor - Telecom & Digital Forensics Suite."""
 
 from __future__ import annotations
 
 from pathlib import Path
+import os
+import sys
 
 
-PROJECT_ROOT = Path(__file__).resolve().parents[2]
+RESOURCE_ROOT = Path(getattr(sys, "_MEIPASS", Path(__file__).resolve().parents[2]))
+
+
+def application_data_root() -> Path:
+    """Keep source installs compatible; packaged apps use writable OS storage."""
+    configured = os.getenv("ETHICALARMOR_DATA_DIR", "").strip()
+    if configured:
+        return Path(configured).expanduser().resolve()
+    if not getattr(sys, "frozen", False):
+        return Path(__file__).resolve().parents[2]
+    if sys.platform == "win32":
+        base = Path(os.getenv("LOCALAPPDATA", str(Path.home() / "AppData" / "Local")))
+        return base / "EthicalArmor"
+    if sys.platform == "darwin":
+        return Path.home() / "Library" / "Application Support" / "EthicalArmor"
+    return Path(os.getenv("XDG_DATA_HOME", str(Path.home() / ".local" / "share"))) / "EthicalArmor"
+
+
+PROJECT_ROOT = application_data_root()
 
 CASES_DIR = PROJECT_ROOT / "cases"
 ACTIVE_CASES_DIR = CASES_DIR / "active"
@@ -82,3 +102,5 @@ def ensure_runtime_directories() -> None:
 
     for directory in directories:
         directory.mkdir(parents=True, exist_ok=True)
+
+

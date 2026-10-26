@@ -253,6 +253,12 @@ class TowerDumpWorker(QObject):
             )
 
         except Exception as error:
+            # EA_HANDLED_DIAGNOSTICS_V1
+            try:
+                from modules.core.diagnostic_events import record_handled_exception as _ea_record_handled_exception
+                _ea_record_handled_exception()
+            except Exception:
+                pass
             output_stream.flush()
 
             self.failed.emit(

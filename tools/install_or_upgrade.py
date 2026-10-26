@@ -64,7 +64,7 @@ def copy_runtime(backup: Path, staging: Path) -> None:
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Install or upgrade Telecom Forensics Suite")
+    parser = argparse.ArgumentParser(description="Install or upgrade EthicalArmor Suite")
     parser.add_argument(
         "--source",
         type=Path,

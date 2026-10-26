@@ -63,7 +63,7 @@ class DateTimePartitionDialog(QDialog):
                 "No investigation Spot is available for Date-Time Parts."
             )
 
-        self.setWindowTitle("Create / Manage Date-Time Parts")
+        self.setWindowTitle("EthicalArmor - Telecom & Digital Forensics Suite")
         self.setModal(True)
         self.resize(980, 520)
 

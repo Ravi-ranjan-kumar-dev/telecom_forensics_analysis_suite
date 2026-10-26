@@ -126,7 +126,7 @@ class ImeiPage(QFrame):
         self._automatic_note.setObjectName("noticeText")
         self._automatic_note.setWordWrap(True)
 
-        self._run_button = QPushButton("Run Automatic IMEI Analysis")
+        self._run_button = QPushButton("Start Analysis")
         self._run_button.setObjectName("primaryButton")
 
         self._open_report_button = QPushButton("Open Latest Report")
@@ -212,25 +212,8 @@ class ImeiPage(QFrame):
 
     def _build_layout(self) -> None:
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(30, 28, 30, 28)
-        layout.setSpacing(18)
-
-        heading_row = QHBoxLayout()
-        heading = QLabel("Run IMEI / Device Analysis")
-        heading.setObjectName("moduleTitle")
-        badge = QLabel("AUTOMATIC DETECTION")
-        badge.setObjectName("statusBadge")
-        heading_row.addWidget(heading)
-        heading_row.addStretch()
-        heading_row.addWidget(badge)
-
-        description = QLabel(
-            "Select dedicated IMEI evidence, let the software detect every "
-            "query identifier, and create the required single-device and "
-            "cross-device investigator reports."
-        )
-        description.setObjectName("moduleDescription")
-        description.setWordWrap(True)
+        layout.setContentsMargins(16, 12, 16, 14)
+        layout.setSpacing(12)
 
         controls = QFrame()
         controls.setObjectName("infoCard")
@@ -265,8 +248,7 @@ class ImeiPage(QFrame):
 
         controls_layout.addLayout(mode_row)
         controls_layout.addLayout(folder_row)
-        controls_layout.addWidget(self._helper_label)
-        controls_layout.addWidget(self._automatic_note)
+        # Detailed guidance remains accessible via tooltips, not permanent text.
         controls_layout.addLayout(action_row)
         controls_layout.addWidget(self._progress)
         controls_layout.addWidget(self._status_label)
@@ -276,14 +258,13 @@ class ImeiPage(QFrame):
         result_layout = QVBoxLayout(result_card)
         result_layout.setContentsMargins(22, 18, 22, 20)
         result_layout.setSpacing(10)
-        result_heading = QLabel("Detection and Analysis Progress")
+        result_heading = QLabel("Progress")
         result_heading.setObjectName("cardHeading")
         result_layout.addWidget(result_heading)
         result_layout.addWidget(self._identifier_label)
         result_layout.addWidget(self._log, stretch=1)
 
-        layout.addLayout(heading_row)
-        layout.addWidget(description)
+        # Sidebar already names this analysis; avoid a duplicate page title.
         layout.addWidget(controls)
         layout.addWidget(result_card, stretch=1)
 
@@ -531,6 +512,12 @@ class ImeiPage(QFrame):
             )
             self.set_selected_folder(staged_folder)
         except Exception as error:
+            # EA_HANDLED_DIAGNOSTICS_V1
+            try:
+                from modules.core.diagnostic_events import record_handled_exception as _ea_record_handled_exception
+                _ea_record_handled_exception()
+            except Exception:
+                pass
             QMessageBox.warning(
                 self,
                 "File Selection Error",
@@ -543,6 +530,10 @@ _ORIG_ImeiPage_COMPLETED = ImeiPage._analysis_completed
 
 
 def _enhanced_ImeiPage_completed(self, payload: object) -> None:
+    from gui.utils.thread_dispatcher import _is_main_thread, run_on_main_thread
+    if not _is_main_thread():
+        run_on_main_thread(lambda p=payload: _enhanced_ImeiPage_completed(self, p))
+        return
     from pathlib import Path as _Path
     from modules.reporting.gui_result_store import get_latest_gui_meta, get_latest_gui_sheets
     from gui.dialogs.fullscreen_results_window import open_fullscreen_results_window

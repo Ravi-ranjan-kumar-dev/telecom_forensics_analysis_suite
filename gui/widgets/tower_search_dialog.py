@@ -48,14 +48,14 @@ class TowerDumpSearchDialog(QDialog):
             "matched_records", pd.DataFrame()
         )
 
-        title = QLabel(f"Full Tower Dump Suspect & B-Party Search: {targets}")
+        title = QLabel(f"Full Tower Dump Search: {targets}")
         title.setObjectName("moduleTitle")
 
         total_dump = int(search_result.get("total_dump_records", 0) or 0)
         matched_count = int(search_result.get("matched_count", 0) or 0)
         summary = QLabel(
             f"Scanned 100% Full Tower Dump: {total_dump:,} total records | "
-            f"Matched records: {matched_count:,} | "
+            f"Matched records: {matched_count:,} | Displayed preview: {len(self._records_df):,} | "
             f"Linked B-Parties / Endpoints: {len(self._counterparty_df):,}"
         )
         summary.setObjectName("cardText")
@@ -70,9 +70,16 @@ class TowerDumpSearchDialog(QDialog):
         self._filter_edit.setClearButtonEnabled(True)
         self._filter_edit.textChanged.connect(self._apply_filter)
 
-        export_btn = QPushButton("Export Search Report to Excel (.xlsx)")
+        export_btn = QPushButton("Export Search Preview (.xlsx)")
         export_btn.setObjectName("primaryButton")
         export_btn.clicked.connect(self._export_excel)
+        self._ea_export_running = False
+        self._full_export_btn = QPushButton("Export All Matches")
+        self._full_export_btn.setObjectName("primaryButton")
+        self._full_export_btn.setToolTip("Export all staged-SQL matches, not GUI preview")
+        self._full_export_btn.setEnabled(bool(search_result.get("full_export_request")))
+        self._full_export_btn.clicked.connect(self._export_full_matches)
+        self._full_export_status = QLabel("Full matching records: use Export All Matches (CSV/Excel).")
 
         close_btn = QPushButton("Close")
         close_btn.setObjectName("secondaryButton")
@@ -81,6 +88,7 @@ class TowerDumpSearchDialog(QDialog):
         filter_row.addWidget(QLabel("Quick Filter:"))
         filter_row.addWidget(self._filter_edit, stretch=1)
         filter_row.addWidget(export_btn)
+        filter_row.addWidget(self._full_export_btn)
         filter_row.addWidget(close_btn)
 
         self._tabs = QTabWidget()
@@ -96,11 +104,11 @@ class TowerDumpSearchDialog(QDialog):
         )
         self._tabs.addTab(
             self._counterparty_table,
-            f"2. Linked B-Party / Counterparties ({len(self._counterparty_df)})",
+            f"2. {search_result.get('endpoint_description', 'Linked B-Party / Counterparties')} ({len(self._counterparty_df)})",
         )
         self._tabs.addTab(
             self._records_table,
-            f"3. All Matched Dump Records ({len(self._records_df):,})",
+            f"3. Matched Records Preview ({len(self._records_df):,})",
         )
         self._tabs.currentChanged.connect(lambda _idx: self._apply_filter())
 
@@ -109,6 +117,7 @@ class TowerDumpSearchDialog(QDialog):
         layout.setSpacing(12)
         layout.addWidget(title)
         layout.addWidget(summary)
+        layout.addWidget(self._full_export_status)
         layout.addLayout(filter_row)
         layout.addWidget(self._tabs, stretch=1)
 
@@ -157,6 +166,90 @@ class TowerDumpSearchDialog(QDialog):
                     break
             current_widget.setRowHidden(row, not matched)
 
+    def _export_full_matches(self) -> None:
+        """Export the entire staged-SQL result, not the dialog's bounded DataFrame."""
+        if getattr(self, "_ea_export_running", False):
+            return
+        request = self._result.get("full_export_request")
+        if not isinstance(request, dict):
+            QMessageBox.warning(self, "Export unavailable", "Rerun Full Dump Search to enable complete export.")
+            return
+        from pathlib import Path
+        from PySide6.QtCore import QThread
+        from gui.workers.full_match_export_worker import FullMatchExportWorker
+
+        file_path, chosen_filter = QFileDialog.getSaveFileName(
+            self, "Export ALL Matching Records", "Tower_Dump_Matched_Records.csv",
+            "CSV (recommended for large data) (*.csv);;Excel Workbook (*.xlsx)",
+        )
+        if not file_path:
+            return
+        if not file_path.lower().endswith((".csv", ".xlsx")):
+            file_path += ".xlsx" if "xlsx" in chosen_filter else ".csv"
+        destination = Path(file_path).expanduser()
+        if destination.exists():
+            answer = QMessageBox.question(
+                self, "Confirm overwrite", f"Replace existing file?\n{destination}",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.No,
+            )
+            if answer != QMessageBox.StandardButton.Yes:
+                return
+
+        self._ea_export_running = True
+        self._full_export_btn.setEnabled(False)
+        self._full_export_status.setText("Exporting all matching rows in background...")
+        thread = QThread(self)
+        worker = FullMatchExportWorker(request, str(destination))
+        worker.moveToThread(thread)
+        self._ea_export_thread = thread
+        self._ea_export_worker = worker
+
+        def update_progress(row_count: int):
+            self._full_export_status.setText(f"Exporting all matches: {row_count:,} rows written...")
+
+        def complete(info: dict):
+            self._full_export_status.setText(
+                f"Exported {info['rows']:,} matching records ({info['columns']} columns)."
+            )
+            QMessageBox.information(
+                self, "Export Complete",
+                f"Saved: {info['path']}\nRows: {info['rows']:,}\n"
+                f"Source records: {info['total_records']:,}\nSHA-256: {info['sha256']}",
+            )
+
+        def failed(message: str):
+            self._full_export_status.setText("Export failed. No incomplete report published.")
+            QMessageBox.warning(self, "Full Export Failed", message)
+
+        def finished():
+            self._ea_export_running = False
+            self._full_export_btn.setEnabled(True)
+            self._ea_export_thread = None
+            self._ea_export_worker = None
+
+        thread.started.connect(worker.run)
+        worker.progress.connect(update_progress)
+        worker.completed.connect(complete)
+        worker.failed.connect(failed)
+        worker.finished.connect(thread.quit)
+        worker.finished.connect(worker.deleteLater)
+        thread.finished.connect(finished)
+        thread.finished.connect(thread.deleteLater)
+        thread.start()
+
+    def accept(self) -> None:
+        if getattr(self, "_ea_export_running", False):
+            QMessageBox.information(self, "Export active", "Export is running; keep this window open.")
+            return
+        super().accept()
+
+    def reject(self) -> None:
+        if getattr(self, "_ea_export_running", False):
+            QMessageBox.information(self, "Export active", "Export is running; keep this window open.")
+            return
+        super().reject()
+
     def _export_excel(self) -> None:
         targets_slug = "_".join(self._result.get("targets", ["suspect"]))[:40]
         path, _ = QFileDialog.getSaveFileName(
@@ -186,6 +279,12 @@ class TowerDumpSearchDialog(QDialog):
                 f"Full-dump search report saved:\n{path}",
             )
         except Exception as error:
+            # EA_HANDLED_DIAGNOSTICS_V1
+            try:
+                from modules.core.diagnostic_events import record_handled_exception as _ea_record_handled_exception
+                _ea_record_handled_exception()
+            except Exception:
+                pass
             QMessageBox.critical(
                 self,
                 "Export Failed",

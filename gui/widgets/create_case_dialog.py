@@ -26,7 +26,7 @@ class CreateCaseDialog(QDialog):
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self.created_case: dict[str, Any] | None = None
-        self.setWindowTitle("Create New Investigation Case (FIR)")
+        self.setWindowTitle("EthicalArmor - Telecom & Digital Forensics Suite")
         self.setModal(True)
         self.setMinimumSize(520, 480)
 

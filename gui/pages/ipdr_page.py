@@ -31,8 +31,8 @@ from modules.core.paths import PROJECT_ROOT
 
 
 _MODE_LABELS = {
-    "single": "Single Subscriber IPDR Analysis",
-    "multiple": "Multiple Subscriber IPDR Analysis",
+    "single": "Single Subscriber",
+    "multiple": "Multiple Subscribers",
 }
 
 _MODE_HELP = {
@@ -138,7 +138,7 @@ class IpdrPage(QFrame):
         )
 
         self._run_button = QPushButton(
-            "Run IPDR Analysis"
+            "Start Analysis"
         )
         self._run_button.setObjectName(
             "primaryButton"
@@ -256,54 +256,8 @@ class IpdrPage(QFrame):
         layout = QVBoxLayout(
             self
         )
-        layout.setContentsMargins(
-            30,
-            28,
-            30,
-            28,
-        )
-        layout.setSpacing(
-            18
-        )
-
-        title_row = QHBoxLayout()
-        title_row.setSpacing(
-            12
-        )
-
-        title = QLabel(
-            "Run Subscriber IPDR Analysis"
-        )
-        title.setObjectName(
-            "moduleTitle"
-        )
-
-        badge = QLabel(
-            "BACKEND CONNECTED"
-        )
-        badge.setObjectName(
-            "statusBadge"
-        )
-
-        title_row.addWidget(
-            title
-        )
-        title_row.addStretch()
-        title_row.addWidget(
-            badge
-        )
-
-        description = QLabel(
-            "Select subscriber IPDR evidence, run the existing "
-            "case-aware workflow in the background, and open the "
-            "generated investigator report. Source files remain unchanged."
-        )
-        description.setObjectName(
-            "moduleDescription"
-        )
-        description.setWordWrap(
-            True
-        )
+        layout.setContentsMargins(16, 12, 16, 14)
+        layout.setSpacing(12)
 
         controls = QFrame()
         controls.setObjectName(
@@ -376,12 +330,7 @@ class IpdrPage(QFrame):
         controls_layout.addLayout(
             folder_row
         )
-        controls_layout.addWidget(
-            self._helper_label
-        )
-        controls_layout.addWidget(
-            self._separation_note
-        )
+        # Contextual file-type warnings are handled by validation.
         controls_layout.addLayout(
             action_row
         )
@@ -425,12 +374,8 @@ class IpdrPage(QFrame):
             stretch=1,
         )
 
-        layout.addLayout(
-            title_row
-        )
-        layout.addWidget(
-            description
-        )
+        # The active analysis module is highlighted in the sidebar.
+        # Do not repeat its heading, backend badge, or instruction paragraph.
         layout.addWidget(
             controls
         )
@@ -897,6 +842,12 @@ class IpdrPage(QFrame):
             )
             self.set_selected_folder(staged_folder)
         except Exception as error:
+            # EA_HANDLED_DIAGNOSTICS_V1
+            try:
+                from modules.core.diagnostic_events import record_handled_exception as _ea_record_handled_exception
+                _ea_record_handled_exception()
+            except Exception:
+                pass
             QMessageBox.warning(
                 self,
                 "File Selection Error",
@@ -909,6 +860,10 @@ _ORIG_IpdrPage_COMPLETED = IpdrPage._analysis_completed
 
 
 def _enhanced_IpdrPage_completed(self, payload: object) -> None:
+    from gui.utils.thread_dispatcher import _is_main_thread, run_on_main_thread
+    if not _is_main_thread():
+        run_on_main_thread(lambda p=payload: _enhanced_IpdrPage_completed(self, p))
+        return
     from pathlib import Path as _Path
     from modules.reporting.gui_result_store import get_latest_gui_meta, get_latest_gui_sheets
     from gui.dialogs.fullscreen_results_window import open_fullscreen_results_window

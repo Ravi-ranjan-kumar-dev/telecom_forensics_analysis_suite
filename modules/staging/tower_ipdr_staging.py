@@ -11,6 +11,8 @@ Production goal:
 
 from __future__ import annotations
 
+from modules.cases.repository import active_case_dir
+
 import json
 from datetime import datetime
 from pathlib import Path
@@ -89,9 +91,7 @@ def _json_safe(value: Any) -> Any:
 
 def tower_ipdr_staging_root(case_id: str) -> Path:
     return (
-        Path("cases")
-        / "active"
-        / str(case_id)
+        active_case_dir(case_id)
         / "staging"
         / "tower_ipdr"
     )
@@ -1242,47 +1242,16 @@ def tower_ipdr_investigation_summary(
     )
 
     total_loaded_records = int(count_tower_ipdr_events(case_id))
-
-    selected_records_for_warning = 0
-    selected_start_for_warning = start_time
-    selected_end_for_warning = end_time
-
-    if isinstance(summary, pd.DataFrame) and not summary.empty:
-        try:
-            selected_records_for_warning = int(summary.iloc[0].get("records_found", 0) or 0)
-        except Exception:
-            selected_records_for_warning = 0
-
-        selected_start_for_warning = summary.iloc[0].get("partition_start", start_time)
-        selected_end_for_warning = summary.iloc[0].get("partition_end", end_time)
-
+    selected_records = int(summary.iloc[0].get("records_found", 0) or 0) if not summary.empty else 0
+    selected_start = pd.Timestamp(partition_time)
+    if mode_value == "exact_second":
+        selected_end = selected_start + pd.Timedelta(seconds=1)
+    else:
+        selected_start = selected_start.floor("min")
+        selected_end = selected_start + pd.Timedelta(minutes=1)
     data_scope_warnings = _build_tower_ipdr_scope_warnings(
-        selected_records=selected_records_for_warning,
-        total_records=total_loaded_records,
-        selected_start=selected_start_for_warning,
-        selected_end=selected_end_for_warning,
-    )
-
-    total_loaded_records = int(count_tower_ipdr_events(case_id))
-
-    selected_records_for_warning = 0
-    selected_start_for_warning = start_time
-    selected_end_for_warning = end_time
-
-    if isinstance(summary, pd.DataFrame) and not summary.empty:
-        try:
-            selected_records_for_warning = int(summary.iloc[0].get("records_found", 0) or 0)
-        except Exception:
-            selected_records_for_warning = 0
-
-        selected_start_for_warning = summary.iloc[0].get("partition_start", start_time)
-        selected_end_for_warning = summary.iloc[0].get("partition_end", end_time)
-
-    data_scope_warnings = _build_tower_ipdr_scope_warnings(
-        selected_records=selected_records_for_warning,
-        total_records=total_loaded_records,
-        selected_start=selected_start_for_warning,
-        selected_end=selected_end_for_warning,
+        selected_records=selected_records, total_records=total_loaded_records,
+        selected_start=str(selected_start), selected_end=str(selected_end),
     )
 
     lead_summary = pd.DataFrame(
@@ -1781,9 +1750,7 @@ def _safe_report_name(value: str) -> str:
 
 def tower_ipdr_fast_report_root(case_id: str) -> Path:
     return (
-        Path("cases")
-        / "active"
-        / str(case_id)
+        active_case_dir(case_id)
         / "reports"
         / "tower_dump"
         / "ipdr"
@@ -1862,6 +1829,7 @@ def export_tower_ipdr_investigation_summary(
         ),
     }
 
+    manifest_path = output_dir / "manifest.json"
     manifest_path.write_text(
         json.dumps(
             _json_safe(manifest),
@@ -3278,9 +3246,7 @@ def tower_ipdr_range_investigation_summary(
 
 def tower_ipdr_partwise_range_report_root(case_id: str) -> Path:
     return (
-        Path("cases")
-        / "active"
-        / str(case_id)
+        active_case_dir(case_id)
         / "reports"
         / "tower_dump"
         / "ipdr"
@@ -5095,3 +5061,5 @@ def _read_csv_for_excel_safe(path: Path) -> pd.DataFrame:
         )
 
     return dataframe
+
+

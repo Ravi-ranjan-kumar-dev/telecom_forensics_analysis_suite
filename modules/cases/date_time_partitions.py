@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+from modules.cases.repository import active_case_dir
+
 import json
+import re
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Iterable
@@ -21,11 +24,13 @@ def _now_iso() -> str:
 
 
 def _case_config_dir(case_id: str) -> Path:
-    return Path("cases") / "active" / str(case_id) / "configuration"
+    return active_case_dir(case_id) / "configuration"
 
 
 def date_time_partition_path(case_id: str, workflow: str) -> Path:
     safe_workflow = str(workflow).strip().lower().replace(" ", "_")
+    if not re.fullmatch(r"[a-z0-9][a-z0-9_-]{0,79}", safe_workflow):
+        raise ValueError("Invalid date-time partition workflow")
     return _case_config_dir(case_id) / f"{safe_workflow}_date_time_parts.json"
 
 
@@ -678,3 +683,5 @@ def print_date_time_part_warnings(case_id: str, workflow: str) -> None:
         print(f"    {warning.get('right_part')}: {warning.get('right_range')}")
 
     print("Meaning: Overlap intentional ho sakta hai, lekin report compare karte time dhyan rakhein.")
+
+

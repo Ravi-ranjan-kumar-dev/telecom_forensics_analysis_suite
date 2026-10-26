@@ -76,6 +76,8 @@ def _prepare_dataframe(df: pd.DataFrame, target: str) -> pd.DataFrame:
         data["datetime"] = pd.to_datetime(data["datetime"], errors="coerce", dayfirst=True)
 
     data["call_duration"] = pd.to_numeric(data["call_duration"], errors="coerce").fillna(0).clip(lower=0).astype(int)
+    if "raw_call_type" not in data.columns:
+        data["raw_call_type"] = data["call_type"].copy()
     data["call_type"] = data["call_type"].astype("string").fillna("unknown").str.lower().str.strip()
     data["call_direction"] = data["call_direction"].astype("string").fillna("UNKNOWN").str.upper().str.strip()
     data["target_number"] = str(target)
@@ -477,9 +479,9 @@ def _sms_in_mask(
 
 
 def _call_type_display(data: pd.DataFrame) -> pd.Series:
-    conditions = [_voice_out_mask(data), _voice_in_mask(data), _sms_out_mask(data), _sms_in_mask(data)]
-    choices = ["Outgoing Call", "Incoming Call", "Outgoing SMS", "Incoming SMS"]
-    return pd.Series(np.select(conditions, choices, default=data["call_type"].astype(str)), index=data.index)
+    """Show operator-supplied call type; normalization remains analysis-only."""
+    values = data["raw_call_type"] if "raw_call_type" in data else data["call_type"]
+    return values.astype("string").fillna("")
 
 
 def _sub_call_type(data: pd.DataFrame) -> pd.Series:
@@ -1678,3 +1680,35 @@ def generate_single_cdr_report(
         print(f"    Message    : {error}")
         print(traceback.format_exc(limit=4).rstrip())
         return None
+
+
+# === EXCEL_GUI_SYNC_HOOK ===
+_ORIG_GENERATE_SINGLE_CDR_REPORT = generate_single_cdr_report
+
+
+def generate_single_cdr_report(*args, **kwargs):
+    workbook_path = _ORIG_GENERATE_SINGLE_CDR_REPORT(*args, **kwargs)
+    try:
+        result_dict = args[0] if (args and isinstance(args[0], dict)) else kwargs.get("result")
+        if workbook_path:
+            from modules.reporting.gui_bundle_extractor import extract_sheets_from_excel_workbook
+            from modules.reporting.gui_result_store import store_gui_sheets
+            gui_sheets = extract_sheets_from_excel_workbook(
+                workbook_path,
+                result=result_dict if isinstance(result_dict, dict) else None,
+            )
+            if gui_sheets:
+                if isinstance(result_dict, dict):
+                    result_dict["excel_path"] = str(workbook_path)
+                    result_dict["report_path"] = str(workbook_path)
+                    result_dict["gui_sheets"] = gui_sheets
+                store_gui_sheets(
+                    gui_sheets,
+                    title="Single CDR Analysis",
+                    workflow="single cdr analysis",
+                )
+    except Exception:
+        pass
+    return workbook_path
+
+

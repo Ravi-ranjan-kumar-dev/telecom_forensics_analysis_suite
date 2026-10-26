@@ -306,7 +306,8 @@ def _combine_datetime(date_series: pd.Series, time_series: pd.Series) -> pd.Seri
 
 
 def _read_prefix(path: Path, size: int = 20000) -> str:
-    raw = path.read_bytes()[:size]
+    with path.open("rb") as handle:
+        raw = handle.read(size)
 
     for encoding in ("utf-8-sig", "utf-8", "cp1252", "latin1"):
         try:
@@ -1688,7 +1689,8 @@ def load_ipdr_case(
 
 def _looks_like_jio_dynamic_ipdr_csv(path: str | Path) -> bool:
     try:
-        sample = Path(path).read_text(encoding="utf-8", errors="ignore")[:4000]
+        with Path(path).open(encoding="utf-8", errors="ignore") as handle:
+            sample = handle.read(4000)
     except Exception:
         return False
 
@@ -1751,133 +1753,134 @@ def _load_jio_dynamic_ipdr_csv_fallback(path: str | Path) -> dict[str, Any]:
 
     raw.columns = [str(column).strip() for column in raw.columns]
 
-    normalized = pd.DataFrame()
+    def column(name, default=""):
+        return raw[name] if name in raw.columns else pd.Series(default, index=raw.index)
+
+    normalized = pd.DataFrame(index=raw.index)
 
     normalized["subscriber_number"] = (
-        raw.get("Landline/MSISDN/MDN/Leased Circuit ID for Internet Access", "")
+        column("Landline/MSISDN/MDN/Leased Circuit ID for Internet Access", "")
         .astype(str)
         .str.strip()
     )
     normalized["subscriber_identifier_type"] = "MSISDN"
 
     normalized["user_id"] = (
-        raw.get("User Id for internet Access based on authentication", "")
+        column("User Id for internet Access based on authentication", "")
         .astype(str)
         .str.strip()
     )
 
     normalized["source_ip"] = (
-        raw.get("Source IP Address", "")
+        column("Source IP Address", "")
         .astype(str)
         .str.strip()
     )
     normalized["source_port"] = pd.to_numeric(
-        raw.get("Source Port", ""),
+        column("Source Port", ""),
         errors="coerce",
     ).astype("float64")
 
     normalized["translated_ip"] = (
-        raw.get("Translated IP Address", "")
+        column("Translated IP Address", "")
         .astype(str)
         .str.strip()
     )
     normalized["translated_port"] = pd.to_numeric(
-        raw.get("Translated Port", ""),
+        column("Translated Port", ""),
         errors="coerce",
     ).astype("float64")
 
     normalized["destination_ip"] = (
-        raw.get("Destination IP Address", "")
+        column("Destination IP Address", "")
         .astype(str)
         .str.strip()
     )
     normalized["destination_port"] = pd.to_numeric(
-        raw.get("Destination Port", ""),
+        column("Destination Port", ""),
         errors="coerce",
     ).astype("float64")
 
     normalized["allocation_type"] = (
-        raw.get("Static/Dynamic IP Address Allocation", "")
+        column("Static/Dynamic IP Address Allocation", "")
         .astype(str)
         .str.strip()
     )
 
-    normalized["allocation_start"] = _combine_jio_date_time(
-        raw,
-        "Start Date of Public IP Address allocation (dd/mm/yyyy)",
-        "IST Start Time of Public IP address allocation (hh:mm:ss)",
+    normalized["allocation_start"] = _combine_datetime(
+        column("Start Date of Public IP Address allocation (dd/mm/yyyy)"),
+        column("IST Start Time of Public IP address allocation (hh:mm:ss)"),
     )
-    normalized["allocation_end"] = _combine_jio_date_time(
-        raw,
-        "End Date of Public IP address allocation (dd/mm/yyyy)",
-        "IST End Time of Public IP address allocation (hh:mm:ss)",
+    normalized["allocation_end"] = _combine_datetime(
+        column("End Date of Public IP address allocation (dd/mm/yyyy)"),
+        column("IST End Time of Public IP address allocation (hh:mm:ss)"),
     )
 
     normalized["event_time"] = _parse_jio_datetime(
-        raw.get("TIME1 (dd/MM/yyyy HH:mm:ss)", "")
+        column("TIME1 (dd/MM/yyyy HH:mm:ss)", "")
         .astype(str)
         .str.strip()
     )
 
     normalized["imei"] = (
-        raw.get("Source MAC-ID Address/Other device Identification number", "")
+        column("Source MAC-ID Address/Other device Identification number", "")
         .astype(str)
         .str.strip()
     )
     normalized["imsi"] = (
-        raw.get("IMSI", "")
+        column("IMSI", "")
         .astype(str)
         .str.strip()
     )
 
     normalized["pgw_ip"] = (
-        raw.get("PGW IP address", "")
+        column("PGW IP address", "")
         .astype(str)
         .str.strip()
     )
     normalized["apn"] = (
-        raw.get("Access Point Name", "")
+        column("Access Point Name", "")
         .astype(str)
         .str.strip()
     )
 
     normalized["first_cell_id"] = (
-        raw.get("First CELL ID", "")
+        column("First CELL ID", "")
         .astype(str)
         .str.strip()
     )
     normalized["last_cell_id"] = (
-        raw.get("Last CELL ID", "")
+        column("Last CELL ID", "")
         .astype(str)
         .str.strip()
     )
     normalized["cell_id"] = normalized["first_cell_id"]
 
     normalized["session_duration_seconds"] = pd.to_numeric(
-        raw.get("Session Duration (Seconds)", ""),
+        column("Session Duration (Seconds)", ""),
         errors="coerce",
     )
     normalized["uplink_volume"] = pd.to_numeric(
-        raw.get("Data Volume Up Link", ""),
+        column("Data Volume Up Link", ""),
         errors="coerce",
     )
     normalized["downlink_volume"] = pd.to_numeric(
-        raw.get("Data Volume Down Link", ""),
+        column("Data Volume Down Link", ""),
         errors="coerce",
     )
 
     normalized["roaming_circle_indicator"] = (
-        raw.get("Roaming Circle Indicator", "")
+        column("Roaming Circle Indicator", "")
         .astype(str)
         .str.strip()
     )
     normalized["roaming_circle"] = (
-        raw.get("Roaming Circle", "")
+        column("Roaming Circle", "")
         .astype(str)
         .str.strip()
     )
     normalized["sim_type"] = (
-        raw.get("SIM Type", "")
+        column("SIM Type", "")
         .astype(str)
         .str.strip()
     )
@@ -1972,3 +1975,5 @@ def load_ipdr_file(path: str | Path) -> dict[str, Any]:
             return fallback_result
 
     return result
+
+

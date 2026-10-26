@@ -1,0 +1,34 @@
+{
+  "x-ethicalarmor-shared-master": {
+    "format": "ethicalarmor/shared-master/v1",
+    "host_master": "/home/raviranjan/Desktop/EthicalArmor/database/unified_sdr_v2/telecom_forensics.duckdb"
+  },
+  "services": {
+    "api": {
+      "user": "1000:1000",
+      "environment": {
+        "ETHICALARMOR_MASTER_DB": "/master/telecom_forensics.duckdb",
+        "ETHICALARMOR_MASTER_AUTHORITATIVE": "1",
+        "ETHICALARMOR_DATA_DIR": "/runtime"
+      },
+      "volumes": [
+        {
+          "type": "bind",
+          "source": "/home/raviranjan/Desktop/EthicalArmor/database/unified_sdr_v2",
+          "target": "/master",
+          "bind": {
+            "create_host_path": false
+          }
+        },
+        {
+          "type": "bind",
+          "source": "/home/raviranjan/Desktop/EthicalArmor/database/backend_runtime",
+          "target": "/runtime",
+          "bind": {
+            "create_host_path": false
+          }
+        }
+      ]
+    }
+  }
+}

@@ -329,6 +329,34 @@ def extract_gui_sheets_from_result(
     if not isinstance(result, dict):
         return {}
 
+    def _compact_report_tabs(tabs):
+        """Compact displayed/exported reports without modifying source evidence."""
+        import re
+        tower_cdr = ("tower" in workflow.lower() and
+                     "ipdr" not in workflow.lower() and
+                     "gprs" not in workflow.lower())
+        result_tabs = {}
+        for title, frame in tabs.items():
+            normalized = re.sub(r"[^a-z0-9]+", " ", str(title).lower()).strip()
+            if tower_cdr and ("hourly activity" in normalized or "daily activity" in normalized):
+                continue
+            if not isinstance(frame, pd.DataFrame):
+                continue
+            # Only remove unambiguous serialization/implementation artifacts.
+            keep_positions = []
+            seen = set()
+            for pos, col in enumerate(frame.columns):
+                label = str(col).strip()
+                canon = label.casefold()
+                if (not label or canon.startswith("unnamed:") or
+                    canon in {"level_0", "__index_level_0__"} or
+                    label.startswith("__") or canon in seen):
+                    continue
+                seen.add(canon)
+                keep_positions.append(pos)
+            result_tabs[title] = frame.iloc[:, keep_positions] if len(keep_positions) != len(frame.columns) else frame
+        return result_tabs
+
     # 1. If an Excel workbook was already generated, read exact sheets from it
     excel_paths = _find_excel_report_paths(result)
     if excel_paths:
@@ -342,7 +370,7 @@ def extract_gui_sheets_from_result(
         if merged_excel_sheets:
             merged_excel_sheets = append_full_loaded_data_tab(merged_excel_sheets, result)
             result["gui_sheets"] = merged_excel_sheets
-            return merged_excel_sheets
+            return _compact_report_tabs(merged_excel_sheets)
 
     # 2. If pre_built gui_sheets exist, ensure Full Loaded Data is appended at the end
     pre_built = result.get("gui_sheets")
@@ -353,7 +381,7 @@ def extract_gui_sheets_from_result(
         if sheets:
             sheets = append_full_loaded_data_tab(sheets, result)
             result["gui_sheets"] = sheets
-            return sheets
+            return _compact_report_tabs(sheets)
 
     analysis = result.get("analysis")
     if not isinstance(analysis, dict):
@@ -374,7 +402,7 @@ def extract_gui_sheets_from_result(
                 excel_sheets = extract_sheets_from_excel_workbook(gen_path, result=result)
                 if excel_sheets:
                     result["gui_sheets"] = excel_sheets
-                    return excel_sheets
+                    return _compact_report_tabs(excel_sheets)
         except Exception:
             pass
 
@@ -464,7 +492,7 @@ def extract_gui_sheets_from_result(
     sheets = append_full_loaded_data_tab(
         sheets, result, max_rows=2000 if result.get("gui_export_only") else 200_000
     )
-    return sheets
+    return _compact_report_tabs(sheets)
 
 class sheets(dict):
     """Convenience wrapper around a mapping of sheet-name to pandas DataFrame."""

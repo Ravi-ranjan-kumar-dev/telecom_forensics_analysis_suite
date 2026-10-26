@@ -108,7 +108,7 @@ def _reset_password(username: str) -> int:
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description=(
-            "Manage Telecom Forensics application authentication "
+            "Manage EthicalArmor application authentication "
             "from the backend host."
         )
     )

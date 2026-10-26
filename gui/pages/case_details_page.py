@@ -13,6 +13,7 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QHeaderView,
     QLabel,
+    QMessageBox,
     QPushButton,
     QTableWidget,
     QTableWidgetItem,
@@ -108,6 +109,12 @@ class CaseDetailsPage(QFrame):
         self._audit_badge = QLabel("CHECKING")
         self._audit_badge.setObjectName("statusBadge")
 
+        self._numbers_button = QPushButton("View Case Numbers", self)
+        self._bookmarks_button = QPushButton("View Saved Bookmarks", self)
+        self._numbers_button.setObjectName("secondaryButton")
+        self._bookmarks_button.setObjectName("secondaryButton")
+        self._numbers_button.clicked.connect(lambda: self._open_investigation_list("numbers"))
+        self._bookmarks_button.clicked.connect(lambda: self._open_investigation_list("bookmarks"))
         self._refresh_button = QPushButton("Refresh Case Details")
         self._refresh_button.setObjectName("secondaryButton")
 
@@ -160,6 +167,18 @@ class CaseDetailsPage(QFrame):
         self._refresh_button.clicked.connect(self.refresh)
         self.refresh()
 
+    def _open_investigation_list(self, initial):
+        case_id = str(self._overview.get("case",{}).get("case_id", ""))
+        if not case_id:
+            QMessageBox.information(self,"Case Lists","Select a case and refresh its details first.")
+            return
+        from gui.widgets.data_viewer import ForensicDataViewer
+        if not hasattr(self,"_list_viewer"):
+            self._list_viewer = ForensicDataViewer(self,case_id=case_id)
+            self._list_viewer.hide()
+        self._list_viewer.set_case_context(case_id)
+        self._list_viewer._open_case_lists(initial)
+
     @property
     def overview(self) -> dict[str, Any]:
         """Return a shallow copy of the current case overview."""
@@ -180,9 +199,8 @@ class CaseDetailsPage(QFrame):
         heading_row.addWidget(self._refresh_button)
 
         description = QLabel(
-            "Review the active case identity, registered targets, current "
-            "evidence files and recent analysis activity. This screen is "
-            "read-only and does not modify case records."
+            "Review case identity, registered targets, evidence and analysis activity. "
+            "Open saved bookmarks or the case-number index using the buttons below."
         )
         description.setObjectName("moduleDescription")
         description.setWordWrap(True)
@@ -203,6 +221,11 @@ class CaseDetailsPage(QFrame):
 
         layout.addLayout(heading_row)
         layout.addWidget(description)
+        list_actions = QHBoxLayout()
+        list_actions.addWidget(self._numbers_button)
+        list_actions.addWidget(self._bookmarks_button)
+        list_actions.addStretch()
+        layout.addLayout(list_actions)
         layout.addLayout(metric_row)
         layout.addWidget(self._status_label)
         layout.addWidget(self._tabs, stretch=1)
@@ -420,3 +443,5 @@ class CaseDetailsPage(QFrame):
     def _refresh_style(widget: QWidget) -> None:
         widget.style().unpolish(widget)
         widget.style().polish(widget)
+
+

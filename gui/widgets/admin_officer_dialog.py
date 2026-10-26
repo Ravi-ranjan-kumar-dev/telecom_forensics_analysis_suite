@@ -37,7 +37,7 @@ class AdminOfficerDialog(QDialog):
     ) -> None:
         super().__init__(parent)
         self.api = api_client or get_active_api_client() or ApiClient()
-        self.setWindowTitle("Officer Account Management (Admin Panel)")
+        self.setWindowTitle("EthicalArmor - Telecom & Digital Forensics Suite")
         self.setModal(True)
         self.resize(1180, 720)
         self._users: list[dict[str, Any]] = []

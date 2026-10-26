@@ -76,7 +76,7 @@ def check_git_clean() -> bool:
 def main() -> int:
     failures = 0
 
-    print_header("TELECOM FORENSICS SUITE HEALTH CHECK")
+    print_header("EthicalArmor SUITE HEALTH CHECK")
 
     print_header("1. Dependency Check")
     for module_name in ["pandas", "duckdb", "openpyxl"]:

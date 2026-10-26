@@ -6,18 +6,21 @@ import duckdb
 import pandas as pd
 
 from .db_paths import master_duckdb_path
+from .master_access import master_access
 
 
 @contextmanager
-def duckdb_connection(database_path: Optional[Path] = None) -> Iterator[duckdb.DuckDBPyConnection]:
+def duckdb_connection(database_path: Optional[Path] = None, *, read_only: bool = False) -> Iterator[duckdb.DuckDBPyConnection]:
     db_path = Path(database_path) if database_path else master_duckdb_path()
-    db_path.parent.mkdir(parents=True, exist_ok=True)
-
-    connection = duckdb.connect(str(db_path), read_only=False)
-    try:
-        yield connection
-    finally:
-        connection.close()
+    if read_only and not db_path.is_file():
+        raise FileNotFoundError(f'Selected master database does not exist: {db_path}')
+    with master_access(db_path):
+        db_path.parent.mkdir(parents=True, exist_ok=True)
+        connection = duckdb.connect(str(db_path), read_only=read_only)
+        try:
+            yield connection
+        finally:
+            connection.close()
 
 
 def execute_sql(sql: str, parameters: Optional[list] = None) -> None:
@@ -29,7 +32,7 @@ def execute_sql(sql: str, parameters: Optional[list] = None) -> None:
 
 
 def query_dataframe(sql: str, parameters: Optional[list] = None) -> pd.DataFrame:
-    with duckdb_connection() as connection:
+    with duckdb_connection(read_only=True) as connection:
         if parameters:
             return connection.execute(sql, parameters).df()
         return connection.execute(sql).df()
@@ -53,3 +56,5 @@ def table_count(table_name: str) -> int:
 
     result = query_dataframe(f"SELECT COUNT(*) AS total FROM {table_name}")
     return int(result.iloc[0]["total"])
+
+

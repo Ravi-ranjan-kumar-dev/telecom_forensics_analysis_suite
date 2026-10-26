@@ -1456,7 +1456,7 @@ def generate_tower_partition_excel_report(
     workbook.properties.subject = (
         "Date-time pair driven Tower Dump partition and visitor intelligence analysis"
     )
-    workbook.properties.creator = "Telecom Forensics Analysis Suite"
+    workbook.properties.creator = "EthicalArmor - Telecom & Digital Forensics Suite"
     workbook.properties.description = (
         "Consolidated user-facing report. Internal CSV files remain backend data."
     )
@@ -1465,3 +1465,33 @@ def generate_tower_partition_excel_report(
 
     workbook.save(report_path)
     return report_path
+
+
+# === EXCEL_GUI_SYNC_HOOK ===
+_ORIG_GENERATE_TOWER_PARTITION_EXCEL_REPORT = generate_tower_partition_excel_report
+
+
+def generate_tower_partition_excel_report(*args, **kwargs):
+    workbook_path = _ORIG_GENERATE_TOWER_PARTITION_EXCEL_REPORT(*args, **kwargs)
+    try:
+        result_dict = args[0] if (args and isinstance(args[0], dict)) else kwargs.get("result")
+        if workbook_path:
+            from modules.reporting.gui_bundle_extractor import extract_sheets_from_excel_workbook
+            from modules.reporting.gui_result_store import store_gui_sheets
+            gui_sheets = extract_sheets_from_excel_workbook(
+                workbook_path,
+                result=result_dict if isinstance(result_dict, dict) else None,
+            )
+            if gui_sheets:
+                if isinstance(result_dict, dict):
+                    result_dict["excel_path"] = str(workbook_path)
+                    result_dict["report_path"] = str(workbook_path)
+                    result_dict["gui_sheets"] = gui_sheets
+                store_gui_sheets(
+                    gui_sheets,
+                    title="Tower Dump Partition Analysis",
+                    workflow="tower dump partition analysis",
+                )
+    except Exception:
+        pass
+    return workbook_path

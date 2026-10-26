@@ -1,0 +1,44 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <defs>
+    <linearGradient id="bgGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#0A1128"/>
+      <stop offset="50%" stop-color="#0F172A"/>
+      <stop offset="100%" stop-color="#1E293B"/>
+    </linearGradient>
+    <linearGradient id="shieldBorder" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#00F5D4"/>
+      <stop offset="50%" stop-color="#00BBF9"/>
+      <stop offset="100%" stop-color="#3B82F6"/>
+    </linearGradient>
+    <linearGradient id="textGrad" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="#FFFFFF"/>
+      <stop offset="100%" stop-color="#94A3B8"/>
+    </linearGradient>
+  </defs>
+
+  <!-- Outer Hex/Shield Base -->
+  <path d="M256 24 L456 104 L456 256 C456 376 366 456 256 488 C146 456 56 376 56 256 L56 104 Z" 
+        fill="url(#bgGrad)" stroke="url(#shieldBorder)" stroke-width="14" stroke-linejoin="round"/>
+
+  <!-- Inner Tactical Shield Ring -->
+  <path d="M256 52 L428 122 L428 254 C428 355 352 426 256 456 C160 426 84 355 84 254 L84 122 Z" 
+        fill="none" stroke="#00F5D4" stroke-width="3" stroke-opacity="0.35"/>
+
+  <!-- Cyber Circuit Accents -->
+  <circle cx="256" cy="84" r="6" fill="#00F5D4"/>
+  <line x1="256" y1="90" x2="256" y2="130" stroke="#00F5D4" stroke-width="3" stroke-opacity="0.6"/>
+  <circle cx="256" cy="412" r="6" fill="#00BBF9"/>
+  <line x1="256" y1="372" x2="256" y2="406" stroke="#00BBF9" stroke-width="3" stroke-opacity="0.6"/>
+
+  <!-- Stylized 'E' -->
+  <path d="M126 170 H236 V202 H162 V236 H224 V268 H162 V304 H236 V336 H126 Z" 
+        fill="url(#shieldBorder)"/>
+
+  <!-- Stylized 'A' -->
+  <path d="M312 170 L252 336 H290 L302 300 H358 L370 336 H408 L348 170 Z M312 268 L330 212 L348 268 Z" 
+        fill="url(#textGrad)"/>
+
+  <!-- Bottom Banner Text -->
+  <text x="256" y="366" font-family="monospace, sans-serif" font-size="20" font-weight="bold" 
+        fill="#00F5D4" text-anchor="middle" letter-spacing="5">ETHICAL ARMOR</text>
+</svg>

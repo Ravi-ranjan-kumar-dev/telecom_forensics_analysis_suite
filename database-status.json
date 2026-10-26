@@ -1,0 +1,39 @@
+{
+  "data_directory": "/home/raviranjan/Desktop/EthicalArmor",
+  "explicit_auth_database_url": false,
+  "local_auth_selected": false,
+  "auth_note": "Source-install PostgreSQL default retained. Set DATABASE_URL explicitly for deployment, or ETHICALARMOR_LOCAL_AUTH=1 to opt into a new local SQLite store. Existing users are not migrated automatically.",
+  "stores": [
+    {
+      "store": "CGI / SDR master",
+      "path": "/home/raviranjan/Desktop/EthicalArmor/database/telecom_forensics.duckdb",
+      "engine": "duckdb",
+      "size_bytes": 20926705664,
+      "tables": [
+        "cgi_addresses",
+        "master_import_runs",
+        "postgres_sdr_migration_progress",
+        "sdr_subscribers",
+        "sdr_subscribers_large"
+      ],
+      "missing_lookup_tables": [],
+      "lookup_note": "Both lookup tables exist; record-level match coverage depends on your input.",
+      "status": "READABLE",
+      "detail": "Catalog is readable; no full-file integrity guarantee is implied."
+    },
+    {
+      "store": "Legacy lookup store",
+      "path": "/home/raviranjan/Desktop/EthicalArmor/database/telecom_forensics.db",
+      "engine": "sqlite",
+      "status": "NOT INITIALIZED",
+      "detail": "No file at this location; no database was created by this check."
+    },
+    {
+      "store": "Local authentication",
+      "path": "/home/raviranjan/Desktop/EthicalArmor/database/local_auth.db",
+      "engine": "sqlite",
+      "status": "NOT INITIALIZED",
+      "detail": "No file at this location; no database was created by this check."
+    }
+  ]
+}

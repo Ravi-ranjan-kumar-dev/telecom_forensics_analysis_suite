@@ -533,7 +533,7 @@ class ReportViewerDialog(QDialog):
         self._navigation_total_records = 0
         self._all_pages_search_query = ""
 
-        self.setWindowTitle("Investigation Report Viewer")
+        self.setWindowTitle("EthicalArmor - Telecom & Digital Forensics Suite")
         self.resize(1200, 760)
         self.setModal(True)
 

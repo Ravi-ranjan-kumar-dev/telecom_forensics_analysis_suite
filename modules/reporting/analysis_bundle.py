@@ -428,18 +428,21 @@ def build_single_analysis_bundle(*args, **kwargs) -> dict:
     df_val = kwargs.get("df") if "df" in kwargs else (args[0] if args else None)
     target_val = kwargs.get("target") if "target" in kwargs else (args[1] if len(args) > 1 else "")
 
-    if isinstance(df_val, pd.DataFrame):
-        df_val = strip_ips_from_cgi_columns(df_val)
-        if "df" in kwargs:
-            kwargs["df"] = df_val
-        elif args:
-            args = (df_val,) + args[1:]
+    # Analysis must run on the untouched input frame: the display sanitizer
+    # renames first_cell_id -> first_cgi and drops datetime/call_direction,
+    # which would silently blank every tower, location and time analysis.
+    # The sanitized copy is used only for the GUI sheet store below.
+    display_df = (
+        strip_ips_from_cgi_columns(df_val)
+        if isinstance(df_val, pd.DataFrame)
+        else df_val
+    )
 
     bundle = _ORIG_BUILD_SINGLE_BUNDLE(*args, **kwargs)
     try:
         sheets = {}
-        if isinstance(df_val, pd.DataFrame) and not df_val.empty:
-            sheets[f"1. Full CDR Data ({target_val or 'Target'})"] = df_val
+        if isinstance(display_df, pd.DataFrame) and not display_df.empty:
+            sheets[f"1. Full CDR Data ({target_val or 'Target'})"] = display_df
         if isinstance(bundle, dict):
             sec_map = bundle.get("sections") or bundle.get("results") or bundle
             if isinstance(sec_map, dict):

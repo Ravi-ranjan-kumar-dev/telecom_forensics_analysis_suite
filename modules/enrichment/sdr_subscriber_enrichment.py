@@ -63,12 +63,13 @@ def _lookup_from_large_table(numbers: List[str]) -> pd.DataFrame:
 
     frames = []
     for batch in _chunks(numbers):
-        placeholders = ",".join(["?"] * len(batch))
+        candidates = list(dict.fromkeys(batch + ["91" + n for n in batch] + ["0" + n for n in batch]))
+        placeholders = ",".join(["?"] * len(candidates))
         result = query_dataframe(
             f"""
             WITH ranked AS (
                 SELECT
-                    mobile_number AS lookup_mobile,
+                    right(regexp_replace(CAST(mobile_number AS VARCHAR), '[^0-9]', '', 'g'), 10) AS lookup_mobile,
                     subscriber_name,
                     father_name,
                     address AS subscriber_address,
@@ -86,7 +87,7 @@ def _lookup_from_large_table(numbers: List[str]) -> pd.DataFrame:
                     caf_number,
                     source_file,
                     ROW_NUMBER() OVER (
-                        PARTITION BY mobile_number
+                        PARTITION BY right(regexp_replace(CAST(mobile_number AS VARCHAR), '[^0-9]', '', 'g'), 10)
                         ORDER BY
                             TRY_CAST(activation_date AS DATE) DESC NULLS LAST,
                             TRY_CAST(caf_number AS BIGINT) DESC NULLS LAST
@@ -110,7 +111,7 @@ def _lookup_from_large_table(numbers: List[str]) -> pd.DataFrame:
             FROM ranked
             WHERE rn = 1
             """,
-            batch,
+            candidates,
         )
         if result is not None and not result.empty:
             frames.append(result)
@@ -287,46 +288,8 @@ _SDR_MEM_POS: dict[str, dict] = {}
 _SDR_MEM_NEG: set[str] = set()
 _LARGE_TABLE_TIMED_OUT: bool = False
 
-if "_lookup_from_large_table" in globals():
-    _ORIG_LOOKUP_LARGE = _lookup_from_large_table
-
-    def _fast_lookup_from_large_table(numbers: list[str]) -> pd.DataFrame:
-        global _LARGE_TABLE_TIMED_OUT
-        if not numbers or _LARGE_TABLE_TIMED_OUT:
-            return _empty_lookup_frame()
-        t0 = _sdr_time.perf_counter()
-        try:
-            batch_nums = numbers[:500]
-            candidates = list(dict.fromkeys(batch_nums + [f"91{n}" for n in batch_nums]))
-            placeholders = ",".join(["?"] * len(candidates))
-            sql = f"""
-                SELECT
-                    right(regexp_replace(CAST(mobile_number AS VARCHAR), '[^0-9]', '', 'g'), 10) AS lookup_mobile,
-                    COALESCE(CAST(subscriber_name AS VARCHAR), '') AS subscriber_name,
-                    COALESCE(CAST(father_name AS VARCHAR), '') AS father_name,
-                    COALESCE(CAST(subscriber_address AS VARCHAR), '') AS subscriber_address,
-                    COALESCE(CAST(id_type AS VARCHAR), '') AS id_type,
-                    COALESCE(CAST(id_number AS VARCHAR), '') AS id_number,
-                    COALESCE(CAST(operator AS VARCHAR), '') AS operator,
-                    COALESCE(CAST(circle AS VARCHAR), '') AS circle,
-                    COALESCE(CAST(activation_date AS VARCHAR), '') AS activation_date,
-                    COALESCE(CAST(caf_number AS VARCHAR), '') AS caf_number,
-                    COALESCE(CAST(source_file AS VARCHAR), '') AS source_file,
-                    'Yes' AS sdr_found
-                FROM sdr_subscribers_large
-                WHERE mobile_number IN ({placeholders})
-            """
-            res = query_dataframe(sql, candidates)
-            if (_sdr_time.perf_counter() - t0) > 1.5:
-                _LARGE_TABLE_TIMED_OUT = True
-            if res is not None and not res.empty:
-                return res.drop_duplicates(subset=["lookup_mobile"], keep="first")
-            return _empty_lookup_frame()
-        except Exception:
-            _LARGE_TABLE_TIMED_OUT = True
-            return _empty_lookup_frame()
-
-    _lookup_from_large_table = _fast_lookup_from_large_table
+# Use the schema-correct, batched lookup above. A failed or slow query must not
+# silently disable all remaining large-table lookups for the session.
 
 _ORIG_PRIMARY_TABLE_FN = globals().get("_lookup_from_primary_table")
 _ORIG_LARGE_TABLE_FN = globals().get("_lookup_from_large_table")
@@ -334,6 +297,8 @@ _ORIG_LARGE_TABLE_FN = globals().get("_lookup_from_large_table")
 
 def lookup_sdr_subscribers(numbers: Iterable) -> pd.DataFrame:
     """O(1) per-number memory-cached SDR lookup preserving sdr_found='No' rows."""
+    from modules.database.master_access import ensure_master_cache_current
+    ensure_master_cache_current()
     if (
         query_dataframe is not _ORIG_QUERY_DF_REF
         or globals().get("_lookup_from_primary_table") is not _ORIG_PRIMARY_TABLE_FN
@@ -366,3 +331,15 @@ def lookup_sdr_subscribers(numbers: Iterable) -> pd.DataFrame:
     if not hit_rows:
         return _empty_lookup_frame()
     return pd.DataFrame(hit_rows).drop_duplicates(subset=["lookup_mobile"], keep="first")
+
+
+
+
+def clear_sdr_lookup_caches() -> None:
+    """Invalidate all positive/negative caches after master-data imports."""
+    lookup_sdr_subscribers_cached.cache_clear()
+    _normalize_mobile_cached.cache_clear()
+    for name in ("_SDR_MEM_POS", "_SDR_MEM_NEG", "_SDR_GLOBAL_ROW_CACHE", "_SDR_NEGATIVE_CACHE"):
+        cache = globals().get(name)
+        if hasattr(cache, "clear"):
+            cache.clear()

@@ -534,7 +534,7 @@ def generate_tower_ipdr_excel_report(
 
     workbook.properties.title = f"Tower IPDR Dump Analysis - {case_id}"
     workbook.properties.subject = "Multi-cell Jio Tower IPDR/NAT forensic analysis"
-    workbook.properties.creator = "Telecom Forensics Analysis Suite"
+    workbook.properties.creator = "EthicalArmor - Telecom & Digital Forensics Suite"
     append_methodology_sheet(workbook, "Tower IPDR / NAT Analysis")
     workbook.save(report_path)
     return report_path
@@ -1001,7 +1001,7 @@ def generate_tower_ipdr_complete_excel_report(
         "forensic analysis"
     )
     workbook.properties.creator = (
-        "Telecom Forensics Analysis Suite"
+        "EthicalArmor - Telecom & Digital Forensics Suite"
     )
 
     workbook.save(
@@ -1009,3 +1009,33 @@ def generate_tower_ipdr_complete_excel_report(
     )
 
     return output_path
+
+
+# === EXCEL_GUI_SYNC_HOOK ===
+_ORIG_GENERATE_TOWER_IPDR_EXCEL_REPORT = generate_tower_ipdr_excel_report
+
+
+def generate_tower_ipdr_excel_report(*args, **kwargs):
+    workbook_path = _ORIG_GENERATE_TOWER_IPDR_EXCEL_REPORT(*args, **kwargs)
+    try:
+        result_dict = args[0] if (args and isinstance(args[0], dict)) else kwargs.get("result")
+        if workbook_path:
+            from modules.reporting.gui_bundle_extractor import extract_sheets_from_excel_workbook
+            from modules.reporting.gui_result_store import store_gui_sheets
+            gui_sheets = extract_sheets_from_excel_workbook(
+                workbook_path,
+                result=result_dict if isinstance(result_dict, dict) else None,
+            )
+            if gui_sheets:
+                if isinstance(result_dict, dict):
+                    result_dict["excel_path"] = str(workbook_path)
+                    result_dict["report_path"] = str(workbook_path)
+                    result_dict["gui_sheets"] = gui_sheets
+                store_gui_sheets(
+                    gui_sheets,
+                    title="Tower IPDR Dump Analysis",
+                    workflow="tower ipdr dump analysis",
+                )
+    except Exception:
+        pass
+    return workbook_path

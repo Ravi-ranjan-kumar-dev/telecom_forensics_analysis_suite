@@ -142,7 +142,8 @@ def test_movement_route_html_is_safe_and_has_fallback(
         encoding="utf-8"
     )
     assert "OpenStreetMap" in text
-    assert "Interactive basemap resources could not be loaded" in text
+    assert "Tower points work offline" in text
+    assert 'src="https://unpkg.com' not in text
     assert "<img src=x onerror=alert(1)>" not in text
     assert "\\u003cimg" in text
     assert "exact road travelled" in text
@@ -202,3 +203,5 @@ def test_collect_route_paths_and_enable_gui_button(
     )
     assert page._open_route_button.isEnabled()
     page.close()
+
+

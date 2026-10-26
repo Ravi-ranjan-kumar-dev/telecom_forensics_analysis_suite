@@ -22,7 +22,7 @@ def test_gui_application_metadata():
     )
 
     assert application.applicationName() == (
-        "Telecom Forensics Analysis Suite"
+        "EthicalArmor - Telecom & Digital Forensics Suite"
     )
 
 

@@ -1,6 +1,11 @@
+from __future__ import annotations
+
+
+def _safe_join(sep, vals):
+    return sep.join(str(v) for v in vals if v is not None and str(v).lower() != "nan")
+
 """Analytical bundle for target, reverse-IP and broadband IPDR records."""
 
-from __future__ import annotations
 
 import ipaddress
 from typing import Any

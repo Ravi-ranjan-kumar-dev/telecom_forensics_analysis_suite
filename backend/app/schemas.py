@@ -4,7 +4,9 @@ from __future__ import annotations
 
 from typing import Annotated, Optional
 
-from pydantic import AfterValidator, BaseModel, ConfigDict, Field
+from pydantic import AfterValidator, BaseModel, ConfigDict, Field, field_validator
+import math
+import pandas as pd
 
 from .models import UserRole
 from .security import validate_password
@@ -103,7 +105,23 @@ class UserRoleUpdate(BaseModel):
 # ----------------------------- SDR Schemas -----------------------------
 
 
-class SDRProfileOut(BaseModel):
+class LookupProfileOut(BaseModel):
+    @field_validator("*", mode="before")
+    @classmethod
+    def normalize_missing_scalar(cls, value, info):
+        # Preserve missing optional values as JSON null across pandas backends.
+        if pd.api.types.is_scalar(value) and pd.isna(value):
+            return None
+        if info.field_name in {"latitude", "longitude"} and value is not None:
+            try:
+                if not math.isfinite(float(value)):
+                    return None
+            except (TypeError, ValueError):
+                pass  # Let the declared field report malformed coordinates.
+        return value
+
+
+class SDRProfileOut(LookupProfileOut):
     mobile_number: str
     subscriber_name: Optional[str] = None
     father_name: Optional[str] = None
@@ -122,7 +140,7 @@ class SDRProfileOut(BaseModel):
 # ----------------------------- CGI Schemas -----------------------------
 
 
-class CGIProfileOut(BaseModel):
+class CGIProfileOut(LookupProfileOut):
     cgi: str
     operator: Optional[str] = None
     circle: Optional[str] = None
@@ -185,3 +203,5 @@ class CGIBatchLookupRequest(BaseModel):
 class CGIBatchLookupResponse(BaseModel):
     records: list[CGIProfileOut] = Field(default_factory=list)
     count: int = 0
+
+

@@ -41,3 +41,8 @@ CHANGELOG.md
 # Temporary/dev files
 gprs_finalization_source_bundle.txt
 changes.diff
+
+# Keep dotenv files outside Docker images
+.env.*
+**/.env
+**/.env.*

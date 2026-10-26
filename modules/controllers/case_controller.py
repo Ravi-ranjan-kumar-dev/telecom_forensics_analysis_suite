@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from modules.cases.repository import active_case_dir
+
 from typing import Any
 
 from modules.cases import (
@@ -234,9 +236,7 @@ def _print_latest_tower_ipdr_complete_report(case_id: str) -> None:
     from pathlib import Path
 
     pointer_path = (
-        Path("cases")
-        / "active"
-        / str(case_id)
+        active_case_dir(case_id)
         / "reports"
         / "tower_dump"
         / "ipdr"
@@ -452,4 +452,6 @@ def show_case_reports(case: dict[str, Any] | str) -> None:
 
     _print_latest_registry_reports()
     _print_registered_history()
+
+
 

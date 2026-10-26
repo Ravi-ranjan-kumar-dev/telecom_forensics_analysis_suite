@@ -8,7 +8,7 @@ def analyze_activity(df):
     if df is None or df.empty:
         return pd.DataFrame()
 
-    duration = pd.to_numeric(df.get("call_duration", 0), errors="coerce").fillna(0)
+    duration = pd.to_numeric(df.get("call_duration", pd.Series(0, index=df.index, dtype="float64")), errors="coerce").fillna(0)
     activity_summary = {
         "Metric": [
             "Total Records/Events",
@@ -190,3 +190,5 @@ def monthly_activity(df):
         .reset_index(name="Total Events")
         .sort_values(["Year", "Month"], ignore_index=True)
     )
+
+

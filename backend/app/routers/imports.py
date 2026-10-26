@@ -9,6 +9,7 @@ from pathlib import Path
 
 import pandas as pd
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
+from fastapi.responses import JSONResponse
 from sqlalchemy.orm import Session
 
 project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", ".."))
@@ -16,8 +17,9 @@ if project_root not in sys.path:
     sys.path.insert(0, project_root)
 
 from .. import models
-from ..auth import InvalidTokenError, decode_token, oauth2_scheme
+from ..auth import oauth2_scheme
 from ..database import get_db
+from ..access_policy import current_account, require_master_importer
 
 from modules.database.cgi_master_reader import read_cgi_master_file
 from modules.database.lookup_service import clear_all_lookup_caches
@@ -28,6 +30,24 @@ from modules.database.master_import_service import (
 from modules.database.master_importer import _prepare_sdr_dataframe, _read_input_file
 
 router = APIRouter(prefix="/api/import", tags=["Import"])
+
+
+def _sync_local_master(tmp_path, response):
+    """SQLAlchemy is already committed: expose a failed replica, never false success."""
+    try:
+        local = import_master_data_file(tmp_path, create_backup=False)
+        if str(local.get('status', '')).upper() not in {'SUCCESS', 'SKIPPED_DUPLICATE', 'SKIPPED_EXISTING_BASE'}:
+            raise RuntimeError('Local master import did not succeed')
+    except Exception:
+        import logging
+        logging.getLogger(__name__).exception('Primary import committed but local master synchronization failed')
+        response.update(status='PARTIAL', primary_store='COMMITTED', local_store='FAILED',
+                        detail='Primary import committed; local master synchronization failed. Retry the same file after checking the local database.',
+                        message='Import partially completed; local master requires synchronization.')
+        return JSONResponse(status_code=207, content=response)
+    clear_all_lookup_caches()
+    response.update(primary_store='COMMITTED', local_store='SYNCHRONIZED')
+    return response
 
 
 def _upsert_sdr_postgres(db: Session, prepared: pd.DataFrame, filename: str) -> tuple[int, int]:
@@ -154,13 +174,7 @@ async def import_master_file(
     token: str = Depends(oauth2_scheme),
 ):
     """Upload and import SDR or CGI master data file into PostgreSQL and DuckDB."""
-    try:
-        decode_token(token)
-    except InvalidTokenError as error:
-        raise HTTPException(
-            status_code=401,
-            detail="Invalid token",
-        ) from error
+    require_master_importer(current_account(token, db))
 
     content = await file.read()
     original_name = file.filename or "master_import.csv"
@@ -178,13 +192,8 @@ async def import_master_file(
             raw_df = _read_input_file(tmp_path)
             prepared = _prepare_sdr_dataframe(raw_df, original_name)
             inserted, updated = _upsert_sdr_postgres(db, prepared, original_name)
-            try:
-                import_master_data_file(tmp_path, create_backup=False)
-                clear_all_lookup_caches()
-            except Exception:
-                pass
             total = len(prepared)
-            return {
+            return _sync_local_master(tmp_path, {
                 "status": "SUCCESS",
                 "type": "SDR",
                 "import_type": "SDR",
@@ -196,7 +205,7 @@ async def import_master_file(
                 "inserted_rows": inserted,
                 "updated_rows": updated,
                 "message": "Master SDR data imported successfully.",
-            }
+            })
 
         elif detected_type == "CGI":
             prepared_frames = read_cgi_master_file(tmp_path)
@@ -206,13 +215,8 @@ async def import_master_file(
                 else pd.DataFrame()
             )
             inserted, updated = _upsert_cgi_postgres(db, combined, original_name)
-            try:
-                import_master_data_file(tmp_path, create_backup=False)
-                clear_all_lookup_caches()
-            except Exception:
-                pass
             total = len(combined)
-            return {
+            return _sync_local_master(tmp_path, {
                 "status": "SUCCESS",
                 "type": "CGI",
                 "import_type": "CGI",
@@ -224,7 +228,7 @@ async def import_master_file(
                 "inserted_rows": inserted,
                 "updated_rows": updated,
                 "message": "Master CGI data imported successfully.",
-            }
+            })
 
         else:
             raise HTTPException(
@@ -245,3 +249,5 @@ async def import_master_file(
             os.unlink(tmp_path)
         except OSError:
             pass
+
+

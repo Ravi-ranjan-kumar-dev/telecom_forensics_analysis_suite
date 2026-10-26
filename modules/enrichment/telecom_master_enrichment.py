@@ -747,11 +747,26 @@ def _valid_mobile_key(
 def _valid_cgi_key(
     value: object,
 ) -> str:
-    return _clean_text(
-        normalize_cgi(
-            value
-        )
-    )
+    raw = _clean_text(str(value or ""))
+    if not raw:
+        return ""
+    if "--" in raw or raw.endswith("-"):
+        return ""
+    # If it looks like MCC-MNC-LAC-CID dash format (e.g., 404-55-113-12101), accept directly
+    if raw.count("-") >= 2 and sum(c.isdigit() for c in raw) >= 6:
+        # Check if starts with valid MCC
+        parts = raw.split("-")
+        if parts[0] in ("404", "405") or parts[0].isdigit():
+            return raw
+    # Otherwise try normalize_cgi
+    cleaned = _clean_text(normalize_cgi(value))
+    if cleaned:
+        return cleaned
+    if sum(c.isdigit() for c in raw) >= 6:
+        return raw
+    return 
+
+
 
 
 _SDR_PREFIX_MAP = {
@@ -1613,6 +1628,18 @@ def enrich_analysis_bundle(
             "SDR enrichment failed; core analysis was preserved. "
             f"{type(error).__name__}: {error}"
         )
+
+    # Fallback: ensure bottom_cgi values are always included even if _valid_cgi_key filtered them
+    if not cgi_values:
+        for table_key in ("bottom_cgi", "frequent_locations", "analyze_location"):
+            df = output.get(table_key)
+            if isinstance(df, pd.DataFrame) and not df.empty:
+                for col in df.columns:
+                    if "cell" in str(col).lower() or "cgi" in str(col).lower():
+                        raw_vals = df[col].astype("object").fillna("").astype(str).str.strip()
+                        for v in raw_vals:
+                            if v and sum(c.isdigit() for c in v) >= 6 and "--" not in v and not v.endswith("-"):
+                                cgi_values.add(_clean_text(v))
 
     try:
         cgi_lookup = (

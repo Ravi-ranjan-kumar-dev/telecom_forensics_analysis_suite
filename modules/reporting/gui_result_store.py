@@ -49,6 +49,9 @@ def is_ip_or_vowifi_value(val: object) -> bool:
 def strip_ips_from_cgi_columns(df: pd.DataFrame) -> pd.DataFrame:
     if not isinstance(df, pd.DataFrame) or df.empty:
         return df
+    if getattr(df, "attrs", {}).get("preserve_excel_columns"):
+        return df
+    saved_attrs = dict(getattr(df, "attrs", {}) or {})
     out = df.copy()
     for col in list(out.columns):
         col_low = str(col).strip().lower()
@@ -67,19 +70,18 @@ def strip_ips_from_cgi_columns(df: pd.DataFrame) -> pd.DataFrame:
             )
         ) and not any(
             skip in col_low
-            for skip in ("address", "site_name", "town", "circle", "operator", "count", "calls", "duration")
+            for skip in (
+                "address", "site_name", "town", "circle", "operator",
+                "count", "calls", "duration", "seen", "presence", "spot",
+                "state", "district", "latitude", "longitude",
+            )
         )
         if is_cell_col:
             s = out[col].astype("object").fillna("").astype(str).str.strip()
             mask_ip = s.map(is_ip_or_vowifi_value)
             if mask_ip.any():
                 out[col] = s.where(~mask_ip, "")
-
-    if len(out.columns) > 0:
-        first_col_low = str(out.columns[0]).strip().lower()
-        if any(k in first_col_low for k in ("tower", "cell", "cgi", "location")):
-            s0 = out.iloc[:, 0].astype("object").fillna("").astype(str).str.strip()
-            out = out[s0.ne("") & ~s0.str.lower().isin({"nan", "none", "unknown", "-"})].reset_index(drop=True)
+    out.attrs.update(saved_attrs)
     return out
 
 
@@ -92,9 +94,15 @@ def store_gui_sheets(
 ) -> dict[str, pd.DataFrame]:
     cleaned_sheets: dict[str, pd.DataFrame] = {}
     for name, df in (sheets or {}).items():
-        if not isinstance(df, pd.DataFrame) or df.empty:
+        if not isinstance(df, pd.DataFrame):
             continue
-        frame = df.head(100_000).copy()
+        if getattr(df, "attrs", {}).get("preserve_excel_columns"):
+            cleaned_sheets[str(name)] = df
+            continue
+        if df.empty:
+            continue
+        saved_attrs = dict(getattr(df, "attrs", {}) or {})
+        frame = df.copy()
         if "ipdr" not in workflow.lower():
             frame = strip_ips_from_cgi_columns(frame)
         cleaned = clean_report_dataframe(
@@ -103,6 +111,7 @@ def store_gui_sheets(
             clean_headers=True,
         )
         if not cleaned.empty and len(cleaned.columns) > 0:
+            cleaned.attrs.update(saved_attrs)
             cleaned_sheets[str(name)] = cleaned
 
     if cleaned_sheets:
@@ -122,3 +131,7 @@ def get_latest_gui_sheets() -> dict[str, pd.DataFrame]:
 
 def get_latest_gui_meta() -> dict[str, Any]:
     return dict(_LATEST_GUI_META)
+
+
+def restore_raw_event_columns(df: pd.DataFrame) -> pd.DataFrame:
+    return df

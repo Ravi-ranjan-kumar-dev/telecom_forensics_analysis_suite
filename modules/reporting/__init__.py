@@ -1,4 +1,4 @@
-"""Reporting API for the Telecom Forensics Analysis Suite."""
+"""Reporting API for the EthicalArmor - Telecom & Digital Forensics Suite."""
 
 from .analysis_bundle import (
     ANALYSIS_REGISTRY,

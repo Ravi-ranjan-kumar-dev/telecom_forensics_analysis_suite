@@ -89,7 +89,6 @@ def normalize_cgi(value) -> str:
 
 
 def lookup_cgi(cgi_value: str) -> Optional[dict]:
-    create_cgi_table()
     cgi = normalize_cgi_key(cgi_value)
     if not cgi:
         return None
@@ -104,7 +103,6 @@ def lookup_cgi(cgi_value: str) -> Optional[dict]:
 
 @lru_cache(maxsize=128)
 def lookup_cgi_dataframe_cached(values: tuple[str, ...]) -> pd.DataFrame:
-    create_cgi_table()
     cleaned = sorted({normalize_cgi_key(v) for v in values})
     if not cleaned:
         return pd.DataFrame()
@@ -312,3 +310,5 @@ def normalize_cgi(value: object) -> str:
     ):
         return ""
     return res
+
+

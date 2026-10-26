@@ -361,7 +361,7 @@ class ApiClient:
 
     def import_master_file(self, file_path: str) -> Dict[str, Any]:
         if not self.token:
-            raise ServiceUnavailableError("Not authenticated. Please login first.")
+            raise AuthenticationError("Not authenticated. Please login first.")
 
         try:
             with open(file_path, "rb") as f:
@@ -374,10 +374,7 @@ class ApiClient:
             if response.status_code == 200:
                 return response.json()
             else:
-                raise ApiError(
-                    f"Import failed: {response.status_code} - {response.text}",
-                    response.status_code,
-                )
+                raise ApiError(_response_message(response, f"Import failed ({response.status_code})."), response.status_code)
         except requests.RequestException as e:
             raise ServiceUnavailableError(f"Service unavailable: {e}")
         except FileNotFoundError:
@@ -473,3 +470,5 @@ class ApiClient:
             )
         except requests.RequestException as error:
             raise ServiceUnavailableError("Backend service is unavailable.") from error
+
+

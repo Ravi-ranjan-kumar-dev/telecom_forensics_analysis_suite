@@ -1,4 +1,3 @@
-
 """Compact investigator-facing CDR Excel reports.
 
 This renderer consumes already-computed analysis results. It does not rerun
@@ -2113,6 +2112,31 @@ def _compact_extract_summary(
         drop=True
     )
 
+def _analysis_health(bundle: dict[str, Any]) -> pd.DataFrame:
+    """Expose partial analysis without mistaking missing outputs for no findings."""
+    status = bundle.get("status")
+    rows = []
+    if isinstance(status, pd.DataFrame) and "Status" in status and not status.empty:
+        counts = status["Status"].fillna("UNKNOWN").astype(str).str.strip().str.upper().value_counts()
+        for label in ("COMPLETED", "FAILED", "MISSING", "SKIPPED"):
+            rows.append((label.title() + " functions", int(counts.get(label, 0))))
+        unknown = int(len(status) - sum(int(counts.get(k, 0)) for k in ("COMPLETED", "FAILED", "MISSING", "SKIPPED")))
+        if unknown:
+            rows.append(("Unrecognized function status", unknown))
+        incomplete = any(status["Status"].fillna("").astype(str).str.strip().str.upper().ne("COMPLETED"))
+        rows.insert(0, ("Analysis coverage", "Partial — review unavailable outputs" if incomplete else "All recorded functions completed"))
+    else:
+        rows.append(("Analysis coverage", "Unverified — execution status was not supplied"))
+    errors = bundle.get("errors", {})
+    if isinstance(errors, dict):
+        count = sum(not str(key).endswith("_traceback") for key in errors)
+        if count:
+            rows.append(("Recorded analysis warnings", count))
+            rows[0] = ("Analysis coverage", "Partial — review unavailable outputs")
+    rows.append(("If analysis is incomplete", "Review the application analysis log and rerun unavailable functions before interpreting their results."))
+    return pd.DataFrame(rows, columns=["Check", "Result"])
+
+
 def _quality_summary(
     data: pd.DataFrame,
     metadata: dict[str, Any],
@@ -2188,6 +2212,16 @@ def _quality_summary(
             "Distinct SIM identities recorded in the source CDR.",
         ),
     ]
+
+    from modules.analysis.cdr.datetime_utils import canonical_datetime
+    source = original_data if isinstance(original_data, pd.DataFrame) else data
+    timestamps = canonical_datetime(source)
+    raw_duration = source.get("call_duration", pd.Series(pd.NA, index=source.index, dtype="object"))
+    durations = pd.to_numeric(raw_duration, errors="coerce")
+    rows.extend([
+        ("Rows with missing or invalid timestamp", int(timestamps.isna().sum()), "Excluded from timestamp-based analysis; retained in total record counts."),
+        ("Rows with missing or invalid duration", int((durations.isna() | durations.isin([float("inf"), float("-inf")]) | durations.lt(0)).sum()), "Verify source values before interpreting duration totals and rankings."),
+    ])
 
     return pd.DataFrame(
         rows,
@@ -2673,6 +2707,18 @@ def generate_single_cdr_compact_report(
                 "Start here for traffic volume, devices, SIM identities "
                 "and valid tower counts."
             ),
+        )
+        row = _write_section(
+            worksheet, row,
+            title="ANALYSIS COMPLETENESS",
+            frame=_analysis_health(bundle),
+            guidance="A missing or failed analysis is not a negative finding. Review incomplete functions before relying on this report.",
+        )
+        row = _write_section(
+            worksheet, row,
+            title="DATA QUALITY",
+            frame=_quality_summary(data, report_metadata, original_data=df),
+            guidance="Counts describe accepted rows; check the original evidence for missing or malformed values.",
         )
         row = _write_section(
             worksheet,
@@ -3442,3 +3488,35 @@ def _ensure_full_contact_profile_columns(
 
     return frame
 # END FULL CONTACT COLUMN PRESERVATION
+
+
+# === EXCEL_GUI_SYNC_HOOK ===
+_ORIG_GENERATE_SINGLE_CDR_COMPACT_REPORT = generate_single_cdr_compact_report
+
+
+def generate_single_cdr_compact_report(*args, **kwargs):
+    workbook_path = _ORIG_GENERATE_SINGLE_CDR_COMPACT_REPORT(*args, **kwargs)
+    try:
+        result_dict = args[0] if (args and isinstance(args[0], dict)) else kwargs.get("result")
+        if workbook_path:
+            from modules.reporting.gui_bundle_extractor import extract_sheets_from_excel_workbook
+            from modules.reporting.gui_result_store import store_gui_sheets
+            gui_sheets = extract_sheets_from_excel_workbook(
+                workbook_path,
+                result=result_dict if isinstance(result_dict, dict) else None,
+            )
+            if gui_sheets:
+                if isinstance(result_dict, dict):
+                    result_dict["excel_path"] = str(workbook_path)
+                    result_dict["report_path"] = str(workbook_path)
+                    result_dict["gui_sheets"] = gui_sheets
+                store_gui_sheets(
+                    gui_sheets,
+                    title="Single CDR Analysis",
+                    workflow="single cdr analysis",
+                )
+    except Exception:
+        pass
+    return workbook_path
+
+

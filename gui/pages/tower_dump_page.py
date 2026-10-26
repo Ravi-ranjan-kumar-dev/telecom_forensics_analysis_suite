@@ -207,7 +207,7 @@ class TowerDumpPage(QFrame):
         )
 
         self._run_parts_button = QPushButton(
-            "Run Part-wise Analysis"
+            "Analyze Parts"
         )
         self._run_parts_button.setObjectName(
             "primaryButton"
@@ -224,7 +224,7 @@ class TowerDumpPage(QFrame):
         )
 
         self._run_button = QPushButton(
-            "Run Complete Analysis"
+            "Start Analysis"
         )
         self._run_button.setObjectName(
             "primaryButton"
@@ -241,7 +241,7 @@ class TowerDumpPage(QFrame):
         )
 
         self._open_viewer_button = QPushButton(
-            "Open in Internal Viewer (Drill-Down)"
+            "View Results"
         )
         self._open_viewer_button.setObjectName(
             "secondaryButton"
@@ -260,7 +260,7 @@ class TowerDumpPage(QFrame):
         self._search_input.setClearButtonEnabled(True)
 
         self._search_dump_button = QPushButton(
-            "Search Suspect & B-Parties in Full Dump"
+            "Search Numbers"
         )
         self._search_dump_button.setObjectName(
             "secondaryButton"
@@ -522,54 +522,8 @@ class TowerDumpPage(QFrame):
         layout = QVBoxLayout(
             self
         )
-        layout.setContentsMargins(
-            30,
-            28,
-            30,
-            28,
-        )
-        layout.setSpacing(
-            18
-        )
-
-        title_row = QHBoxLayout()
-        title_row.setSpacing(
-            12
-        )
-
-        title = QLabel(
-            "Run Tower Dump Analysis"
-        )
-        title.setObjectName(
-            "moduleTitle"
-        )
-
-        badge = QLabel(
-            "BACKEND CONNECTED"
-        )
-        badge.setObjectName(
-            "statusBadge"
-        )
-
-        title_row.addWidget(
-            title
-        )
-        title_row.addStretch()
-        title_row.addWidget(
-            badge
-        )
-
-        description = QLabel(
-            "Select Tower CDR, GPRS or IPDR evidence, run the existing "
-            "case-aware backend in the background, and open the generated "
-            "investigator report. Source files remain unchanged."
-        )
-        description.setObjectName(
-            "moduleDescription"
-        )
-        description.setWordWrap(
-            True
-        )
+        layout.setContentsMargins(16, 12, 16, 14)
+        layout.setSpacing(12)
 
         controls = QFrame()
         controls.setObjectName(
@@ -631,21 +585,10 @@ class TowerDumpPage(QFrame):
         spot_action_row.addStretch()
 
         partition_heading = QLabel(
-            "Date-Time Partitioning"
+            "Date-Time Parts"
         )
         partition_heading.setObjectName(
             "fieldLabel"
-        )
-
-        partition_help = QLabel(
-            "Create exact Start/End pairs for selected Spots, then run "
-            "the saved Parts as one investigator workflow."
-        )
-        partition_help.setObjectName(
-            "cardText"
-        )
-        partition_help.setWordWrap(
-            True
         )
 
         partition_action_row = QHBoxLayout()
@@ -661,7 +604,7 @@ class TowerDumpPage(QFrame):
         partition_action_row.addStretch()
 
         search_heading = QLabel(
-            "Full Dump Suspect & B-Party Search (100% Staged/Raw Dump)"
+            "Search Numbers in Full Dump"
         )
         search_heading.setObjectName(
             "fieldLabel"
@@ -705,9 +648,7 @@ class TowerDumpPage(QFrame):
         controls_layout.addLayout(
             folder_row
         )
-        controls_layout.addWidget(
-            self._helper_label
-        )
+        # Selected source type is visible in the type dropdown.
         controls_layout.addWidget(
             self._spot_summary_label
         )
@@ -723,15 +664,11 @@ class TowerDumpPage(QFrame):
         controls_layout.addWidget(
             partition_heading
         )
-        controls_layout.addWidget(
-            partition_help
-        )
+        # Date-Time Parts controls explain their own action.
         controls_layout.addLayout(
             partition_action_row
         )
-        controls_layout.addWidget(
-            self._parts_summary_label
-        )
+        # The status line shows the active Parts selection when needed.
         controls_layout.addWidget(
             search_heading
         )
@@ -781,12 +718,8 @@ class TowerDumpPage(QFrame):
             stretch=1,
         )
 
-        layout.addLayout(
-            title_row
-        )
-        layout.addWidget(
-            description
-        )
+        # The active analysis module is highlighted in the sidebar.
+        # Do not repeat its heading, backend badge, or instruction paragraph.
         layout.addWidget(
             controls
         )
@@ -1454,6 +1387,12 @@ class TowerDumpPage(QFrame):
                 )
 
         except Exception as error:
+            # EA_HANDLED_DIAGNOSTICS_V1
+            try:
+                from modules.core.diagnostic_events import record_handled_exception as _ea_record_handled_exception
+                _ea_record_handled_exception()
+            except Exception:
+                pass
             message = f"{type(error).__name__}: {error}"
             QMessageBox.warning(
                 self,
@@ -1493,6 +1432,12 @@ class TowerDumpPage(QFrame):
         try:
             parts = self._load_partition_parts()
         except Exception as error:
+            # EA_HANDLED_DIAGNOSTICS_V1
+            try:
+                from modules.core.diagnostic_events import record_handled_exception as _ea_record_handled_exception
+                _ea_record_handled_exception()
+            except Exception:
+                pass
             QMessageBox.warning(
                 self,
                 "Date-Time Part Review",
@@ -1847,81 +1792,76 @@ class TowerDumpPage(QFrame):
         from gui.widgets.report_viewer_dialog import ReportViewerDialog
         ReportViewerDialog(report_path, self).exec()
 
-    def _search_full_dump_suspect(
-        self,
-    ) -> None:
-        if self.is_running:
+    def _search_full_dump_suspect(self) -> None:
+        # Avoid running the full-dump load/search on the Qt UI thread.
+        if self.is_running or getattr(self, "_ea_search_busy", False):
             return
         error = self.validation_error()
         if error:
-            QMessageBox.warning(
-                self,
-                "Tower Dump Input Review",
-                error,
-            )
+            QMessageBox.warning(self, "Tower Dump Input Review", error)
             self._status_label.setText(error)
             return
-
         query = self._search_input.text().strip()
         if not query:
-            QMessageBox.warning(
-                self,
-                "Suspect Number Required",
-                "Enter at least one suspected mobile number to search across the full Tower Dump.",
-            )
+            QMessageBox.warning(self, "Number Required", "Enter one or more mobile numbers to search.")
             return
 
-        try:
-            from modules.analysis.towerdump.full_dump_search import (
-                load_full_tower_dump_dataframe,
-                search_suspect_and_b_parties_in_dataframe,
-            )
-            from gui.widgets.tower_search_dialog import TowerDumpSearchDialog
+        from PySide6.QtCore import QThread
+        from gui.workers.full_dump_search_worker import FullDumpSearchWorker
+        case = self._active_case()
+        has_spot_folders = bool(self.detected_spot_names)
+        selected_spots = list(self.selected_spot_names) if has_spot_folders else None
+        self._ea_search_busy = True
+        self._search_dump_button.setEnabled(False)
+        self._status_label.setText("Searching full dump in background...")
+        self._append_log("[+] Full dump search started (background): " + query)
 
-            self._status_label.setText("Searching 100% Full Tower Dump...")
-            self._append_log(f"[+] Searching full {self.selected_mode.upper()} dump for: {query}")
+        thread = QThread(self)
+        worker = FullDumpSearchWorker(
+            case_id=str(case.get("case_id", "DEV-WORKSPACE")),
+            source_type=self.selected_mode,
+            input_folder=self.selected_folder,
+            selected_spots=selected_spots,
+            include_root_files=not has_spot_folders,
+            query=query,
+        )
+        worker.moveToThread(thread)
+        self._ea_search_thread = thread
+        self._ea_search_worker = worker
 
-            has_spot_folders = bool(self.detected_spot_names)
-            selected_spots = self.selected_spot_names if has_spot_folders else None
-            include_root_files = not has_spot_folders
-            case = self._active_case()
-
-            df = load_full_tower_dump_dataframe(
-                str(case.get("case_id", "DEV-WORKSPACE")),
-                source_type=self.selected_mode,
-                input_folder=self.selected_folder,
-                selected_spot_folders=selected_spots,
-                include_root_files=include_root_files,
-            )
-            if df.empty:
-                QMessageBox.information(
-                    self,
-                    "No Dump Records",
-                    "No valid records could be loaded from the selected Tower Dump folder.",
-                )
+        def completed(payload):
+            if payload.get("empty"):
+                self._status_label.setText("No valid dump records found.")
+                QMessageBox.information(self, "No Dump Records", "No valid records found in the selected folder.")
                 return
-
-            search_res = search_suspect_and_b_parties_in_dataframe(
-                df,
-                query,
-                source_type=self.selected_mode,
-            )
-            matched_cnt = int(search_res.get("matched_count", 0) or 0)
-            cp_cnt = len(search_res.get("counterparty_summary", []))
+            from gui.widgets.tower_search_dialog import TowerDumpSearchDialog
+            result = payload["result"]
+            count = int(result.get("matched_count", 0) or 0)
+            parties = len(result.get("counterparty_summary", []))
             self._status_label.setText(
-                f"Full Dump Search completed | Matched rows: {matched_cnt:,} | Linked B-Parties: {cp_cnt:,}"
+                f"Search complete: {count:,} records, {parties:,} B-Parties"
             )
             self._append_log(
-                f"[+] Full Dump Search: {matched_cnt:,} record(s) and {cp_cnt:,} B-Party contact(s) found out of {len(df):,} total dump rows."
+                f"[+] Search completed: {count:,} matches in {payload['total']:,} records."
             )
-            TowerDumpSearchDialog(search_res, self).exec()
-        except Exception as error:
-            QMessageBox.warning(
-                self,
-                "Full Dump Search Error",
-                f"{type(error).__name__}: {error}",
-            )
+            TowerDumpSearchDialog(result, self).exec()
+
+        def failed(message):
             self._status_label.setText("Full dump search failed.")
+            QMessageBox.warning(self, "Full Dump Search Error", message)
+
+        def reset():
+            self._ea_search_busy = False
+            self._search_dump_button.setEnabled(True)
+
+        thread.started.connect(worker.run)
+        worker.completed.connect(completed)
+        worker.failed.connect(failed)
+        worker.finished.connect(thread.quit)
+        thread.finished.connect(reset)
+        thread.finished.connect(worker.deleteLater)
+        thread.finished.connect(thread.deleteLater)
+        thread.start()
 
     def _browse_files_anywhere(
         self,
@@ -1945,6 +1885,12 @@ class TowerDumpPage(QFrame):
             )
             self.set_selected_folder(staged_folder)
         except Exception as error:
+            # EA_HANDLED_DIAGNOSTICS_V1
+            try:
+                from modules.core.diagnostic_events import record_handled_exception as _ea_record_handled_exception
+                _ea_record_handled_exception()
+            except Exception:
+                pass
             QMessageBox.warning(
                 self,
                 "File Selection Error",
@@ -1957,6 +1903,10 @@ _ORIG_TowerDumpPage_COMPLETED = TowerDumpPage._analysis_completed
 
 
 def _enhanced_TowerDumpPage_completed(self, payload: object) -> None:
+    from gui.utils.thread_dispatcher import _is_main_thread, run_on_main_thread
+    if not _is_main_thread():
+        run_on_main_thread(lambda p=payload: _enhanced_TowerDumpPage_completed(self, p))
+        return
     from pathlib import Path as _Path
     from modules.reporting.gui_result_store import get_latest_gui_meta, get_latest_gui_sheets
     from gui.dialogs.fullscreen_results_window import open_fullscreen_results_window
@@ -2018,3 +1968,90 @@ if hasattr(TowerDumpPage, "_open_latest_report"):
         _ORIG_TowerDumpPage_OPEN_REPORT(self)
 
     TowerDumpPage._open_latest_report = _enhanced_TowerDumpPage_open_report
+
+# === GUI-FIRST TOWER CDR EXCEL EXPORT (on-demand) ===
+_ORIG_LAZY_TOWER_COMPLETED = TowerDumpPage._analysis_completed
+_ORIG_LAZY_TOWER_OPEN = TowerDumpPage._open_latest_report
+_ORIG_LAZY_TOWER_START = TowerDumpPage._start_analysis
+
+
+def _lazy_tower_start(self, *args, **kwargs):
+    self._lazy_export_result = None
+    if hasattr(self, "_open_report_button"):
+        self._open_report_button.setText("Open Latest Report")
+    return _ORIG_LAZY_TOWER_START(self, *args, **kwargs)
+
+
+def _lazy_tower_completed(self, payload):
+    data = payload if isinstance(payload, dict) else {}
+    nested = data.get("result")
+    lazy = isinstance(nested, dict) and nested.get("gui_export_only") is True
+    _ORIG_LAZY_TOWER_COMPLETED(self, payload)
+    if lazy:
+        self._lazy_export_result = nested
+        self._open_report_button.setText("Export Full Excel Report...")
+        self._open_report_button.setEnabled(True)
+        self._status_label.setText("Analysis ready in GUI. Excel export is optional.")
+        self._append_log("[+] Full formatted Excel report will be created only if Export is clicked.")
+
+
+def _lazy_tower_open_report(self):
+    source = getattr(self, "_lazy_export_result", None)
+    if not isinstance(source, dict) or not source.get("gui_export_only"):
+        return _ORIG_LAZY_TOWER_OPEN(self)
+
+    from PySide6.QtCore import QThread
+    from PySide6.QtWidgets import QFileDialog, QMessageBox
+    from gui.workers.lazy_excel_export_worker import TowerExcelExportWorker
+
+    if getattr(self, "_lazy_excel_thread", None) is not None:
+        QMessageBox.information(self, "Export", "A full Excel export is already running.")
+        return
+
+    path, _ = QFileDialog.getSaveFileName(
+        self,
+        "Export Full Tower CDR Forensic Report",
+        "Tower_CDR_Forensic_Report.xlsx",
+        "Excel Files (*.xlsx)",
+    )
+    if not path:
+        return
+    if not path.lower().endswith(".xlsx"):
+        path += ".xlsx"
+    thread = QThread(self)
+    worker = TowerExcelExportWorker(
+        source, path, case_id=str(source.get("export_case_id") or "")
+    )
+    worker.moveToThread(thread)
+    self._lazy_excel_thread = thread
+    self._lazy_excel_worker = worker
+    self._open_report_button.setEnabled(False)
+    self._status_label.setText("Exporting Excel in background; analysis remains available.")
+    thread.started.connect(worker.run)
+
+    def success(output):
+        self._append_log(f"[+] User-exported Excel: {output}")
+        QMessageBox.information(self, "Export Complete", f"Excel saved to:\n{output}")
+
+    def failure(message):
+        self._append_log(f"[-] Excel export failed: {message}")
+        QMessageBox.warning(self, "Excel Export Failed", message)
+
+    def cleanup():
+        self._lazy_excel_thread = None
+        self._lazy_excel_worker = None
+        self._open_report_button.setEnabled(True)
+        self._status_label.setText("Analysis ready in GUI. Excel export is optional.")
+
+    worker.completed.connect(success)
+    worker.failed.connect(failure)
+    worker.finished.connect(thread.quit)
+    worker.finished.connect(worker.deleteLater)
+    thread.finished.connect(cleanup)
+    thread.finished.connect(thread.deleteLater)
+    thread.start()
+
+
+TowerDumpPage._start_analysis = _lazy_tower_start
+TowerDumpPage._analysis_completed = _lazy_tower_completed
+TowerDumpPage._open_latest_report = _lazy_tower_open_report

@@ -1,4 +1,4 @@
-# Direct runtime dependencies only. Install with: python -m pip install -r requirements.txt
+# Desktop application (GUI + analysis). Install with: python -m pip install -r requirements.txt
 numpy>=1.26,<3
 pandas>=2.2,<4
 openpyxl>=3.1,<4
@@ -8,3 +8,13 @@ pyxlsb>=1.0.10
 pytz>=2024.1
 PySide6>=6.8,<7
 requests>=2.31,<3
+
+# Backend (FastAPI auth/admin/lookup service) - imported by backend/ and manage.py auth-* commands
+fastapi>=0.110
+uvicorn>=0.29
+python-multipart>=0.0.9
+SQLAlchemy>=2.0,<3
+psycopg[binary]>=3.1,<4
+python-dotenv>=1.0
+python-jose>=3.3
+bcrypt>=4.0

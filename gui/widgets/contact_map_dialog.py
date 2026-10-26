@@ -6,8 +6,14 @@ from pathlib import Path
 
 from PySide6.QtCore import Qt, QUrl
 from PySide6.QtGui import QDesktopServices
-from PySide6.QtWebEngineCore import QWebEngineSettings
-from PySide6.QtWebEngineWidgets import QWebEngineView
+# Mapping is optional: missing native WebEngine libraries must not prevent
+# authentication, record analysis or reporting from starting.
+try:
+    from PySide6.QtWebEngineCore import QWebEngineSettings
+    from PySide6.QtWebEngineWidgets import QWebEngineView
+except (ImportError, OSError):
+    QWebEngineSettings = None
+    QWebEngineView = None
 from PySide6.QtWidgets import (
     QDialog,
     QHBoxLayout,
@@ -71,13 +77,19 @@ class ContactMapDialog(QDialog):
             820,
         )
 
-        self._view = QWebEngineView(
-            self
-        )
-        self._view.settings().setAttribute(
-            QWebEngineSettings.WebAttribute.LocalContentCanAccessRemoteUrls,
-            True,
-        )
+        if QWebEngineView is None:
+            self._view = QLabel(
+                "Embedded map preview is unavailable on this system. "
+                "Use Open in Browser to view the generated map.",
+                self,
+            )
+            self._view.setWordWrap(True)
+        else:
+            self._view = QWebEngineView(self)
+            self._view.settings().setAttribute(
+                QWebEngineSettings.WebAttribute.LocalContentCanAccessRemoteUrls,
+                True,
+            )
 
         self._build_layout()
         self._load_map()
@@ -177,13 +189,11 @@ class ContactMapDialog(QDialog):
             )
             return
 
-        self._view.setUrl(
-            QUrl.fromLocalFile(
-                str(
-                    self._map_path
-                )
-            )
-        )
+        if QWebEngineView is None:
+            return
+
+        from gui.utils.local_preview import preview_url
+        self._view.setUrl(QUrl(preview_url(self._map_path)))
 
     def _open_external(
         self,
@@ -196,17 +206,8 @@ class ContactMapDialog(QDialog):
             )
             return
 
-        opened = QDesktopServices.openUrl(
-            QUrl.fromLocalFile(
-                str(
-                    self._map_path
-                )
-            )
-        )
-
-        if not opened:
-            QMessageBox.warning(
-                self,
-                "Open Contact Map",
-                "The operating system could not open the contact map.",
-            )
+        try:
+            from gui.utils.local_preview import open_preview
+            open_preview(self._map_path)
+        except Exception as error:
+            QMessageBox.warning(self, "Open Contact Map", str(error))

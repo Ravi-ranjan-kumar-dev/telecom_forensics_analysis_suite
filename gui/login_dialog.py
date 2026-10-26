@@ -1,4 +1,4 @@
-"""Authentication dialogs for the Telecom Forensics desktop application."""
+"""Authentication dialogs for the EthicalArmor desktop application."""
 
 from __future__ import annotations
 
@@ -50,7 +50,7 @@ class FirstAdminDialog(QDialog):
         super().__init__(parent)
         self.api = api_client
         self.created_username = ""
-        self.setWindowTitle("First-time Administrator Setup")
+        self.setWindowTitle("EthicalArmor - Telecom & Digital Forensics Suite")
         self.setModal(True)
         self.setMinimumSize(460, 330)
 
@@ -189,7 +189,7 @@ class PasswordResetDialog(QDialog):
         super().__init__(parent)
         self.api = api_client
         self.reset_username = ""
-        self.setWindowTitle("Forgot Password")
+        self.setWindowTitle("EthicalArmor - Telecom & Digital Forensics Suite")
         self.setModal(True)
         self.setMinimumSize(560, 460)
 
@@ -336,14 +336,14 @@ class LoginDialog(QDialog):
         api_client: ApiClient | None = None,
     ) -> None:
         super().__init__(parent)
-        self.setWindowTitle("Login - Telecom Forensics")
+        self.setWindowTitle("EthicalArmor - Telecom & Digital Forensics Suite")
         self.setModal(True)
         self.setMinimumSize(460, 270)
         self.api = api_client or ApiClient()
 
         layout = QVBoxLayout(self)
 
-        title_label = QLabel("Telecom Forensics Suite")
+        title_label = QLabel("EthicalArmor Suite")
         title_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         title_label.setStyleSheet(
             "font-size: 18px; font-weight: bold;"

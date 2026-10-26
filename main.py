@@ -1,4 +1,4 @@
-"""Entry point for the Telecom Forensics Analysis Suite."""
+"""Entry point for the EthicalArmor - Telecom & Digital Forensics Suite."""
 
 from __future__ import annotations
 

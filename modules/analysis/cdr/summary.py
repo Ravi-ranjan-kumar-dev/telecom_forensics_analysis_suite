@@ -15,7 +15,7 @@ def cdr_summary(df):
         if "call_type" in df.columns
         else pd.Series("", index=df.index)
     )
-    duration = pd.to_numeric(df.get("call_duration", 0), errors="coerce").fillna(0)
+    duration = pd.to_numeric(df.get("call_duration", pd.Series(0, index=df.index, dtype="float64")), errors="coerce").fillna(0)
 
     known_mask = (
         call_type.isin(["incoming", "mtc", "a_in", "outgoing", "moc", "a_out"])
@@ -66,3 +66,5 @@ def cdr_summary(df):
         summary["Total Net Active Days"] = int(timestamps.dt.normalize().nunique())
 
     return summary
+
+

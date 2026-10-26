@@ -1,4 +1,4 @@
-"""Main CLI workflow controller for the Telecom Forensics Analysis Suite."""
+"""Main CLI workflow controller for the EthicalArmor - Telecom & Digital Forensics Suite."""
 
 from __future__ import annotations
 
@@ -190,7 +190,7 @@ def build_metadata(
 
 def _main_menu() -> str:
     print("\n" + "=" * 64)
-    print("       🛡️  TELECOM FORENSICS ANALYSIS SUITE")
+    print("       🛡️  EthicalArmor - Telecom & Digital Forensics Suite")
     print("=" * 64)
     print("1. Create New Case")
     print("2. Open Existing Case")
@@ -214,7 +214,7 @@ def _workspace_menu(
 
     if direct_mode:
         print(
-            "       🛡️  TELECOM FORENSICS ANALYSIS SUITE"
+            "       🛡️  EthicalArmor - Telecom & Digital Forensics Suite"
         )
     else:
         print(
@@ -231,6 +231,7 @@ def _workspace_menu(
     print("5. Lookup Services")
     print("6. View Case Details")
     print("7. View Case Reports")
+    print("8. Universal Evidence Preflight")
     print("0. Close Case")
 
     return input(
@@ -456,6 +457,7 @@ def handle_single_cdr(
             reporting=_reporting_functions(),
         )
 
+        result.update(case_id=case_id, analysis_run_id=analysis_run_id)
         excel_path = result.get("excel")
 
         if excel_path:
@@ -786,7 +788,17 @@ def handle_multiple_cdr(
             f"{stage_durations['source_link']:.2f}s"
         )
 
+        gui_sheets = {f"Full CDR ({target})": info["df"] for target, info in loaded_cdrs.items()
+                      if isinstance(info.get("df"), pd.DataFrame)}
+        if isinstance(cross_bundle, dict):
+            sections = cross_bundle.get("results") or cross_bundle.get("sections") or cross_bundle
+            for name, value in sections.items():
+                if isinstance(value, pd.DataFrame) and not value.empty:
+                    gui_sheets[str(name).replace("_", " ").title()] = value
         return {
+            "case_id": case_id,
+            "analysis_run_id": analysis_run_id,
+            "gui_sheets": gui_sheets,
             "individual_reports": individual_results,
             "individual_reports_generated": bool(
                 generate_individual_reports
@@ -1001,6 +1013,10 @@ def case_workspace(
                     case_id
                 )
 
+            elif choice == "8":
+                from modules.controllers.universal_controller import handle_universal_evidence
+                handle_universal_evidence()
+
             elif choice == "0":
                 log_case_event(
                     case_id,
@@ -1011,7 +1027,7 @@ def case_workspace(
             else:
                 print(
                     "[-] Invalid choice. "
-                    "Select 0 to 7."
+                    "Select 0 to 8."
                 )
 
         except KeyboardInterrupt:
@@ -1092,3 +1108,5 @@ def _run_case_management_application() -> None:
 
         except Exception as error:
             print_error("Unexpected main-menu error", error)
+
+

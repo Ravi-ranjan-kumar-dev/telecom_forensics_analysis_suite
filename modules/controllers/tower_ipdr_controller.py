@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from modules.cases.repository import active_case_dir
+
 from pathlib import Path
 from typing import Any, Iterable
 
@@ -172,7 +174,7 @@ def _tower_ipdr_input_fingerprint(
 def _tower_ipdr_fingerprint_path(case_id: str):
     from pathlib import Path
 
-    path = Path("cases") / "active" / str(case_id) / "staging" / "tower_ipdr"
+    path = active_case_dir(case_id) / "staging" / "tower_ipdr"
     path.mkdir(parents=True, exist_ok=True)
     return path / "input_fingerprint.json"
 
@@ -1175,7 +1177,6 @@ def _run_complete_tower_ipdr_analysis(
     print("[+] Complete Tower IPDR total analysis start ho raha hai...")
 
     from datetime import datetime
-    from pathlib import Path
     from time import perf_counter
 
     import duckdb
@@ -1200,9 +1201,7 @@ def _run_complete_tower_ipdr_analysis(
 
     run_id = datetime.now().strftime("tower_ipdr_complete_%Y%m%d_%H%M%S")
     report_dir = (
-        Path("cases")
-        / "active"
-        / case_id
+        active_case_dir(case_id)
         / "reports"
         / "tower_dump"
         / "ipdr"
@@ -3467,3 +3466,4 @@ def handle_tower_ipdr_workspace(
             )
 
 # === CONTROLLER_GUI_STORE_HOOK ===
+

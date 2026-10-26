@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import sys
+import pandas as pd
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -14,40 +15,40 @@ if project_root not in sys.path:
     sys.path.insert(0, project_root)
 
 from .. import models, schemas
-from ..auth import InvalidTokenError, decode_token, oauth2_scheme
+from ..auth import oauth2_scheme
 from ..database import get_db
+from ..access_policy import current_account
 
 from modules.database.cgi_repository import normalize_cgi
 from modules.database.lookup_service import lookup_cgi_profile, lookup_sdr_profile
-from modules.enrichment.cgi_address_enrichment import _lookup_cgi_addresses_cached
+from modules.enrichment.cgi_address_enrichment import lookup_cgi_addresses
 from modules.enrichment.sdr_subscriber_enrichment import (
-    lookup_sdr_subscribers_cached,
+    lookup_sdr_subscribers,
     normalize_mobile_number,
 )
 
 router = APIRouter(prefix="/api/lookup", tags=["Lookup"])
 
 
+def _lookup_text(value):
+    if pd.api.types.is_scalar(value) and pd.isna(value):
+        return ""
+    return str(value) if value is not None else ""
+
+
+def _first_lookup_text(*values):
+    return next((text for value in values if (text := _lookup_text(value))), "")
+
+
+def _master_authoritative():
+    return os.getenv("ETHICALARMOR_MASTER_AUTHORITATIVE", "").lower() in {"1", "true", "yes"}
+
+
 def get_current_user(
     token: Annotated[str, Depends(oauth2_scheme)],
     db: Session = Depends(get_db),
 ):
-    try:
-        payload = decode_token(token)
-    except InvalidTokenError as error:
-        raise HTTPException(
-            status_code=401,
-            detail="Invalid token",
-        ) from error
-    username = payload.get("sub")
-    if not username:
-        raise HTTPException(status_code=401, detail="Invalid token")
-    user = db.query(models.User).filter(models.User.username == username).first()
-    if not user:
-        raise HTTPException(status_code=404, detail="User not found")
-    if not user.is_active:
-        raise HTTPException(status_code=403, detail="User account is disabled")
-    return user
+    return current_account(token, db)
 
 
 @router.get("/sdr/{mobile_number}", response_model=schemas.SDRProfileOut)
@@ -57,25 +58,29 @@ def lookup_sdr(
     db: Session = Depends(get_db),
 ):
     normalized = normalize_mobile_number(mobile_number) or mobile_number.strip()
-    subscriber = (
-        db.query(models.SDRSubscriber)
-        .filter(models.SDRSubscriber.mobile_number.in_([normalized, mobile_number.strip()]))
-        .first()
-    )
+    subscriber = None
+    if not _master_authoritative():
+        subscriber = (
+            db.query(models.SDRSubscriber)
+            .filter(models.SDRSubscriber.mobile_number.in_([normalized, mobile_number.strip()]))
+            .first()
+        )
     if subscriber:
         return subscriber
 
     local_result = lookup_sdr_profile(normalized)
+    if local_result.get("status") == "DATABASE_ERROR":
+        raise HTTPException(status_code=503, detail="Master database is unavailable or busy; retry after the current operation finishes")
     if local_result.get("found") and local_result.get("record"):
         record = local_result["record"]
         return schemas.SDRProfileOut(
             mobile_number=str(record.get("mobile_number", normalized)),
             subscriber_name=record.get("subscriber_name", ""),
             father_name=record.get("father_name", ""),
-            address=record.get("raw_address") or record.get("clean_address", ""),
+            address=_first_lookup_text(record.get("raw_address"), record.get("clean_address")),
             id_type=record.get("id_type", ""),
             id_number=record.get("id_number", ""),
-            operator=record.get("operator_or_source_category") or record.get("operator", ""),
+            operator=_first_lookup_text(record.get("operator_or_source_category"), record.get("operator")),
             circle=record.get("circle", ""),
             activation_date=record.get("activation_date", ""),
             caf_number=record.get("caf_number", ""),
@@ -104,7 +109,7 @@ def lookup_sdr_batch(
 
     found_map: dict[str, schemas.SDRProfileOut] = {}
 
-    for start in range(0, len(cleaned), 1000):
+    for start in range(0, 0 if _master_authoritative() else len(cleaned), 1000):
         batch = cleaned[start : start + 1000]
         rows = (
             db.query(models.SDRSubscriber)
@@ -117,7 +122,7 @@ def lookup_sdr_batch(
     missing = [num for num in cleaned if num not in found_map]
     if missing:
         try:
-            df = lookup_sdr_subscribers_cached(tuple(missing))
+            df = lookup_sdr_subscribers(missing)
             if df is not None and not df.empty:
                 for _, row in df.iterrows():
                     if str(row.get("sdr_found", "")).upper() != "YES":
@@ -126,19 +131,19 @@ def lookup_sdr_batch(
                     if mob and mob not in found_map:
                         found_map[mob] = schemas.SDRProfileOut(
                             mobile_number=mob,
-                            subscriber_name=str(row.get("subscriber_name", "") or ""),
-                            father_name=str(row.get("father_name", "") or ""),
-                            address=str(row.get("subscriber_address", "") or ""),
-                            id_type=str(row.get("id_type", "") or ""),
-                            id_number=str(row.get("id_number", "") or ""),
-                            operator=str(row.get("operator", "") or ""),
-                            circle=str(row.get("circle", "") or ""),
-                            activation_date=str(row.get("activation_date", "") or ""),
-                            caf_number=str(row.get("caf_number", "") or ""),
-                            source_file=str(row.get("source_file", "") or ""),
+                            subscriber_name=_lookup_text(row.get("subscriber_name", "")),
+                            father_name=_lookup_text(row.get("father_name", "")),
+                            address=_lookup_text(row.get("subscriber_address", "")),
+                            id_type=_lookup_text(row.get("id_type", "")),
+                            id_number=_lookup_text(row.get("id_number", "")),
+                            operator=_lookup_text(row.get("operator", "")),
+                            circle=_lookup_text(row.get("circle", "")),
+                            activation_date=_lookup_text(row.get("activation_date", "")),
+                            caf_number=_lookup_text(row.get("caf_number", "")),
+                            source_file=_lookup_text(row.get("source_file", "")),
                         )
-        except Exception:
-            pass
+        except Exception as error:
+            raise HTTPException(status_code=503, detail="Master database lookup failed; retry after checking database access") from error
 
     records = list(found_map.values())
     return schemas.SDRBatchLookupResponse(records=records, count=len(records))
@@ -151,15 +156,19 @@ def lookup_cgi(
     db: Session = Depends(get_db),
 ):
     normalized = normalize_cgi(cgi_value) or cgi_value.strip()
-    tower = (
-        db.query(models.CGIAddress)
-        .filter(models.CGIAddress.cgi.in_([normalized, cgi_value.strip()]))
-        .first()
-    )
+    tower = None
+    if not _master_authoritative():
+        tower = (
+            db.query(models.CGIAddress)
+            .filter(models.CGIAddress.cgi.in_([normalized, cgi_value.strip()]))
+            .first()
+        )
     if tower:
         return tower
 
     local_result = lookup_cgi_profile(normalized)
+    if local_result.get("status") == "DATABASE_ERROR":
+        raise HTTPException(status_code=503, detail="Master database is unavailable or busy; retry after the current operation finishes")
     if local_result.get("found") and local_result.get("record"):
         record = local_result["record"]
         return schemas.CGIProfileOut(**record)
@@ -186,7 +195,7 @@ def lookup_cgi_batch(
 
     found_map: dict[str, schemas.CGIProfileOut] = {}
 
-    for start in range(0, len(cleaned), 1000):
+    for start in range(0, 0 if _master_authoritative() else len(cleaned), 1000):
         batch = cleaned[start : start + 1000]
         rows = (
             db.query(models.CGIAddress)
@@ -199,7 +208,7 @@ def lookup_cgi_batch(
     missing = [cgi for cgi in cleaned if cgi not in found_map]
     if missing:
         try:
-            df = _lookup_cgi_addresses_cached(tuple(missing))
+            df = lookup_cgi_addresses(missing)
             if df is not None and not df.empty:
                 for _, row in df.iterrows():
                     key = str(row.get("cgi", "")).strip()
@@ -207,20 +216,22 @@ def lookup_cgi_batch(
                         row_dict = row.to_dict()
                         found_map[key] = schemas.CGIProfileOut(
                             cgi=key,
-                            operator=str(row_dict.get("operator", "") or ""),
-                            circle=str(row_dict.get("circle", "") or ""),
-                            state=str(row_dict.get("state", "") or ""),
-                            district=str(row_dict.get("district", "") or ""),
-                            police_station=str(row_dict.get("police_station", "") or ""),
-                            address=str(row_dict.get("address", "") or ""),
-                            latitude=float(row_dict["latitude"]) if row_dict.get("latitude") is not None and str(row_dict.get("latitude")) not in {"", "nan", "<NA>"} else None,
-                            longitude=float(row_dict["longitude"]) if row_dict.get("longitude") is not None and str(row_dict.get("longitude")) not in {"", "nan", "<NA>"} else None,
-                            site_name=str(row_dict.get("site_name", "") or ""),
-                            town=str(row_dict.get("town", "") or ""),
-                            source_file=str(row_dict.get("source_file", "") or ""),
+                            operator=_lookup_text(row_dict.get("operator", "")),
+                            circle=_lookup_text(row_dict.get("circle", "")),
+                            state=_lookup_text(row_dict.get("state", "")),
+                            district=_lookup_text(row_dict.get("district", "")),
+                            police_station=_lookup_text(row_dict.get("police_station", "")),
+                            address=_lookup_text(row_dict.get("address", "")),
+                            latitude=row_dict.get("latitude"),
+                            longitude=row_dict.get("longitude"),
+                            site_name=_lookup_text(row_dict.get("site_name", "")),
+                            town=_lookup_text(row_dict.get("town", "")),
+                            source_file=_lookup_text(row_dict.get("source_file", "")),
                         )
-        except Exception:
-            pass
+        except Exception as error:
+            raise HTTPException(status_code=503, detail="Master database lookup failed; retry after checking database access") from error
 
     records = list(found_map.values())
     return schemas.CGIBatchLookupResponse(records=records, count=len(records))
+
+

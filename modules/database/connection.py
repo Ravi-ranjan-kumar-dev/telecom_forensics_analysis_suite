@@ -1,4 +1,4 @@
-"""SQLite connection management for Telecom Forensics Suite."""
+"""SQLite connection management for EthicalArmor Suite."""
 
 from __future__ import annotations
 

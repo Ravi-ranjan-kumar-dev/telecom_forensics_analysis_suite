@@ -5,6 +5,8 @@ import duckdb
 import pandas as pd
 
 from .db_paths import master_duckdb_path
+from .duckdb_core import duckdb_connection
+from .master_access import master_operation
 from .cgi_repository import CGI_TABLE, create_cgi_table, normalize_cgi
 from .sdr_repository import SDR_TABLE, create_sdr_table, normalize_mobile
 from .cgi_master_reader import read_cgi_master_file, SUPPORTED_CGI_SUFFIXES
@@ -677,7 +679,7 @@ def _upsert_dataframe(table_name: str, dataframe: pd.DataFrame, key_column: str)
 
     db_path = master_duckdb_path()
 
-    with duckdb.connect(str(db_path), read_only=False) as connection:
+    with duckdb_connection(db_path) as connection:
         connection.register("incoming_master_data", dataframe)
 
         columns = list(dataframe.columns)
@@ -705,6 +707,7 @@ def _upsert_dataframe(table_name: str, dataframe: pd.DataFrame, key_column: str)
     return len(dataframe)
 
 
+@master_operation(lambda: master_duckdb_path())
 def import_cgi_master_file(file_path) -> int:
     """
     Import CGI master file using smart all-sheet reader.
@@ -731,6 +734,7 @@ def import_cgi_master_file(file_path) -> int:
     return total_rows
 
 
+@master_operation(lambda: master_duckdb_path())
 def import_sdr_master_file(file_path) -> int:
     create_sdr_table()
     path = Path(file_path)
@@ -785,3 +789,5 @@ def import_master_folder(folder_path, import_type: str = "auto") -> int:
             print(f"[-] Failed to import {file_path.name}: {e}")
 
     return total_rows
+
+

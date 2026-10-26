@@ -147,7 +147,11 @@ def lookup_sdr_profile(number: object) -> dict[str, Any]:
             "record": {}, "records": [],
             "message": "Valid 10-digit Indian mobile number required hai.",
         }
-    result = _lookup_sdr_profile_cached(normalized_number)
+    from .master_access import ensure_master_cache_current
+    ensure_master_cache_current()
+    result = dict(_lookup_sdr_profile_cached(normalized_number))
+    if result.get("status") == DATABASE_ERROR:
+        _lookup_sdr_profile_cached.cache_clear()
     result["entered_number"] = entered_number
     return result
 
@@ -211,7 +215,11 @@ def lookup_cgi_profile(cgi_value: object) -> dict[str, Any]:
             "entered_cgi": entered_cgi, "normalized_cgi": "",
             "record": {}, "message": "Valid CGI / Cell ID required hai.",
         }
-    result = _lookup_cgi_profile_cached(normalized_cgi)
+    from .master_access import ensure_master_cache_current
+    ensure_master_cache_current()
+    result = dict(_lookup_cgi_profile_cached(normalized_cgi))
+    if result.get("status") == DATABASE_ERROR:
+        _lookup_cgi_profile_cached.cache_clear()
     result["entered_cgi"] = entered_cgi
     return result
 
@@ -290,14 +298,13 @@ def clear_all_lookup_caches():
     except ImportError:
         pass
     try:
-        from modules.enrichment.sdr_subscriber_enrichment import lookup_sdr_subscribers_cached, _normalize_mobile_cached
-        lookup_sdr_subscribers_cached.cache_clear()
-        _normalize_mobile_cached.cache_clear()
+        from modules.enrichment.sdr_subscriber_enrichment import clear_sdr_lookup_caches
+        clear_sdr_lookup_caches()
     except ImportError:
         pass
     try:
-        from modules.enrichment.cgi_address_enrichment import _lookup_cgi_addresses_cached
-        _lookup_cgi_addresses_cached.cache_clear()
+        from modules.enrichment.cgi_address_enrichment import clear_cgi_lookup_caches
+        clear_cgi_lookup_caches()
     except ImportError:
         pass
     try:
@@ -305,3 +312,4 @@ def clear_all_lookup_caches():
         _lookup_cgi_profile_cached.cache_clear()
     except AttributeError:
         pass
+

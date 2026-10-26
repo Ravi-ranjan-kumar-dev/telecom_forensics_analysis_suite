@@ -144,6 +144,9 @@ class CdrPage(QFrame):
             "single": "",
             "multiple": "",
         }
+        self._result_case_id = ""
+        self._result_sheets = {}
+        self._result_run_id = ""
         self._report_paths: list[str] = []
         self._map_paths: list[str] = []
         self._route_paths: list[str] = []
@@ -201,7 +204,7 @@ class CdrPage(QFrame):
         )
 
         self._individual_reports_box = QCheckBox(
-            "Also generate individual 23-sheet reports (slower)"
+            "Include individual reports (slower)"
         )
         self._individual_reports_box.setObjectName(
             "analysisOption"
@@ -211,7 +214,7 @@ class CdrPage(QFrame):
         )
 
         self._run_button = QPushButton(
-            "Run CDR Analysis"
+            "Start Analysis"
         )
         self._run_button.setObjectName(
             "primaryButton"
@@ -372,54 +375,8 @@ class CdrPage(QFrame):
         layout = QVBoxLayout(
             self
         )
-        layout.setContentsMargins(
-            30,
-            28,
-            30,
-            28,
-        )
-        layout.setSpacing(
-            18
-        )
-
-        title_row = QHBoxLayout()
-        title_row.setSpacing(
-            12
-        )
-
-        title = QLabel(
-            "Run CDR Analysis"
-        )
-        title.setObjectName(
-            "moduleTitle"
-        )
-
-        badge = QLabel(
-            "BACKEND CONNECTED"
-        )
-        badge.setObjectName(
-            "statusBadge"
-        )
-
-        title_row.addWidget(
-            title
-        )
-        title_row.addStretch()
-        title_row.addWidget(
-            badge
-        )
-
-        description = QLabel(
-            "Select an evidence folder, run the existing case-aware "
-            "CDR workflow in the background, and open the generated "
-            "investigator report."
-        )
-        description.setObjectName(
-            "moduleDescription"
-        )
-        description.setWordWrap(
-            True
-        )
+        layout.setContentsMargins(16, 12, 16, 14)
+        layout.setSpacing(12)
 
         controls = QFrame()
         controls.setObjectName(
@@ -437,13 +394,6 @@ class CdrPage(QFrame):
         )
         controls_layout.setSpacing(
             14
-        )
-
-        mode_label = QLabel(
-            "Analysis Type"
-        )
-        mode_label.setObjectName(
-            "fieldLabel"
         )
 
         folder_label = QLabel(
@@ -486,21 +436,14 @@ class CdrPage(QFrame):
         )
         action_row.addStretch()
 
-        controls_layout.addWidget(
-            mode_label
-        )
-        controls_layout.addWidget(
-            self._mode_box
-        )
+        # Single vs multiple CDR runs are selected by CSV file count.
         controls_layout.addWidget(
             folder_label
         )
         controls_layout.addLayout(
             folder_row
         )
-        controls_layout.addWidget(
-            self._helper_label
-        )
+        # Selection status below is enough; no permanent tutorial text.
         controls_layout.addWidget(
             self._individual_reports_box
         )
@@ -547,12 +490,8 @@ class CdrPage(QFrame):
             stretch=1,
         )
 
-        layout.addLayout(
-            title_row
-        )
-        layout.addWidget(
-            description
-        )
+        # The active analysis module is highlighted in the sidebar.
+        # Do not repeat its heading, backend badge, or instruction paragraph.
         layout.addWidget(
             controls
         )
@@ -601,6 +540,15 @@ class CdrPage(QFrame):
             strict=False
         )
 
+        # Keep legacy worker modes, but do not ask the user to choose.
+        # Only CSVs count here because the current CDR worker validates CSVs.
+        # Never claim a non-CSV file can be analyzed without worker support.
+        if path.is_dir():
+            csv_count = len(self._csv_files(path))
+            if csv_count:
+                inferred_mode = "multiple" if csv_count > 1 else "single"
+                if self.selected_mode != inferred_mode:
+                    self.set_mode(inferred_mode)
         self._selected_folders[
             self.selected_mode
         ] = str(
@@ -685,6 +633,9 @@ class CdrPage(QFrame):
                 True
             )
 
+        self._result_sheets = {}
+        self._result_case_id = ""
+        self._result_run_id = ""
         self._report_paths = []
         self._map_paths = []
         self._route_paths = []
@@ -797,6 +748,9 @@ class CdrPage(QFrame):
             )
             return
 
+        self._result_sheets = {}
+        self._result_case_id = ""
+        self._result_run_id = ""
         self._report_paths = []
         self._map_paths = []
         self._route_paths = []
@@ -821,7 +775,9 @@ class CdrPage(QFrame):
         thread = QThread(
             self
         )
+        from modules.controllers.app_controller import get_active_gui_case_id
         worker = CdrWorker(
+            case_id=get_active_gui_case_id(),
             mode=self.selected_mode,
             input_folder=self.selected_folder,
             generate_individual_reports=(
@@ -917,9 +873,6 @@ class CdrPage(QFrame):
         )
         gui_sheets = result.get("gui_sheets")
         if isinstance(gui_sheets, dict) and gui_sheets:
-            self._data_viewer_panel.load_dataframe(gui_sheets)
-            if hasattr(self, '_workspace_tabs'):
-                self._workspace_tabs.setCurrentIndex(1)
             self._append_log(f"[+] Loaded {len(gui_sheets)} analyzed table(s) into Interactive GUI Viewer.")
 
         paths = result.get(
@@ -1036,10 +989,54 @@ class CdrPage(QFrame):
             False
         )
 
+    def set_case_id(self, case_id):
+        # Old result windows stay pinned to their case; setup changes clear old actions.
+        self._result_sheets = {}
+        self._result_case_id = ""
+        self._result_run_id = ""
+        self._report_paths = []; self._map_paths = []; self._route_paths = []
+        self._open_report_button.setEnabled(False)
+        self._open_map_button.setEnabled(False)
+        self._open_route_button.setEnabled(False)
+
+    def _generate_missing_maps(self, kind="contact"):
+        if not self._result_sheets:
+            return
+        from modules.reporting.cdr_gui_artifacts import generate_gui_maps
+        from modules.cases import case_directory
+        from uuid import uuid4
+        directory = case_directory(self._result_case_id)/"reports/interactive"/(self._result_run_id or uuid4().hex)
+        sheets = dict(self._result_sheets)
+        case_id, run_id = self._result_case_id, self._result_run_id
+        def ready(result):
+            if (case_id,run_id)!=(self._result_case_id,self._result_run_id):
+                return
+            self._map_paths, self._route_paths = result
+            self._open_map_button.setEnabled(bool(self._map_paths))
+            self._open_route_button.setEnabled(bool(self._route_paths))
+            self._status_label.setText("Map previews generated from the current analysis.")
+            if kind=="contact" and self._map_paths:
+                self._open_contact_map()
+            elif kind=="route" and self._route_paths:
+                self._open_movement_route()
+            else:
+                QMessageBox.information(self,"Map Preview","No full event source is available for this result. Run a fresh CDR analysis.")
+        if not hasattr(self,"_map_exporter"):
+            from gui.widgets.data_viewer import ForensicDataViewer
+            self._map_exporter = ForensicDataViewer(self,case_id=self._result_case_id)
+            self._map_exporter.hide()
+        button = self._open_route_button if kind=="route" else self._open_map_button
+        self._map_exporter._run_export(button,
+            lambda: generate_gui_maps(sheets, directory), ready)
+
     def _open_contact_map(
         self,
     ) -> None:
+        if not self._map_paths and self._result_sheets:
+            self._generate_missing_maps("contact")
+            return
         if not self._map_paths:
+            QMessageBox.information(self, "Contact Map", "No current map is available. Run CDR analysis first and review the progress log for lookup errors.")
             return
 
         map_path_text = self._map_paths[
@@ -1097,7 +1094,11 @@ class CdrPage(QFrame):
     def _open_movement_route(
         self,
     ) -> None:
+        if not self._route_paths and self._result_sheets:
+            self._generate_missing_maps("route")
+            return
         if not self._route_paths:
+            QMessageBox.information(self, "Movement Route", "No current map is available. Run CDR analysis first and review the progress log for lookup errors.")
             return
 
         route_path_text = self._route_paths[
@@ -1215,6 +1216,12 @@ class CdrPage(QFrame):
             )
             self.set_selected_folder(staged_folder)
         except Exception as error:
+            # EA_HANDLED_DIAGNOSTICS_V1
+            try:
+                from modules.core.diagnostic_events import record_handled_exception as _ea_record_handled_exception
+                _ea_record_handled_exception()
+            except Exception:
+                pass
             QMessageBox.warning(
                 self,
                 "File Selection Error",
@@ -1227,44 +1234,30 @@ _ORIG_CdrPage_COMPLETED = CdrPage._analysis_completed
 
 
 def _enhanced_CdrPage_completed(self, payload: object) -> None:
-    from pathlib import Path as _Path
-    from modules.reporting.gui_result_store import get_latest_gui_meta, get_latest_gui_sheets
+    from gui.utils.thread_dispatcher import _is_main_thread, run_on_main_thread
+    if not _is_main_thread():
+        run_on_main_thread(lambda p=payload: _enhanced_CdrPage_completed(self, p))
+        return
     from gui.dialogs.fullscreen_results_window import open_fullscreen_results_window
-
+    from modules.controllers.app_controller import get_active_gui_case_id
     result = payload if isinstance(payload, dict) else {}
-    sheets = result.get("gui_sheets") if isinstance(result.get("gui_sheets"), dict) and result.get("gui_sheets") else get_latest_gui_sheets()
-    meta = get_latest_gui_meta()
-    win_title = str(meta.get("title") or "CDR Analysis Results")
-
-    report_paths = [
-        _Path(p) for p in (result.get("report_paths") or []) if p
-    ]
-
-    if report_paths:
-        _ORIG_CdrPage_COMPLETED(self, payload)
-        if sheets:
-            open_fullscreen_results_window(self, sheets, title=win_title)
-        return
-
-    if sheets:
-        if hasattr(self, "_set_running_state"):
-            self._set_running_state(False)
-        if hasattr(self, "_open_report_button"):
-            self._open_report_button.setEnabled(True)
-            self._open_report_button.setText("Open Analyzed Results (Full Screen)")
-        if hasattr(self, "_summary_label"):
-            total_rows = sum(len(df) for df in sheets.values())
-            self._summary_label.setText(
-                f"Loaded {len(sheets)} analyzed table(s) ({total_rows:,} total rows) in Interactive GUI Viewer."
-            )
-        if hasattr(self, "_append_log"):
-            self._append_log(
-                f"[+] Analysis complete: {len(sheets)} table(s) ready. Opening Full-Screen Interactive Viewer..."
-            )
-        open_fullscreen_results_window(self, sheets, title=win_title)
-        return
-
-    _ORIG_CdrPage_COMPLETED(self, payload)
+    nested = result.get("result") if isinstance(result.get("result"), dict) else {}
+    sheets = result.get("gui_sheets") or nested.get("gui_sheets") or {}
+    self._result_case_id = str(result.get("case_id") or nested.get("case_id") or get_active_gui_case_id())
+    self._result_run_id = str(result.get("analysis_run_id") or nested.get("analysis_run_id") or "")
+    self._result_sheets = sheets if isinstance(sheets, dict) else {}
+    result = dict(result, gui_sheets=self._result_sheets)
+    _ORIG_CdrPage_COMPLETED(self, result)
+    if self._result_sheets:
+        self._set_running_state(False)
+        self._open_report_button.setEnabled(True)
+        self._open_report_button.setText("Open Analyzed Results (Full Screen)")
+        self._open_map_button.setEnabled(bool(self._map_paths) or bool(self._result_sheets))
+        self._open_route_button.setEnabled(bool(self._route_paths) or bool(self._result_sheets))
+        self._status_label.setText("Analysis completed. Current results and map previews are ready.")
+        self._append_log(f"[+] Analysis complete: {len(self._result_sheets)} table(s) ready. Opening Full-Screen Interactive Viewer...")
+        open_fullscreen_results_window(self, self._result_sheets, title="CDR Analysis Results",
+                                       case_id=self._result_case_id, source_id=self._result_run_id)
 
 
 CdrPage._analysis_completed = _enhanced_CdrPage_completed
@@ -1273,17 +1266,10 @@ if hasattr(CdrPage, "_open_latest_report"):
     _ORIG_CdrPage_OPEN_REPORT = CdrPage._open_latest_report
 
     def _enhanced_CdrPage_open_report(self) -> None:
-        from modules.reporting.gui_result_store import get_latest_gui_meta, get_latest_gui_sheets
         from gui.dialogs.fullscreen_results_window import open_fullscreen_results_window
-
-        sheets = get_latest_gui_sheets()
-        if sheets and not getattr(self, "_latest_report_paths", None):
-            meta = get_latest_gui_meta()
-            open_fullscreen_results_window(
-                self,
-                sheets,
-                title=str(meta.get("title") or "CDR Analysis Results"),
-            )
+        if self._result_sheets:
+            open_fullscreen_results_window(self, self._result_sheets, title="CDR Analysis Results",
+                                           case_id=self._result_case_id, source_id=self._result_run_id)
             return
         _ORIG_CdrPage_OPEN_REPORT(self)
 

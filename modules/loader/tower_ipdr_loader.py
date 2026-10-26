@@ -1,3 +1,4 @@
+
 """Folder-based loader for Jio Tower IPDR/NAT dumps.
 
 Phase-6A intentionally supports only the verified Jio ``CELL ID_IPDRNAT``
@@ -982,3 +983,161 @@ def load_tower_ipdr_case(
         "warnings": warnings,
         "errors": errors,
     }
+
+# Multi-operator extension: preserve the verified Jio parser unchanged.
+FORMAT_AIRTEL_TOWER_IPDR = "AIRTEL_TOWER_IPDR"
+_original_detect_tower_ipdr_format = detect_tower_ipdr_format
+_original_load_tower_ipdr_file = load_tower_ipdr_file
+
+
+def _airtel_header(path: Path) -> tuple[int, str] | None:
+    """Identify verified Airtel tower IPDR headers without guessing other formats."""
+    for encoding in ("utf-8-sig", "cp1252"):
+        try:
+            with path.open("r", encoding=encoding) as handle:
+                for line_number, line in enumerate(handle):
+                    if line_number > 40:
+                        break
+                    headers = {_clean_header(item) for item in line.rstrip("\r\n").split(",")}
+                    required = {"msisdn", "imei", "imsi", "session_start_time", "session_end_time", "destination_ip", "cgi"}
+                    if required.issubset(headers):
+                        return line_number, encoding
+        except UnicodeError:
+            continue
+    return None
+
+
+def detect_tower_ipdr_format(path: str | Path) -> dict[str, Any]:
+    file_path = Path(path).expanduser().resolve()
+    airtel = _airtel_header(file_path)
+    if airtel is not None:
+        header_row, encoding = airtel
+        with file_path.open("r", encoding=encoding) as handle:
+            prefix = "".join(next(handle, "") for _ in range(header_row))
+        # Operator identity is verified from the source report, not just filename.
+        if "BHARTI AIRTEL" in prefix.upper():
+            cell_match = re.search(r"IPDR OF CELL ID\s*:\s*([^\s]+)", prefix, re.I)
+            return {
+                "source_format": FORMAT_AIRTEL_TOWER_IPDR,
+                "header_row": header_row,
+                "encoding": encoding,
+                "columns": [],
+                "metadata": {"operator": "Airtel", "searched_cell_id": cell_match.group(1) if cell_match else ""},
+            }
+    return _original_detect_tower_ipdr_format(file_path)
+
+
+def _normalize_airtel_tower(raw: pd.DataFrame, path: Path, metadata: dict[str, Any]) -> tuple[pd.DataFrame, pd.DataFrame]:
+    raw = raw.copy()
+    raw.columns = [_clean_header(column) for column in raw.columns]
+    subscriber = raw.get("msisdn", pd.Series("", index=raw.index)).fillna("").astype(str).str.strip()
+    valid = subscriber.str.fullmatch(r"(?:91)?[6-9]\d{9}", na=False)
+    rejected = quarantine_dataframe_rows(raw, ~valid, source_file=path, reason="NON_DATA_OR_INVALID_SUBSCRIBER_ROW")
+    raw = raw.loc[valid].copy().reset_index(drop=True)
+    if raw.empty:
+        empty = pd.DataFrame(columns=NORMALIZED_COLUMNS)
+        empty.attrs["metadata"] = {**metadata, "records": 0}
+        return empty, rejected
+    def col(name: str) -> pd.Series:
+        return _string_series(raw, name)
+    def datetime_col(name: str) -> pd.Series:
+        return pd.to_datetime(col(name), format="%d-%b-%Y %H:%M:%S", errors="coerce")
+    start, end = datetime_col("session_start_time"), datetime_col("session_end_time")
+    out = pd.DataFrame(index=raw.index)
+    text_mapping = {
+        "subscriber_number_raw": "msisdn", "imei_raw": "imei", "imsi_raw": "imsi",
+        "source_ip_raw": "source_ip", "translated_ip_raw": "translated_ip_public_ipv4",
+        "destination_ip_raw": "destination_ip", "pgw_ip_raw": "pgw_ggsn_ip_address",
+        "apn": "access_point_name", "first_cell_id": "cgi", "last_cell_id": "cgi",
+        "roaming_indicator": "roaming_network_indicator", "roaming_circle": "home_roaming_circle",
+        "sim_type": "pre_post",
+    }
+    for target, source in text_mapping.items():
+        out[target] = col(source)
+    normalized = out["subscriber_number_raw"].map(normalize_subscriber)
+    out["subscriber_number"] = normalized.map(lambda item: item[0])
+    out["identifier_type"] = normalized.map(lambda item: item[1])
+    out["imei"] = out["imei_raw"].map(normalize_imei)
+    out["imsi"] = out["imsi_raw"].map(normalize_imsi)
+    for prefix in ("source_ip", "translated_ip", "destination_ip", "pgw_ip"):
+        out[prefix] = out[prefix + "_raw"].map(canonical_ip)
+        out[prefix + "_version"] = out[prefix].map(_ip_version)
+    numeric = {"source_port": "source_port", "translated_port": "translated_port_public_port",
+               "destination_port": "destination_port", "uplink_volume": "uplink_vol",
+               "downlink_volume": "downlink_vol"}
+    for target, source in numeric.items():
+        out[target] = pd.to_numeric(col(source), errors="coerce")
+    for target in ("source_port", "translated_port", "destination_port"):
+        out[target] = out[target].astype("Int64")
+    out["allocation_start"] = start
+    out["allocation_end"] = end
+    out["event_time"] = start
+    duration = (end - start).dt.total_seconds()
+    out["allocation_duration_seconds"] = duration
+    out["allocation_time_valid"] = start.notna() & end.notna() & duration.ge(0)
+    # The operator's Duration may not equal session end-start. Preserve both separately.
+    out["event_duration_seconds"] = pd.to_numeric(col("duration"), errors="coerce")
+    out["event_duration_valid"] = out["event_duration_seconds"].ge(0).fillna(False)
+    out["event_duration_negative"] = out["event_duration_seconds"].lt(0).fillna(False)
+    out["event_zero_duration"] = out["event_duration_seconds"].eq(0).fillna(False)
+    out["event_within_allocation"] = out["allocation_time_valid"]
+    out["volume_fields_present"] = out["uplink_volume"].notna() & out["downlink_volume"].notna()
+    out["total_volume"] = out["uplink_volume"] + out["downlink_volume"]
+    searched = str(metadata.get("searched_cell_id", ""))
+    out["searched_cell_id"] = searched
+    out["first_cell_matches_searched"] = out["first_cell_id"].eq(searched) & bool(searched)
+    out["last_cell_matches_searched"] = out["last_cell_id"].eq(searched) & bool(searched)
+    out["cell_transition_type"] = [
+        _cell_transition(first, last, searched)
+        for first, last in zip(out["first_cell_id"], out["last_cell_id"])
+    ]
+    out["allocation_key"] = _stable_key(out, ["subscriber_number", "source_ip", "allocation_start", "allocation_end", "imei", "imsi", "searched_cell_id"])
+    out["allocation_volume_key"] = _stable_key(out, ["allocation_key", "uplink_volume", "downlink_volume"])
+    out["record_type"] = "IPDR_SESSION_EVENT"
+    out["source_format"] = FORMAT_AIRTEL_TOWER_IPDR
+    out["operator"] = "Airtel"
+    out["source_file"] = str(path)
+    out["source_row_number"] = pd.to_numeric(raw["_source_row_number"], errors="coerce").astype("Int64")
+    out["exact_duplicate_flag"] = False
+    for name in NORMALIZED_COLUMNS:
+        if name not in out.columns:
+            out[name] = pd.NA
+    out = out[NORMALIZED_COLUMNS]
+    out.attrs["metadata"] = {**metadata, "records": len(out), "source_file": str(path), "source_format": FORMAT_AIRTEL_TOWER_IPDR}
+    return out, rejected
+
+
+def load_tower_ipdr_file(path: str | Path) -> dict[str, Any]:
+    file_path = Path(path).expanduser().resolve()
+    try:
+        detection = detect_tower_ipdr_format(file_path)
+    except Exception as error:
+        return {"ok": False, "df": pd.DataFrame(columns=NORMALIZED_COLUMNS), "file": str(file_path),
+                "source_format": "UNKNOWN", "metadata": {}, "warnings": [], "errors": [str(error)]}
+    if detection["source_format"] != FORMAT_AIRTEL_TOWER_IPDR:
+        return _original_load_tower_ipdr_file(file_path)
+    try:
+        raw, parser_rejects, ingestion = read_csv_with_quarantine(
+            file_path, skiprows=detection["header_row"], sep=",", encoding=detection["encoding"])
+        # Source row numbers must reflect the preamble before the CSV header.
+        if "_source_row_number" in raw:
+            raw["_source_row_number"] = pd.to_numeric(raw["_source_row_number"], errors="coerce") + detection["header_row"]
+        df, invalid = _normalize_airtel_tower(raw, file_path, detection["metadata"])
+        rejects = pd.concat([parser_rejects, invalid], ignore_index=True)
+        metadata = dict(df.attrs["metadata"])
+        metadata.update({"operator": "Airtel", "unique_subscribers": int(df["subscriber_number"].nunique()),
+                         "unique_imei": int(df["imei"].nunique()), "unique_imsi": int(df["imsi"].nunique()),
+                         "allocation_count": int(df["allocation_key"].nunique()),
+                         "allocation_volume_records": int(df["allocation_volume_key"].nunique()),
+                         "event_time_min": df["event_time"].min(), "event_time_max": df["event_time"].max(),
+                         "allocation_start_min": df["allocation_start"].min(), "allocation_end_max": df["allocation_end"].max(),
+                         "negative_duration_rows": int(df["event_duration_negative"].fillna(False).sum()),
+                         "zero_duration_rows": int(df["event_zero_duration"].fillna(False).sum()),
+                         "rejected_rows": len(rejects), "adjusted_rows": ingestion.get("adjusted_rows", 0)})
+        return {"ok": not df.empty, "df": df, "file": str(file_path), "source_format": FORMAT_AIRTEL_TOWER_IPDR,
+                "metadata": metadata, "warnings": [] if not df.empty else ["No valid subscriber rows"],
+                "errors": [] if not df.empty else ["No valid Airtel Tower IPDR rows"], "rejected_rows": rejects}
+    except Exception as error:
+        return {"ok": False, "df": pd.DataFrame(columns=NORMALIZED_COLUMNS), "file": str(file_path),
+                "source_format": FORMAT_AIRTEL_TOWER_IPDR, "metadata": detection["metadata"],
+                "warnings": [], "errors": [f"Airtel parse failed: {type(error).__name__}: {error}"]}

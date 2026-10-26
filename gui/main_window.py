@@ -31,6 +31,7 @@ from gui.pages.imei_page import ImeiPage
 from gui.pages.ipdr_page import IpdrPage
 from gui.pages.lookup_page import LookupPage
 from gui.pages.tower_dump_page import TowerDumpPage
+from gui.pages.universal_evidence_page import UniversalEvidencePage
 
 
 @dataclass(frozen=True)
@@ -72,6 +73,11 @@ NAVIGATION_ITEMS = (
         ),
     ),
     NavigationItem(
+        key="universal_evidence",
+        title="Universal Evidence Preflight",
+        description="Detect CDR, Tower, IPDR and IMEI formats before analysis.",
+    ),
+    NavigationItem(
         key="lookup",
         title="Lookup Services",
         description=(
@@ -109,9 +115,7 @@ class MainWindow(QMainWindow):
         self.setObjectName(
             "mainWindow"
         )
-        self.setWindowTitle(
-            "EthicalArmor - Telecom Forensics Suite"
-        )
+        self.setWindowTitle("EthicalArmor - Telecom & Digital Forensics Suite")
         self.setMinimumSize(
             1120,
             700,
@@ -177,7 +181,7 @@ class MainWindow(QMainWindow):
             self
         )
         status_bar.showMessage(
-            "Backend connected | Direct analysis workspace"
+            ""
         )
         self.setStatusBar(
             status_bar
@@ -310,7 +314,7 @@ class MainWindow(QMainWindow):
         )
 
         brand_title = QLabel(
-            "TELECOM FORENSICS"
+            "EthicalArmor"
         )
         brand_title.setObjectName(
             "brandTitle"
@@ -498,6 +502,7 @@ class MainWindow(QMainWindow):
             "ipdr": IpdrPage,
             "imei": ImeiPage,
             "lookup": LookupPage,
+            "universal_evidence": UniversalEvidencePage,
             "case_details": CaseDetailsPage,
             "case_reports": CaseReportsPage,
         }
@@ -516,13 +521,16 @@ class MainWindow(QMainWindow):
             else:
                 page = page_factory()
 
+            if item.key == "case_reports":
+                from gui.widgets.report_history_polish import install_report_history_polish
+                install_report_history_polish(page)
+
             self._page_stack.addWidget(
                 page
             )
 
-        layout.addLayout(
-            header
-        )
+        # The sidebar already identifies the active module. Keep the labels
+        # available for accessibility/tests, but do not add a second header.
         layout.addWidget(
             self._page_stack,
             stretch=1,
@@ -579,9 +587,8 @@ class MainWindow(QMainWindow):
             item.description
         )
 
-        self.statusBar().showMessage(
-            f"{item.title} | Backend ready"
-        )
+        # Technical connection state is reported only when a real error occurs.
+        self.statusBar().clearMessage()
 
     def select_page_by_key(
         self,

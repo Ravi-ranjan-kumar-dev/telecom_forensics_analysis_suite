@@ -8,8 +8,9 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 
 from .. import crud, models, schemas
-from ..auth import InvalidTokenError, decode_token, oauth2_scheme
+from ..auth import oauth2_scheme
 from ..database import get_db
+from ..access_policy import current_account, account_is_usable
 
 router = APIRouter(prefix="/api/admin", tags=["Admin"])
 
@@ -18,24 +19,11 @@ def get_current_user(
     token: Annotated[str, Depends(oauth2_scheme)],
     db: Session = Depends(get_db),
 ) -> models.User:
-    try:
-        payload = decode_token(token)
-    except InvalidTokenError as error:
-        raise HTTPException(
-            status_code=401,
-            detail="Invalid token",
-        ) from error
-    username = payload.get("sub")
-    if not username:
-        raise HTTPException(status_code=401, detail="Invalid token")
-    user = crud.get_user_by_username(db, username)
-    if not user:
-        raise HTTPException(status_code=404, detail="User not found")
-    return user
+    return current_account(token, db)
 
 
 def _require_admin(current_user: models.User) -> models.User:
-    if not current_user.is_active:
+    if not account_is_usable(current_user):
         raise HTTPException(status_code=403, detail="Inactive user")
     if current_user.role != "admin":
         raise HTTPException(status_code=403, detail="Not enough permissions")
@@ -121,3 +109,5 @@ def admin_reset_officer_password(
         raise HTTPException(status_code=404, detail="User not found")
     crud.update_user_password(db, user, reset_req.new_password)
     return {"message": f"Password updated for {user.username}."}
+
+

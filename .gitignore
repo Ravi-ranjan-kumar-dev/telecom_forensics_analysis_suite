@@ -121,3 +121,5 @@ staging/
 
 # Secrets & Config
 .env
+.claude/
+logs/*.log

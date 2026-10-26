@@ -1,5 +1,5 @@
 """
-Common scalable storage helpers for Telecom Forensics Analysis Suite.
+Common scalable storage helpers for EthicalArmor - Telecom & Digital Forensics Suite.
 
 Purpose:
 - Save normalized telecom data as Parquet.

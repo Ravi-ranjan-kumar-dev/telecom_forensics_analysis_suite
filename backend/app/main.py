@@ -1,4 +1,5 @@
 # backend/app/main.py
+import logging
 import sys
 import os
 
@@ -35,12 +36,15 @@ def _ensure_user_columns() -> None:
                 if col_name not in existing:
                     conn.execute(text(f"ALTER TABLE users ADD COLUMN {col_name} {col_type}"))
     except Exception:
-        pass
+        logging.getLogger(__name__).exception(
+            "Automatic users-table column migration failed; "
+            "check database permissions and schema."
+        )
 
 
 _ensure_user_columns()
 
-app = FastAPI(title="Telecom Forensics Backend", version="0.1.0")
+app = FastAPI(title="EthicalArmor Backend", version="0.1.0")
 __version__ = "1.0.0"
 
 app.include_router(auth.router)
@@ -50,7 +54,7 @@ app.include_router(imports.router)
 
 @app.get("/")
 def root():
-    return {"message": "Telecom Forensics Backend is running"}
+    return {"message": "EthicalArmor Backend is running"}
 
 @app.get("/api/health")
 def health_check():

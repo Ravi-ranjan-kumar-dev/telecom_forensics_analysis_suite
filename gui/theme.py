@@ -354,3 +354,27 @@ QScrollBar::sub-line:vertical {
     height: 0;
 }
 """
+
+
+
+
+# Explicit palette for model-backed views on every native Qt style.
+APP_STYLESHEET += """
+QTableView {
+    background-color: #0c1422;
+    alternate-background-color: #152237;
+    color: #e6edf7;
+    gridline-color: #26374e;
+    selection-background-color: #195770;
+    selection-color: #ffffff;
+}
+QTableView::item { padding: 5px 7px; }
+QTableView::item:selected { background-color: #195770; color: #ffffff; }
+QTableView QHeaderView::section {
+    background-color: #1b2b42;
+    color: #b9d1e6;
+    border: 0;
+    border-right: 1px solid #30445e;
+    padding: 7px;
+}
+"""

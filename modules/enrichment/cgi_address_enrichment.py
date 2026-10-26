@@ -263,8 +263,16 @@ _CGI_MEM_POS: dict[str, dict] = {}
 _CGI_MEM_NEG: set[str] = set()
 
 
+def clear_cgi_lookup_caches():
+    _lookup_cgi_addresses_cached.cache_clear()
+    _CGI_MEM_POS.clear()
+    _CGI_MEM_NEG.clear()
+
+
 def lookup_cgi_addresses(cgi_values: Iterable) -> pd.DataFrame:
     """O(1) per-CGI memory-cached lookup across CDR/IPDR/Tower tables (monkeypatch-safe)."""
+    from modules.database.master_access import ensure_master_cache_current
+    ensure_master_cache_current()
     if query_dataframe is not _original_query_dataframe:
         _lookup_cgi_addresses_cached.cache_clear()
         return _ORIG_LOOKUP_CGI_ADDRESSES(cgi_values)
@@ -294,3 +302,5 @@ def lookup_cgi_addresses(cgi_values: Iterable) -> pd.DataFrame:
     if not hit_rows:
         return pd.DataFrame(columns=CGI_LOOKUP_COLUMNS)
     return pd.DataFrame(hit_rows, columns=CGI_LOOKUP_COLUMNS).drop_duplicates(subset=["cgi"], keep="last")
+
+

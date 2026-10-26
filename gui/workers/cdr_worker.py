@@ -193,6 +193,7 @@ class CdrWorker(QObject):
         mode: str,
         input_folder: str | Path,
         generate_individual_reports: bool = False,
+        case_id: str | None = None,
     ) -> None:
         super().__init__()
 
@@ -208,6 +209,7 @@ class CdrWorker(QObject):
                 f"Unsupported CDR mode: {mode}"
             )
 
+        self.case_id = case_id
         self.mode = normalized_mode
         self.input_folder = Path(
             input_folder
@@ -244,7 +246,12 @@ class CdrWorker(QObject):
             ), contextlib.redirect_stderr(
                 output_stream
             ):
-                case = get_direct_analysis_workspace()
+                if self.case_id:
+                    from modules.cases import open_case
+                    from modules.controllers.app_controller import DIRECT_ANALYSIS_CASE_ID, _direct_analysis_workspace
+                    case = _direct_analysis_workspace() if self.case_id == DIRECT_ANALYSIS_CASE_ID else open_case(self.case_id)
+                else:
+                    case = get_direct_analysis_workspace()
 
                 if self.mode == "multiple":
                     result = handler(
@@ -281,8 +288,49 @@ class CdrWorker(QObject):
                 report_paths
             )
 
+            from uuid import uuid4
+            from modules.reporting.cdr_gui_artifacts import event_frames, generate_gui_maps
+            from modules.cases import case_directory
+            from modules.cases.investigation import index_case_numbers
+            case_id = str(case["case_id"])
+            run_id = str(result.get("analysis_run_id") or uuid4().hex)
+            gui_sheets = result.get("gui_sheets") or {}
+            warnings = []
+            if gui_sheets:
+                for frame in gui_sheets.values():
+                    if hasattr(frame, "attrs"):
+                        frame.attrs.update(case_id=case_id, analysis_run_id=run_id)
+                try:
+                    index_case_numbers(case_id, run_id, event_frames(gui_sheets))
+                except Exception as error:
+                    # EA_HANDLED_DIAGNOSTICS_V1
+                    try:
+                        from modules.core.diagnostic_events import record_handled_exception as _ea_record_handled_exception
+                        _ea_record_handled_exception()
+                    except Exception:
+                        pass
+                    warnings.append(f"Case number index: {type(error).__name__}: {error}")
+                if not map_paths or not route_paths:
+                    try:
+                        maps, routes = generate_gui_maps(gui_sheets, case_directory(case_id)/"reports/interactive"/run_id)
+                        map_paths = map_paths or maps
+                        route_paths = route_paths or routes
+                    except Exception as error:
+                        # EA_HANDLED_DIAGNOSTICS_V1
+                        try:
+                            from modules.core.diagnostic_events import record_handled_exception as _ea_record_handled_exception
+                            _ea_record_handled_exception()
+                        except Exception:
+                            pass
+                        warnings.append(f"Map preview: {type(error).__name__}: {error}")
+            for warning in warnings:
+                self.log.emit("[!] " + warning)
             self.completed.emit(
                 {
+                    "case_id": case_id,
+                    "analysis_run_id": run_id,
+                    "gui_sheets": gui_sheets,
+                    "warnings": warnings,
                     "mode": self.mode,
                     "input_folder": str(
                         self.input_folder
@@ -295,6 +343,12 @@ class CdrWorker(QObject):
             )
 
         except Exception as error:
+            # EA_HANDLED_DIAGNOSTICS_V1
+            try:
+                from modules.core.diagnostic_events import record_handled_exception as _ea_record_handled_exception
+                _ea_record_handled_exception()
+            except Exception:
+                pass
             output_stream.flush()
 
             self.failed.emit(
@@ -303,3 +357,5 @@ class CdrWorker(QObject):
 
         finally:
             self.finished.emit()
+
+

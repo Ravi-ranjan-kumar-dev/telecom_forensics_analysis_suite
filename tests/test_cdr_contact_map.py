@@ -214,7 +214,8 @@ def test_contact_map_html_is_safe_and_has_fallback(
 
     assert map_path.is_file()
     assert "OpenStreetMap" in text
-    assert "Interactive basemap resources could not be loaded" in text
+    assert "Tower points work offline" in text
+    assert 'src="https://unpkg.com' not in text
     assert "<img src=x onerror=alert(1)>" not in text
     assert "\\u003cimg" in text
 
@@ -287,3 +288,5 @@ def test_cdr_page_accepts_generated_map_paths(
     assert page._open_map_button.isEnabled()
 
     page.close()
+
+

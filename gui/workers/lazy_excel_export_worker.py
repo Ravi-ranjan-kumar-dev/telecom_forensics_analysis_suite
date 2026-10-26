@@ -36,6 +36,12 @@ class TowerExcelExportWorker(QObject):
                 os.replace(output, target)
             self.completed.emit(str(target))
         except Exception as exc:
+            # EA_HANDLED_DIAGNOSTICS_V1
+            try:
+                from modules.core.diagnostic_events import record_handled_exception as _ea_record_handled_exception
+                _ea_record_handled_exception()
+            except Exception:
+                pass
             self.failed.emit(f"{type(exc).__name__}: {exc}")
         finally:
             self.finished.emit()
