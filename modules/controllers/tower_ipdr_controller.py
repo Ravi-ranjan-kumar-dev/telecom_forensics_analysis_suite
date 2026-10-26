@@ -73,102 +73,22 @@ TOWER_IPDR_WORKFLOW = "tower_ipdr"
 
 
 
+# EA_TOWER_IPDR_FINGERPRINT_PHASE6_V1
 def _tower_ipdr_input_fingerprint(
     input_folder: str | Path | None = None,
     *,
     selected_spot_folders: Iterable[str] | None = None,
     include_root_files: bool = True,
 ) -> dict:
-    """Return a selection-aware Tower IPDR input fingerprint."""
-
-    from modules.loader.tower_spot_layout import (
-        normalize_selected_spot_folders,
-        select_tower_evidence_files,
+    """Compatibility wrapper preserving the original public import path."""
+    from modules.controllers.tower_ipdr_fingerprint import (
+        _tower_ipdr_input_fingerprint as _fingerprint_impl,
     )
-
-    input_dir = (
-        Path(
-            input_folder
-        ).expanduser().resolve()
-        if input_folder is not None
-        else Path(
-            "data/tower_dump/ipdr/input"
-        ).resolve(
-            strict=False
-        )
+    return _fingerprint_impl(
+        input_folder,
+        selected_spot_folders=selected_spot_folders,
+        include_root_files=include_root_files,
     )
-    allowed_suffixes = {
-        ".csv",
-        ".txt",
-        ".xlsx",
-        ".xls",
-    }
-    normalized_selection: tuple[str, ...] | None = None
-    files = []
-    total_size = 0
-
-    if input_dir.is_dir():
-        if selected_spot_folders is not None:
-            normalized_selection = normalize_selected_spot_folders(
-                input_dir,
-                selected_spot_folders,
-            )
-
-        candidates = [
-            file_path
-            for file_path in input_dir.rglob("*")
-            if (
-                file_path.is_file()
-                and file_path.suffix.lower()
-                in allowed_suffixes
-            )
-        ]
-        selected_files = select_tower_evidence_files(
-            input_dir,
-            candidates,
-            selected_spot_folders=normalized_selection,
-            include_root_files=include_root_files,
-        )
-
-        for file_path in selected_files:
-            stat = file_path.stat()
-            files.append(
-                {
-                    "path": file_path.relative_to(
-                        input_dir
-                    ).as_posix(),
-                    "size": int(
-                        stat.st_size
-                    ),
-                    "mtime_ns": int(
-                        stat.st_mtime_ns
-                    ),
-                }
-            )
-            total_size += int(
-                stat.st_size
-            )
-
-    return {
-        "input_dir": str(
-            input_dir
-        ),
-        "selected_spot_folders": (
-            list(
-                normalized_selection
-            )
-            if normalized_selection is not None
-            else None
-        ),
-        "include_root_files": bool(
-            include_root_files
-        ),
-        "file_count": len(
-            files
-        ),
-        "total_size": total_size,
-        "files": files,
-    }
 
 
 def _tower_ipdr_fingerprint_path(case_id: str):
@@ -270,20 +190,14 @@ def _ensure_tower_ipdr_data_ready(
     print("[OK] Tower IPDR backend data ready hai.")
     return True
 
-def _menu(case: dict[str, Any]) -> str:
-    print("" + "=" * 78)
-    print(
-        f"TOWER IPDR DUMP ANALYSIS | "
-        f"{case.get('case_id', '')} | "
-        f"{case.get('case_name', '')}"
-    )
-    print("=" * 78)
-    print("1. Run Complete Tower IPDR Dump Analysis")
-    print("2. Create Date-Time Parts")
-    print("3. Part-wise Analysis")
-    print("4. View / Export Latest Report")
-    print("0. Back to Tower Dump Analysis")
-    return input("Choose Action: ").strip()
+# EA_TOWER_IPDR_CLI_PHASE5_V1
+from modules.controllers.tower_ipdr_cli_helpers import (
+    _menu,
+    _collect_date_time_pairs,
+    _collect_date_time_ranges,
+    _print_dataframe,
+    _print_tower_ipdr_backend_status,
+)
 
 def _has_files(directory: Path) -> bool:
     return directory.is_dir() and any(
@@ -301,35 +215,6 @@ def _input_folder(case_id: str) -> Path:
     return TOWER_IPDR_DUMP_DATA_DIR / "input"
 
 
-def _collect_date_time_pairs() -> list[tuple[str, str]]:
-    print("\n" + "=" * 72)
-    print("ENTER DATE-TIME PARTITIONS")
-    print("=" * 72)
-    print("Date example : 11-06-2026")
-    print("Time example : 20:10 or 20:10:00")
-    print("Input complete hone par next Date blank chhodkar Enter dabayein.")
-
-    pairs: list[tuple[str, str]] = []
-    number = 1
-
-    while True:
-        date_value = input(
-            f"\nPartition {number} - Date (blank = finish): "
-        ).strip()
-
-        if not date_value:
-            break
-
-        time_value = input(f"Partition {number} - Time: ").strip()
-
-        if not time_value:
-            print("[-] Time required hai. Entry dobara karein.")
-            continue
-
-        pairs.append((date_value, time_value))
-        number += 1
-
-    return pairs
 
 
 def _print_sightings(case_id: str) -> None:
@@ -687,16 +572,6 @@ def _new_partition(case: dict[str, Any]) -> dict[str, Any] | None:
     }
 
 
-def _print_dataframe(title: str, dataframe: pd.DataFrame, *, max_rows: int = 20) -> None:
-    print("" + "=" * 78)
-    print(title)
-    print("=" * 78)
-
-    if not isinstance(dataframe, pd.DataFrame) or dataframe.empty:
-        print("No records found.")
-        return
-
-    print(dataframe.head(max_rows).to_string(index=False))
 
 
 
@@ -791,57 +666,6 @@ def _save_tower_ipdr_backend_state(
     return payload
 
 
-def _print_tower_ipdr_backend_status(
-    payload: dict[str, Any],
-    *,
-    title: str = "TOWER IPDR FAST ANALYSIS BACKEND READY",
-) -> None:
-    """Print user-friendly Tower IPDR backend status.
-
-    Normal users should not see DuckDB/manifest/pipeline JSON paths.
-    Developer can show backend paths using:
-    TELECOM_DEBUG_BACKEND=1 python3 -u main.py
-    """
-
-    import os
-
-    debug_backend = os.environ.get("TELECOM_DEBUG_BACKEND") == "1"
-
-    stage = payload.get("stage", {}) or {}
-    fingerprint = payload.get("input_fingerprint", {}) or {}
-    import_summary = payload.get("import_summary", {}) or {}
-
-    input_files = (
-        import_summary.get("candidate_files")
-        or fingerprint.get("file_count")
-        or 0
-    )
-
-    print()
-    print("=" * 78)
-    print(title)
-    print("=" * 78)
-    print(f"Records indexed : {int(stage.get('record_count', 0)):,}")
-    print(f"Columns indexed : {int(stage.get('column_count', 0)):,}")
-    print(f"Input files     : {int(input_files):,}")
-
-    if import_summary:
-        print(f"Loaded files    : {int(import_summary.get('loaded_files', 0)):,}")
-        print(f"Skipped files   : {int(import_summary.get('skipped_files', 0)):,}")
-        print(f"Failed files    : {int(import_summary.get('failed_files', 0)):,}")
-        print(f"Rows this run   : {int(import_summary.get('rows_loaded_this_run', 0)):,}")
-
-    print("Speed mode      : DuckDB SQL internal backend")
-    print("User output     : Excel / GUI report only")
-    print("=" * 78)
-
-    if debug_backend:
-        print("DEBUG BACKEND FILES")
-        print("-" * 78)
-        print(f"DuckDB file     : {stage.get('duckdb_path', '')}")
-        print(f"Manifest        : {stage.get('manifest_path', '')}")
-        print(f"Pipeline state  : {payload.get('pipeline_state_path', '')}")
-        print("-" * 78)
 
 def _import_staging(
     case: dict[str, Any],
@@ -1076,54 +900,6 @@ def _advanced_menu(case: dict[str, Any]) -> None:
 
 
 
-def _collect_date_time_ranges() -> list[tuple[str, str]]:
-    print("\n" + "=" * 78)
-    print("CREATE DATE-TIME PARTS")
-    print("=" * 78)
-    print("Har part ke liye Start Date-Time aur End Date-Time enter karein.")
-    print("Example Date : 2026-06-11")
-    print("Example Time : 20:00:00")
-    print()
-    print("Rule:")
-    print("Part 1 Start + Part 1 End = Part 1")
-    print("Part 2 Start + Part 2 End = Part 2")
-    print("Blank Start Date = finish")
-    print("=" * 78)
-
-    ranges: list[tuple[str, str]] = []
-    part_no = 1
-
-    while True:
-        print(f"\nPart {part_no}")
-
-        start_date = input("  Start Date (blank = finish): ").strip()
-        if not start_date:
-            break
-
-        start_time = input("  Start Time: ").strip()
-        if not start_time:
-            print("[-] Start Time required hai. Is part ko dobara enter karein.")
-            continue
-
-        end_date = input("  End Date  : ").strip()
-        if not end_date:
-            print("[-] End Date required hai. Is part ko dobara enter karein.")
-            continue
-
-        end_time = input("  End Time  : ").strip()
-        if not end_time:
-            print("[-] End Time required hai. Is part ko dobara enter karein.")
-            continue
-
-        ranges.append(
-            (
-                f"{start_date} {start_time}",
-                f"{end_date} {end_time}",
-            )
-        )
-        part_no += 1
-
-    return ranges
 
 
 
@@ -1221,19 +997,13 @@ def _run_complete_tower_ipdr_analysis(
             for row in con.execute("PRAGMA table_info('tower_ipdr_events')").fetchall()
         ]
 
-        def has(column: str) -> bool:
-            return column in columns
-
-        def q(column: str) -> str:
-            return '"' + column.replace('"', '""') + '"'
-
-        def text_column(column: str) -> str:
-            if has(column):
-                return f"NULLIF(TRIM(CAST({q(column)} AS VARCHAR)), '')"
-            return "NULL"
-
-        def count_distinct(column: str) -> str:
-            return f"COUNT(DISTINCT {text_column(column)})" if has(column) else "0"
+        # EA_TOWER_IPDR_SQL_HELPERS_PHASE7A_V1
+        from modules.controllers.tower_ipdr_sql_helpers import (
+            make_tower_ipdr_column_helpers,
+        )
+        has, q, text_column, count_distinct = make_tower_ipdr_column_helpers(
+            columns
+        )
 
         subscriber = text_column("subscriber_number")
         searched_cell = text_column("searched_cell_id")
@@ -1259,113 +1029,26 @@ def _run_complete_tower_ipdr_analysis(
         def read_sql(sql: str) -> pd.DataFrame:
             return con.execute(sql).fetchdf()
 
-        summary = read_sql(
-            f"""
-            SELECT 'Total Events' AS metric, CAST(COUNT(*) AS VARCHAR) AS value FROM tower_ipdr_events
-            UNION ALL SELECT 'Unique Subscribers', CAST({count_distinct('subscriber_number')} AS VARCHAR) FROM tower_ipdr_events
-            UNION ALL SELECT 'Unique IMEI', CAST({count_distinct('imei')} AS VARCHAR) FROM tower_ipdr_events
-            UNION ALL SELECT 'Unique IMSI', CAST({count_distinct('imsi')} AS VARCHAR) FROM tower_ipdr_events
-            UNION ALL SELECT 'Unique Searched Cells', CAST({count_distinct('searched_cell_id')} AS VARCHAR) FROM tower_ipdr_events
-            UNION ALL SELECT 'Unique Source Files', CAST({count_distinct('source_file')} AS VARCHAR) FROM tower_ipdr_events
-            UNION ALL SELECT 'First Event Time', CAST(MIN({event_ts}) AS VARCHAR) FROM tower_ipdr_events
-            UNION ALL SELECT 'Last Event Time', CAST(MAX({event_ts}) AS VARCHAR) FROM tower_ipdr_events
-            """
+        # EA_TOWER_IPDR_CORE_TABLES_PHASE7B_V1
+        from modules.controllers.tower_ipdr_core_tables import (
+            build_tower_ipdr_core_tables,
         )
-
-        cell_summary = read_sql(
-            f"""
-            SELECT
-                {searched_cell} AS searched_cell_id,
-                COUNT(*) AS event_count,
-                COUNT(DISTINCT {subscriber}) AS subscriber_count,
-                COUNT(DISTINCT {imei}) AS imei_count,
-                COUNT(DISTINCT {imsi}) AS imsi_count,
-                MIN({event_ts}) AS first_seen,
-                MAX({event_ts}) AS last_seen
-            FROM tower_ipdr_events
-            WHERE {searched_cell} IS NOT NULL
-            GROUP BY 1
-            ORDER BY event_count DESC
-            LIMIT 500
-            """
-        )
-
-        top_subscribers = read_sql(
-            f"""
-            SELECT
-                {subscriber} AS subscriber_number,
-                COUNT(*) AS event_count,
-                COUNT(
-                    DISTINCT {spot_id}
-                ) AS spots_seen,
-                STRING_AGG(
-                    DISTINCT CAST(
-                        {spot_id} AS VARCHAR
-                    ),
-                    ', '
-                    ORDER BY CAST(
-                        {spot_id} AS VARCHAR
-                    )
-                ) AS spots,
-                COUNT(
-                    DISTINCT {searched_cell}
-                ) AS cells_seen,
-                COUNT(
-                    DISTINCT {imei}
-                ) AS imei_count,
-                COUNT(
-                    DISTINCT {imsi}
-                ) AS imsi_count,
-                MIN({event_ts}) AS first_seen,
-                MAX({event_ts}) AS last_seen
-            FROM tower_ipdr_events
-            WHERE {subscriber} IS NOT NULL
-            GROUP BY 1
-            ORDER BY event_count DESC
-            LIMIT 1000
-            """
-        )
-
-        repeat_presence = top_subscribers.query("event_count >= 2").head(500).copy()
-
-        rare_presence = read_sql(
-            f"""
-            SELECT
-                {subscriber} AS subscriber_number,
-                COUNT(*) AS event_count,
-                COUNT(DISTINCT {searched_cell}) AS cells_seen,
-                COUNT(DISTINCT {imei}) AS imei_count,
-                COUNT(DISTINCT {imsi}) AS imsi_count,
-                MIN({event_ts}) AS first_seen,
-                MAX({event_ts}) AS last_seen
-            FROM tower_ipdr_events
-            WHERE {subscriber} IS NOT NULL
-            GROUP BY 1
-            HAVING COUNT(*) <= 2
-            ORDER BY event_count ASC, first_seen ASC
-            LIMIT 500
-            """
-        )
-
-        multi_cell_presence = read_sql(
-            f"""
-            SELECT
-                {subscriber} AS subscriber_number,
-                COUNT(*) AS event_count,
-                COUNT(DISTINCT {searched_cell}) AS cells_seen,
-                STRING_AGG(DISTINCT CAST({searched_cell} AS VARCHAR), ', ') AS searched_cells,
-                COUNT(DISTINCT {imei}) AS imei_count,
-                COUNT(DISTINCT {imsi}) AS imsi_count,
-                MIN({event_ts}) AS first_seen,
-                MAX({event_ts}) AS last_seen
-            FROM tower_ipdr_events
-            WHERE {subscriber} IS NOT NULL
-              AND {searched_cell} IS NOT NULL
-            GROUP BY 1
-            HAVING COUNT(DISTINCT {searched_cell}) >= 2
-            ORDER BY cells_seen DESC, event_count DESC
-            LIMIT 500
-            """
+        (
+            summary,
+            cell_summary,
+            top_subscribers,
+            repeat_presence,
+            rare_presence,
+            multi_cell_presence,
+        ) = build_tower_ipdr_core_tables(
+            read_sql=read_sql,
+            count_distinct=count_distinct,
+            event_ts=event_ts,
+            searched_cell=searched_cell,
+            subscriber=subscriber,
+            imei=imei,
+            imsi=imsi,
+            spot_id=spot_id,
         )
 
         shared_imei = read_sql(
@@ -1502,147 +1185,26 @@ def _run_complete_tower_ipdr_analysis(
                 """
             )
 
-        spot_summary = read_sql(
-            f"""
-            SELECT
-                {spot_id} AS spot_id,
-                {spot_name} AS spot_name,
-                {spot_folder} AS spot_folder,
-                COUNT(*) AS event_count,
-                COUNT(
-                    DISTINCT {subscriber}
-                ) AS subscriber_count,
-                COUNT(
-                    DISTINCT {searched_cell}
-                ) AS cell_count,
-                COUNT(
-                    DISTINCT
-                    {source_relative_path}
-                ) AS source_file_count,
-                MIN({event_ts}) AS first_seen,
-                MAX({event_ts}) AS last_seen
-            FROM tower_ipdr_events
-            WHERE {spot_id} IS NOT NULL
-            GROUP BY 1, 2, 3
-            ORDER BY 1
-            """
+        # EA_TOWER_IPDR_SPOT_TABLES_PHASE7C_V1
+        from modules.controllers.tower_ipdr_spot_tables import (
+            build_tower_ipdr_spot_tables,
         )
-
-        repeated_spot_cells = read_sql(
-            f"""
-            SELECT
-                {searched_cell}
-                    AS searched_cell_id,
-                COUNT(
-                    DISTINCT {spot_id}
-                ) AS spot_count,
-                STRING_AGG(
-                    DISTINCT CAST(
-                        {spot_id} AS VARCHAR
-                    ),
-                    ', '
-                    ORDER BY CAST(
-                        {spot_id} AS VARCHAR
-                    )
-                ) AS spots,
-                COUNT(*) AS event_count,
-                COUNT(
-                    DISTINCT {subscriber}
-                ) AS subscriber_count,
-                MIN({event_ts}) AS first_seen,
-                MAX({event_ts}) AS last_seen
-            FROM tower_ipdr_events
-            WHERE
-                {searched_cell} IS NOT NULL
-                AND {spot_id} IS NOT NULL
-            GROUP BY 1
-            HAVING
-                COUNT(
-                    DISTINCT {spot_id}
-                ) >= 2
-            ORDER BY
-                spot_count DESC,
-                event_count DESC
-            """
-        )
-
-        multi_spot_subscribers = read_sql(
-            f"""
-            SELECT
-                {subscriber}
-                    AS subscriber_number,
-                COUNT(*) AS event_count,
-                COUNT(
-                    DISTINCT {spot_id}
-                ) AS spots_seen,
-                STRING_AGG(
-                    DISTINCT CAST(
-                        {spot_id} AS VARCHAR
-                    ),
-                    ', '
-                    ORDER BY CAST(
-                        {spot_id} AS VARCHAR
-                    )
-                ) AS spots,
-                COUNT(
-                    DISTINCT {searched_cell}
-                ) AS cells_seen,
-                COUNT(
-                    DISTINCT {imei}
-                ) AS imei_count,
-                COUNT(
-                    DISTINCT {imsi}
-                ) AS imsi_count,
-                MIN({event_ts}) AS first_seen,
-                MAX({event_ts}) AS last_seen
-            FROM tower_ipdr_events
-            WHERE
-                {subscriber} IS NOT NULL
-                AND {spot_id} IS NOT NULL
-            GROUP BY 1
-            HAVING
-                COUNT(
-                    DISTINCT {spot_id}
-                ) >= 2
-            ORDER BY
-                spots_seen DESC,
-                cells_seen DESC,
-                event_count DESC
-            LIMIT 500
-            """
-        )
-
-        spot_exclusive_subscribers = read_sql(
-            f"""
-            SELECT
-                {subscriber}
-                    AS subscriber_number,
-                COUNT(*) AS event_count,
-                MIN({spot_id}) AS spot_id,
-                COUNT(
-                    DISTINCT {searched_cell}
-                ) AS cells_seen,
-                COUNT(
-                    DISTINCT {imei}
-                ) AS imei_count,
-                COUNT(
-                    DISTINCT {imsi}
-                ) AS imsi_count,
-                MIN({event_ts}) AS first_seen,
-                MAX({event_ts}) AS last_seen
-            FROM tower_ipdr_events
-            WHERE
-                {subscriber} IS NOT NULL
-                AND {spot_id} IS NOT NULL
-            GROUP BY 1
-            HAVING
-                COUNT(
-                    DISTINCT {spot_id}
-                ) = 1
-            ORDER BY
-                event_count DESC
-            LIMIT 500
-            """
+        (
+            spot_summary,
+            repeated_spot_cells,
+            multi_spot_subscribers,
+            spot_exclusive_subscribers,
+        ) = build_tower_ipdr_spot_tables(
+            read_sql=read_sql,
+            spot_id=spot_id,
+            spot_name=spot_name,
+            spot_folder=spot_folder,
+            subscriber=subscriber,
+            searched_cell=searched_cell,
+            source_relative_path=source_relative_path,
+            event_ts=event_ts,
+            imei=imei,
+            imsi=imsi,
         )
 
         checks = []

@@ -40,6 +40,7 @@ def test_unified_tower_dispatch_uses_selected_cdr_folder(
         case,
         *,
         input_folder=None,
+        gui_only=False,
     ):
         observed["case"] = case
         observed["input_folder"] = input_folder

@@ -188,6 +188,7 @@ def test_tower_worker_uses_direct_case_and_selected_folder(
         *,
         source_type,
         input_folder,
+        gui_only=None,
     ):
         observed["case"] = selected_case
         observed["source_type"] = source_type
@@ -303,6 +304,7 @@ def test_main_window_blocks_close_until_tower_analysis_finishes(
         *,
         source_type,
         input_folder,
+        gui_only=None,
     ):
         assert selected_case is case
         assert source_type == "cdr"

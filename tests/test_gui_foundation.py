@@ -45,6 +45,7 @@ def test_gui_navigation_matches_workspace():
         "tower_dump",
         "ipdr",
         "imei",
+        "universal_evidence",
         "lookup",
         "case_details",
         "case_reports",

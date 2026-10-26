@@ -10,7 +10,8 @@ _ACTIONS = {
 
 
 def _polish_actions(page):
-    if not page.isVisible():
+    from shiboken6 import isValid
+    if not isValid(page) or not page.isVisible():
         return
     for table in page.findChildren(QTableWidget):
         header = table.horizontalHeader()
