@@ -101,6 +101,7 @@ class ImeiWorker(QObject):
                     case,
                     mode=self.mode,
                     input_folder=self.input_folder,
+                    gui_only=True,
                 )
 
             output_stream.flush()
@@ -108,12 +109,26 @@ class ImeiWorker(QObject):
             if not isinstance(result, dict):
                 raise TypeError("IMEI analysis did not return a valid result.")
 
+            # Results belong to this run, not a global previous viewer.
+            try:
+                from modules.reporting.gui_bundle_extractor import extract_gui_sheets_from_result
+                candidate_sheets = result.get("gui_sheets", {})
+                if not isinstance(candidate_sheets, dict):
+                    candidate_sheets = {}
+                gui_sheets = {
+                    k: v.head(600).copy() for k, v in candidate_sheets.items()
+                    if hasattr(v, "head") and not v.empty
+                }
+            except Exception:
+                gui_sheets = {}
+
             self.completed.emit(
                 {
                     "mode": self.mode,
                     "input_folder": str(self.input_folder),
                     "identifiers": list(result.get("identifiers", []) or []),
                     "report_paths": collect_imei_report_paths(result),
+                    "gui_sheets": gui_sheets,
                     "status": str(result.get("status", "COMPLETED")),
                     "message": str(result.get("message", "")),
                     "result": result,

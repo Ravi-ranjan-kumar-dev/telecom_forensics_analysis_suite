@@ -212,6 +212,11 @@ class TowerDumpWorker(QObject):
                     if self.source_type == "cdr" and self.analysis_mode == "complete"
                     else contextlib.nullcontext()
                 )
+                from gui.workers.gui_first_policy import supports_gui_only
+                if supports_gui_only(analysis_function) and (
+                    self.analysis_mode in {"complete", "partition"}
+                ):
+                    selection_kwargs["gui_only"] = True
                 with policy:
                     result = analysis_function(
                         case,
@@ -233,6 +238,18 @@ class TowerDumpWorker(QObject):
             report_paths = collect_tower_report_paths(
                 result
             )
+            if not isinstance(result.get("gui_sheets"), dict) or not result.get("gui_sheets"):
+                try:
+                    from modules.reporting.gui_bundle_extractor import extract_gui_sheets_from_result
+                    candidate_sheets = extract_gui_sheets_from_result(
+                        result, workflow=f"tower {self.source_type} {self.analysis_mode}"
+                    )
+                    result["gui_sheets"] = {
+                        k: v.head(600).copy() for k, v in candidate_sheets.items()
+                        if hasattr(v, "head") and not v.empty
+                    }
+                except Exception:
+                    result["gui_sheets"] = {}
 
             self.completed.emit(
                 {
@@ -242,6 +259,11 @@ class TowerDumpWorker(QObject):
                         self.input_folder
                     ),
                     "report_paths": report_paths,
+                    "gui_sheets": (
+                        result.get("gui_sheets", {})
+                        if isinstance(result.get("gui_sheets"), dict)
+                        else {}
+                    ),
                     "selected_spot_folders": (
                         self.selected_spot_folders
                     ),

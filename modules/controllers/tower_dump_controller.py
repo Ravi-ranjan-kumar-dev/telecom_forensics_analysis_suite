@@ -165,7 +165,7 @@ def run_complete_tower_dump_analysis(
         return _run_complete_analysis(
             case,
             input_folder=folder,
-            gui_only=gui_only,
+            **({"gui_only": True} if gui_only else {}),
             **selection_kwargs,
         )
 
@@ -178,6 +178,7 @@ def run_complete_tower_dump_analysis(
             case,
             use_partitions=False,
             input_folder=folder,
+            **({"gui_only": True} if gui_only else {}),
             **selection_kwargs,
         )
 
@@ -188,6 +189,7 @@ def run_complete_tower_dump_analysis(
     return _run_complete_tower_ipdr_analysis(
         case,
         input_folder=folder,
+        **({"gui_only": True} if gui_only else {}),
         **selection_kwargs,
     )
 
@@ -474,6 +476,7 @@ def run_tower_dump_partition_analysis(
     input_folder: str | Path,
     selected_spot_folders: Iterable[str] | None = None,
     include_root_files: bool = True,
+    gui_only: bool = False,
 ) -> dict[str, Any] | None:
     """Run saved pair-based Date-Time Parts without CLI prompts."""
 
@@ -521,6 +524,7 @@ def run_tower_dump_partition_analysis(
         return _run_partition_analysis(
             case,
             input_folder=folder,
+            **({"gui_only": True} if gui_only else {}),
             **selection_kwargs,
         )
 
@@ -533,6 +537,7 @@ def run_tower_dump_partition_analysis(
             case,
             use_partitions=True,
             input_folder=folder,
+            gui_only=True,
             **selection_kwargs,
         )
 
@@ -543,6 +548,7 @@ def run_tower_dump_partition_analysis(
     return run_tower_ipdr_saved_parts(
         case,
         input_folder=folder,
+        **({"gui_only": True} if gui_only else {}),
         **selection_kwargs,
     )
 

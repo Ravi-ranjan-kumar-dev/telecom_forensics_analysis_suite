@@ -1160,10 +1160,15 @@ def _lazy_tower_open_report(self):
         QMessageBox.information(self, "Export", "A full Excel export is already running.")
         return
 
+    export_kind = str(source.get("_ea_gui_first_export_kind") or "tower_cdr")
+    export_label = {
+        "tower_ipdr": "Tower IPDR",
+        "tower_gprs": "Tower GPRS",
+    }.get(export_kind, "Tower CDR")
     path, _ = QFileDialog.getSaveFileName(
         self,
-        "Export Full Tower CDR Forensic Report",
-        "Tower_CDR_Forensic_Report.xlsx",
+        f"Export Full {export_label} Forensic Report",
+        f"{export_label.replace(' ', '_')}_Forensic_Report.xlsx",
         "Excel Files (*.xlsx)",
     )
     if not path:

@@ -887,6 +887,9 @@ def generate_tower_ipdr_complete_excel_report(
         sheet_name,
         description,
     ) in COMPLETE_REPORT_SHEET_ORDER:
+        # EA_TOWER_HIDE_INTERNAL_REPORT_TABS_V1: keep internal tables, omit standalone sheets.
+        if key in {"analysis_status", "methodology_limits"}:
+            continue
         frame = _complete_report_frame(
             key,
             tables.get(
@@ -976,6 +979,14 @@ def generate_tower_ipdr_complete_excel_report(
             "7K. Others",
             "Sessions connected to Other Companies (WhatsApp/Meta, Google, Telegram, Signal, Zangi, VPNs, Cloud CDNs).",
         ),
+        # EA_TOWER_IPDR_NETWORK_INTELLIGENCE_V1
+        ('network_coverage', '8A. Data Coverage', 'Full staged-event coverage and legacy detailed-sheet sample limitations.'),
+        ('network_service_summary', '8B. Network Services', 'All-record IP-version/operator and possible network service categories; heuristic only.'),
+        ('network_isp_summary', '8C. Destination ISPs', 'Airtel, Jio, Vi, BSNL and other destination networks; not subscriber SIM identity.'),
+        ('network_ip_versions', '8D. IPv4 IPv6 Summary', 'IPv4/IPv6 destination IP counts across all staged records.'),
+        ('network_protocol_candidates', '8E. VPN VoIP Candidates', 'VPN, proxy, social messaging and VoIP candidates; NOT confirmed calls or tunnels.'),
+        ('network_top_endpoints', '8F. Top Destination IPs', 'Top endpoint groups by events (bounded); all groups are analyzed.'),
+        ('network_access_indicators', '8G. WiFi Dongle Indicators', 'Only operator-recorded access/device labels; otherwise not determinable.'),
     )
     for opt_key, opt_title, opt_desc in optional_intel_sheets:
         if opt_key in tables and isinstance(tables.get(opt_key), pd.DataFrame) and not tables.get(opt_key).empty:

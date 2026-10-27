@@ -10,6 +10,7 @@ from __future__ import annotations
 
 from pathlib import Path
 from typing import Any
+from contextvars import ContextVar
 
 import pandas as pd
 
@@ -54,6 +55,8 @@ from modules.reporting import (
 from modules.reporting import (
     generate_imei_ipdr_common_report,
 )
+_EA_IMEI_GUI_ONLY: ContextVar[bool] = ContextVar("ea_imei_gui_only", default=False)
+
 SUPPORTED_EVIDENCE_SUFFIXES = {
     ".csv",
     ".txt",
@@ -783,7 +786,7 @@ def _run_auto_single_imei_source(
 
     report_path = None
 
-    if str(
+    if not _EA_IMEI_GUI_ONLY.get() and str(
         analysis.get(
             "overall_status",
             "",
@@ -1463,7 +1466,7 @@ def _run_auto_single_imei_unified(
         )
     ).strip().upper()
 
-    if overall_status in {
+    if not _EA_IMEI_GUI_ONLY.get() and overall_status in {
         "FOUND",
         "PARTIAL",
         "EMPTY_NO_DATA",
@@ -1754,7 +1757,7 @@ def _execute_auto_detected_imei_cdr(
                 case_id,
                 "imei_device",
             ),
-        )
+        ) if not _EA_IMEI_GUI_ONLY.get() else None
 
         if common_report:
             register_report(
@@ -2012,7 +2015,7 @@ def _execute_auto_detected_imei_ipdr(
                 case_id,
                 "imei_device",
             ),
-        )
+        ) if not _EA_IMEI_GUI_ONLY.get() else None
 
         if common_report:
             register_report(
@@ -3400,7 +3403,20 @@ def handle_imei_device_workspace(
 _ORIG_RUN_IMEI_DEVICE_ANALYSIS = run_imei_device_analysis
 
 def run_imei_device_analysis(*args, **kwargs):
-    res = _ORIG_RUN_IMEI_DEVICE_ANALYSIS(*args, **kwargs)
+    # GUI-only is an explicit opt-in. CLI and prior code preserve report behavior.
+    gui_only = bool(kwargs.pop("gui_only", False))
+    token = _EA_IMEI_GUI_ONLY.set(gui_only)
+    try:
+        res = _ORIG_RUN_IMEI_DEVICE_ANALYSIS(*args, **kwargs)
+    finally:
+        _EA_IMEI_GUI_ONLY.reset(token)
+    if gui_only and isinstance(res, dict):
+        from modules.controllers.imei_gui_first_export import build_imei_viewer_sheets
+        case = args[0] if args else kwargs.get("case", {})
+        res["_ea_imei_export_case"] = dict(case) if isinstance(case, dict) else {}
+        res["_ea_imei_export_mode"] = str(kwargs.get("mode", res.get("mode", "")))
+        res["gui_sheets"] = build_imei_viewer_sheets(res)
+        return res
     try:
         from modules.reporting.gui_bundle_extractor import extract_gui_sheets_from_result
         from modules.reporting.gui_result_store import store_gui_sheets

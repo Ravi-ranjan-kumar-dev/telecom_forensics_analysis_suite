@@ -909,6 +909,7 @@ def _run_complete_tower_ipdr_analysis(
     input_folder: str | Path | None = None,
     selected_spot_folders: Iterable[str] | None = None,
     include_root_files: bool = True,
+    gui_only: bool = False,
 ) -> dict[str, Any] | None:
     """Run total Tower IPDR analysis on the full loaded backend dataset.
 
@@ -984,7 +985,8 @@ def _run_complete_tower_ipdr_analysis(
         / "complete"
         / run_id
     )
-    report_dir.mkdir(parents=True, exist_ok=True)
+    if not gui_only:
+        report_dir.mkdir(parents=True, exist_ok=True)
 
     excel_path = report_dir / "tower_ipdr_complete_analysis.xlsx"
     summary_path = report_dir / "tower_ipdr_complete_summary.txt"
@@ -1598,14 +1600,7 @@ def _run_complete_tower_ipdr_analysis(
                 )
             )
 
-        if not repeated_spot_cells.empty:
-            spot_tables.append(
-                repeated_spot_cells.assign(
-                    record_type=(
-                        "CELL_IN_MULTIPLE_SPOTS"
-                    )
-                )
-            )
+        # EA_TOWER_SPOT_SUMMARY_DEDUP_V1: do not duplicate repeated-cell entries here.
 
         spot_cell_summary = (
             pd.concat(
@@ -1940,9 +1935,15 @@ def _run_complete_tower_ipdr_analysis(
             ipdr_sample_for_intel,
             partition_parts=saved_ipdr_parts,
         )
+        # EA_TOWER_IPDR_NETWORK_INTELLIGENCE_V1
+        from modules.analysis.ipdr.tower_network_intelligence import (
+            build_tower_ipdr_network_intelligence,
+        )
+        network_intelligence_tables = build_tower_ipdr_network_intelligence(con)
 
         complete_tables = {
             **specialized_ipdr_tables,
+            **network_intelligence_tables,
             "executive_summary": (
                 executive_summary
             ),
@@ -1979,6 +1980,46 @@ def _run_complete_tower_ipdr_analysis(
                 methodology_limits
             ),
         }
+
+        # EA_GUI_FIRST_TOWER_IPDR_V1: full analysis is already computed; export is explicit.
+        if gui_only:
+            # Curated GUI summary: avoid displaying 30 redundant long sheets.
+            # Full tables stay in memory for explicit formatted export;
+            # the DuckDB staging backend remains the complete evidence store.
+            viewer_order = (
+                ("Executive Summary", "executive_summary"),
+                ("Spot & Cell Summary", "spot_cell_summary"),
+                ("Data Coverage", "network_coverage"),
+                ("Network Services", "network_service_summary"),
+                ("Destination ISPs", "network_isp_summary"),
+                ("IPv4 IPv6 Summary", "network_ip_versions"),
+                ("VPN VoIP Candidates", "network_protocol_candidates"),
+                ("Top Destination IPs", "network_top_endpoints"),
+                ("WiFi Dongle Indicators", "network_access_indicators"),
+                ("Priority Review Queue", "priority_review_queue"),
+                ("Multi Spot Intelligence", "multi_spot_intelligence"),
+                ("App VPN Usage", "application_usage_summary"),
+                ("Social Calling Leads", "p2p_social_calling_leads"),
+            )
+            compact_view = {
+                (title if len(complete_tables[key]) <= 1000
+                 else f"{title} (preview 1,000/{len(complete_tables[key]):,})"):
+                    complete_tables[key].head(1000).copy()
+                for title, key in viewer_order
+                if isinstance(complete_tables.get(key), pd.DataFrame)
+                and not complete_tables[key].empty
+            }
+            return {
+                "gui_export_only": True,
+                "gui_sheets": compact_view,
+                "export_case_id": case_id,
+                "_ea_gui_first_export_kind": "tower_ipdr",
+                "_ea_gui_first_export_tables": complete_tables,
+                "_ea_gui_first_export_case": dict(case),
+                "run_id": run_id,
+                "report_paths": [],
+                "excel_report": "",
+            }
 
         generate_tower_ipdr_complete_excel_report(
             case=case,
@@ -2459,6 +2500,7 @@ def run_tower_ipdr_saved_parts(
     input_folder: str | Path | None = None,
     selected_spot_folders: Iterable[str] | None = None,
     include_root_files: bool = True,
+    gui_only: bool = False,
 ) -> dict[str, Any] | None:
     """Analyze saved Tower IPDR Parts without CLI input prompts.
 
@@ -2628,6 +2670,42 @@ def run_tower_ipdr_saved_parts(
             result,
             max_leads=10,
         )
+
+    # EA_GUI_FIRST_PARTS_V11: present computed evidence in GUI, not an XLSX.
+    if gui_only:
+        sheets: dict[str, pd.DataFrame] = {}
+        for number, part_result in results_by_part.items():
+            if not isinstance(part_result, dict):
+                continue
+            for key, frame in part_result.items():
+                if isinstance(frame, pd.DataFrame) and not frame.empty:
+                    title = f"Part {number} - {str(key).replace('_', ' ').title()}"
+                    sheets[title] = frame.head(600).copy()
+        if not sheets:
+            sheets["Part-wise Summary"] = pd.DataFrame([
+                {
+                    "part_no": part.get("part_no"),
+                    "part_name": part.get("part_name"),
+                    "spot_id": part.get("spot_id"),
+                    "start_time": part.get("start_time"),
+                    "end_time": part.get("end_time"),
+                    "note": "No nonempty tabular results; inspect backend for details",
+                }
+                for part in selected_parts
+            ])
+        return {
+            "selected_parts": selected_parts,
+            "results_by_part": results_by_part,
+            "saved_files": {},
+            "report_paths": [],
+            "gui_sheets": sheets,
+            "gui_export_only": True,
+            "_ea_gui_first_export_kind": "tower_ipdr_partition",
+            "_ea_gui_first_export_case_id": case_id,
+            "_ea_gui_first_export_selected_parts": selected_parts,
+            "_ea_gui_first_export_comparison_parts": parts,
+            "_ea_gui_first_export_results_by_part": results_by_part,
+        }
 
     print()
     print(

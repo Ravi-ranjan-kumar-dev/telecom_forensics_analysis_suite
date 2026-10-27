@@ -845,6 +845,7 @@ def _execute(
     input_folder: str | Path | None = None,
     selected_spot_folders: Iterable[str] | None = None,
     include_root_files: bool = True,
+    gui_only: bool = False,
 ) -> dict[str, Any] | None:
     from modules.analysis.gprsdump.duckdb_presence import (
         build_tower_gprs_duckdb_presence,
@@ -1189,6 +1190,32 @@ def _execute(
             if isinstance(partition, dict)
             else len(analysis.get("subscriber_summary", []))
         )
+
+        # EA_GUI_FIRST_GPRS_V1: preserve staging; defer formatted workbook.
+        if gui_only:
+            from modules.reporting.gui_bundle_extractor import extract_gui_sheets_from_result
+            gui_result = {"analysis": analysis, "partition": partition}
+            all_sheets = extract_gui_sheets_from_result(
+                gui_result, workflow="tower gprs dump"
+            )
+            preview = {
+                key: frame.head(600).copy()
+                for key, frame in all_sheets.items()
+                if isinstance(frame, pd.DataFrame) and not frame.empty
+            }
+            return {
+                "gui_export_only": True,
+                "gui_sheets": preview,
+                "export_case_id": case_id,
+                "_ea_gui_first_export_kind": "tower_gprs",
+                "_ea_gui_first_export_case": dict(case),
+                "_ea_gui_first_export_load": load_result,
+                "_ea_gui_first_export_analysis": analysis,
+                "_ea_gui_first_export_partition": partition,
+                "_ea_gui_first_export_saved": saved,
+                "report_paths": [],
+                "excel_report": "",
+            }
 
         from modules.reporting.tower_gprs_excel import (
             generate_tower_gprs_excel_report,

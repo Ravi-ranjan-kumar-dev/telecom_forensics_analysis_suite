@@ -98,6 +98,10 @@ class ImeiPage(QFrame):
         }
         self._thread: QThread | None = None
         self._worker: ImeiWorker | None = None
+        self._latest_imei_payload: dict | None = None
+        self._export_thread: QThread | None = None
+        self._export_worker = None
+        self._export_mode = ""
 
         self._mode_box = QComboBox()
         self._mode_box.setObjectName("inputControl")
@@ -136,6 +140,10 @@ class ImeiPage(QFrame):
         self._open_folder_button = QPushButton("Open Report Folder")
         self._open_folder_button.setObjectName("secondaryButton")
         self._open_folder_button.setEnabled(False)
+
+        self._export_full_button = QPushButton("Export Full IMEI Reports")
+        self._export_full_button.setObjectName("primaryButton")
+        self._export_full_button.setEnabled(False)
 
         self._progress = QProgressBar()
         self._progress.setObjectName("analysisProgress")
@@ -177,6 +185,7 @@ class ImeiPage(QFrame):
         self._run_button.clicked.connect(self._start_analysis)
         self._open_report_button.clicked.connect(self._open_latest_report)
         self._open_folder_button.clicked.connect(self._open_report_folder)
+        self._export_full_button.clicked.connect(self._export_full_imei_reports)
 
         self._mode_changed()
 
@@ -242,6 +251,7 @@ class ImeiPage(QFrame):
         action_row = QHBoxLayout()
         action_row.setSpacing(10)
         action_row.addWidget(self._run_button)
+        action_row.addWidget(self._export_full_button)
         action_row.addWidget(self._open_report_button)
         action_row.addWidget(self._open_folder_button)
         action_row.addStretch()
@@ -313,6 +323,11 @@ class ImeiPage(QFrame):
         self._helper_label.setText(_MODE_HELP.get(mode, ""))
         self._open_report_button.setEnabled(bool(self.report_paths))
         self._open_folder_button.setEnabled(bool(self.report_paths))
+        self._export_full_button.setEnabled(
+            self._export_thread is None
+            and isinstance(self._latest_imei_payload, dict)
+            and self._latest_imei_payload.get("mode") == mode
+        )
         self._update_identifier_summary()
         self._update_folder_summary()
 
@@ -361,6 +376,8 @@ class ImeiPage(QFrame):
         self._identifiers_by_mode[mode] = []
         self._open_report_button.setEnabled(False)
         self._open_folder_button.setEnabled(False)
+        self._export_full_button.setEnabled(False)
+        self._latest_imei_payload = None
         self._log.clear()
         self._append_log("[+] Starting automatic IMEI detection and analysis.")
         self._set_running_state(True)
@@ -490,6 +507,72 @@ class ImeiPage(QFrame):
                 "The operating system could not open the report folder.",
             )
 
+    def _export_full_imei_reports(self) -> None:
+        """Explicitly export full IMEI reports from THIS analysis, not viewer preview."""
+        if self._export_thread is not None or self.is_running:
+            return
+        payload = self._latest_imei_payload
+        if not isinstance(payload, dict) or payload.get("mode") != self.selected_mode:
+            QMessageBox.warning(self, "IMEI Export", "Analyze this IMEI mode first.")
+            return
+        analysis = payload.get("result")
+        if not isinstance(analysis, dict) or not analysis.get("single_results"):
+            QMessageBox.information(self, "IMEI Export", "No analyzed IMEI records are available for export.")
+            return
+        start = Path.home() / "Downloads"
+        destination = QFileDialog.getExistingDirectory(
+            self, "Choose Full IMEI Report Export Folder",
+            str(start if start.is_dir() else Path.home()),
+        )
+        if not destination:
+            return
+        from gui.workers.imei_full_export_worker import ImeiFullExportWorker
+        thread = QThread(self)
+        worker = ImeiFullExportWorker(analysis, destination)
+        worker.moveToThread(thread)
+        thread.started.connect(worker.run)
+        worker.completed.connect(self._imei_export_completed)
+        worker.failed.connect(self._imei_export_failed)
+        worker.finished.connect(thread.quit)
+        worker.finished.connect(worker.deleteLater)
+        thread.finished.connect(thread.deleteLater)
+        thread.finished.connect(self._imei_export_finished)
+        self._export_thread = thread
+        self._export_worker = worker
+        self._export_mode = self.selected_mode
+        self._mode_box.setEnabled(False)
+        self._run_button.setEnabled(False)
+        self._export_full_button.setEnabled(False)
+        self._append_log("[+] Generating full IMEI reports after explicit Export request...")
+        thread.start()
+
+    def _imei_export_completed(self, paths: object) -> None:
+        exported = [str(path) for path in paths] if isinstance(paths, list) else []
+        if not exported:
+            self._status_label.setText("Export complete: no reportable IMEI workbook.")
+            return
+        self._report_paths_by_mode[self._export_mode] = exported
+        self._open_report_button.setText("Open Latest Report")
+        self._open_report_button.setEnabled(True)
+        self._open_folder_button.setEnabled(True)
+        self._status_label.setText(f"IMEI full Export complete: {len(exported)} workbook(s)")
+        for path in exported:
+            self._append_log(f"[+] Exported: {path}")
+
+    def _imei_export_failed(self, message: str) -> None:
+        self._status_label.setText("IMEI Export failed. Review the progress log.")
+        self._append_log("[-] IMEI Export error: " + str(message))
+
+    def _imei_export_finished(self) -> None:
+        self._export_thread = None
+        self._export_worker = None
+        self._mode_box.setEnabled(True)
+        self._run_button.setEnabled(True)
+        self._export_full_button.setEnabled(
+            isinstance(self._latest_imei_payload, dict)
+            and self._latest_imei_payload.get("mode") == self.selected_mode
+        )
+
     def _browse_files_anywhere(
         self,
     ) -> None:
@@ -539,7 +622,14 @@ def _enhanced_ImeiPage_completed(self, payload: object) -> None:
     from gui.dialogs.fullscreen_results_window import open_fullscreen_results_window
 
     result = payload if isinstance(payload, dict) else {}
-    sheets = result.get("gui_sheets") if isinstance(result.get("gui_sheets"), dict) and result.get("gui_sheets") else get_latest_gui_sheets()
+    self._latest_imei_payload = result
+    if hasattr(self, "_export_full_button"):
+        self._export_full_button.setEnabled(
+            bool(result.get("result", {}).get("single_results"))
+            if isinstance(result.get("result"), dict) else False
+        )
+    # Presence of an empty dict must not fall back to a prior analysis.
+    sheets = result.get("gui_sheets") if isinstance(result.get("gui_sheets"), dict) else get_latest_gui_sheets()
     meta = get_latest_gui_meta()
     win_title = str(meta.get("title") or "IMEI & Device Analysis Results")
 
@@ -554,6 +644,8 @@ def _enhanced_ImeiPage_completed(self, payload: object) -> None:
         return
 
     if sheets:
+        # Keep detected IMEI identifiers and mode-specific completion bookkeeping.
+        _ORIG_ImeiPage_COMPLETED(self, payload)
         if hasattr(self, "_set_running_state"):
             self._set_running_state(False)
         if hasattr(self, "_open_report_button"):
@@ -583,8 +675,12 @@ if hasattr(ImeiPage, "_open_latest_report"):
         from modules.reporting.gui_result_store import get_latest_gui_meta, get_latest_gui_sheets
         from gui.dialogs.fullscreen_results_window import open_fullscreen_results_window
 
-        sheets = get_latest_gui_sheets()
-        if sheets and not getattr(self, "_latest_report_paths", None):
+        if self.report_paths:
+            _ORIG_ImeiPage_OPEN_REPORT(self)
+            return
+        payload = getattr(self, "_latest_imei_payload", {}) or {}
+        sheets = payload.get("gui_sheets", {}) if isinstance(payload, dict) else {}
+        if sheets:
             meta = get_latest_gui_meta()
             open_fullscreen_results_window(
                 self,

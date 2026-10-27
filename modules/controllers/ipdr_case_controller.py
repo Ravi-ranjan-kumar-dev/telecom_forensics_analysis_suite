@@ -147,6 +147,7 @@ def _execute(
     *,
     mode: str,
     input_folder: str | Path | None = None,
+    gui_only: bool = False,
 ) -> dict[str, Any] | None:
     case_id = str(case["case_id"])
     mode = normalize_ipdr_mode(
@@ -298,6 +299,27 @@ def _execute(
             errors=load_result.get("errors", []),
         )
 
+        # EA_GUI_FIRST_SUBSCRIBER_IPDR_V1: backend run saved, workbook deferred.
+        if gui_only:
+            from modules.reporting.gui_bundle_extractor import extract_gui_sheets_from_result
+            result = {"analysis": analysis, "load": load_result, "saved": saved}
+            sheets = extract_gui_sheets_from_result(
+                result, workflow="subscriber ipdr"
+            )
+            return {
+                **result,
+                "gui_sheets": {
+                    k: v.head(600).copy()
+                    for k, v in sheets.items()
+                    if isinstance(v, pd.DataFrame) and not v.empty
+                },
+                "gui_export_only": True,
+                "excel_report": "",
+                "_ea_gui_first_export_kind": "subscriber_ipdr",
+                "_ea_gui_first_export_case": dict(case),
+                "_ea_gui_first_export_mode": mode,
+            }
+
         from modules.reporting.ipdr_excel import (
             generate_ipdr_excel_report,
         )
@@ -389,6 +411,7 @@ def run_ipdr_case_analysis(
     *,
     mode: str,
     input_folder: str | Path | None = None,
+    gui_only: bool = False,
 ) -> dict[str, Any] | None:
     """Run one non-interactive subscriber IPDR workflow."""
 
@@ -396,6 +419,7 @@ def run_ipdr_case_analysis(
         case,
         mode=mode,
         input_folder=input_folder,
+        **({"gui_only": True} if gui_only else {}),
     )
 
 

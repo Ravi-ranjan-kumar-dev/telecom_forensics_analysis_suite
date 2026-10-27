@@ -213,6 +213,7 @@ def test_complete_report_has_canonical_structure(
             sheet_name,
             _description,
         ) in COMPLETE_REPORT_SHEET_ORDER
+        if _key not in {"analysis_status", "methodology_limits"}  # EA_TOWER_REPORT_TEST_EXPECT_VISIBLE_SHEETS_V1
     ]
 
     assert workbook.sheetnames == expected_names

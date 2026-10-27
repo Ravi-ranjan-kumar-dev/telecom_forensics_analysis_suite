@@ -117,10 +117,13 @@ class IpdrWorker(QObject):
                 output_stream
             ):
                 case = get_direct_analysis_workspace()
+                from gui.workers.gui_first_policy import supports_gui_only
+                gui_kwargs = {"gui_only": True} if supports_gui_only(run_ipdr_case_analysis) else {}
                 result = run_ipdr_case_analysis(
                     case,
                     mode=self.mode,
                     input_folder=self.input_folder,
+                    **gui_kwargs,
                 )
 
             output_stream.flush()
@@ -144,6 +147,7 @@ class IpdrWorker(QObject):
                         self.input_folder
                     ),
                     "report_paths": report_paths,
+                    "gui_sheets": result.get("gui_sheets", {}),
                     "result": result,
                 }
             )

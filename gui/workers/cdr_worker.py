@@ -241,6 +241,9 @@ class CdrWorker(QObject):
                 else handle_multiple_cdr
             )
 
+            from gui.workers.gui_first_policy import supports_gui_only
+            gui_kwargs = {"gui_only": True} if supports_gui_only(handler) else {}
+
             with contextlib.redirect_stdout(
                 output_stream
             ), contextlib.redirect_stderr(
@@ -260,11 +263,13 @@ class CdrWorker(QObject):
                         generate_individual_reports=(
                             self.generate_individual_reports
                         ),
+                        **gui_kwargs,
                     )
                 else:
                     result = handler(
                         case,
                         input_folder=self.input_folder,
+                        **gui_kwargs,
                     )
 
             output_stream.flush()
@@ -336,6 +341,13 @@ class CdrWorker(QObject):
                         self.input_folder
                     ),
                     "report_paths": report_paths,
+                    "gui_sheets": {
+                        (name if len(frame) <= 2000 else
+                         f"{name} (preview 2,000/{len(frame):,})"):
+                            frame.head(2000).copy()
+                        for name, frame in result.get("gui_sheets", {}).items()
+                        if hasattr(frame, "head") and not frame.empty
+                    },
                     "map_paths": map_paths,
                     "route_paths": route_paths,
                     "result": result,

@@ -107,7 +107,8 @@ def test_imei_worker_runs_selected_folder(tmp_path, monkeypatch):
         lambda: {"case_id": "DEV-WORKSPACE"},
     )
 
-    def fake_run(case, *, mode, input_folder):
+    def fake_run(case, *, mode, input_folder, gui_only=False):
+        assert gui_only is True
         observed.update(
             {
                 "case": case,

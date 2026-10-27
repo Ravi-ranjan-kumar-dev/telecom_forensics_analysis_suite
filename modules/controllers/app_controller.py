@@ -299,6 +299,7 @@ def _run_target_pipeline(
     metadata: dict[str, Any],
     output_dir: Path,
     reporting: dict[str, Any],
+    gui_only: bool = False,
 ) -> dict[str, Any]:
     build_bundle = reporting.get("build_bundle")
     print_report = reporting.get("print_report")
@@ -331,7 +332,7 @@ def _run_target_pipeline(
     df = _clean_cdr_cell_columns(df)
     bundle = build_bundle(df=df, target=target)
 
-    fast_gui = os.environ.get("TELECOM_GUI_FAST_MODE") == "1"
+    fast_gui = gui_only or os.environ.get("TELECOM_GUI_FAST_MODE") == "1"
     if callable(print_report) and not fast_gui:
         print_report(
             bundle=bundle,
@@ -394,6 +395,7 @@ def handle_single_cdr(
     case: dict[str, Any],
     *,
     input_folder: str | Path | None = None,
+    gui_only: bool = False,
 ) -> dict[str, Any] | None:
     run_single = safe_import(
         "modules.controllers.cdr_controller",
@@ -455,6 +457,7 @@ def handle_single_cdr(
             metadata=build_metadata(target, df, case),
             output_dir=output_dir,
             reporting=_reporting_functions(),
+            **({"gui_only": True} if gui_only else {}),
         )
 
         result.update(case_id=case_id, analysis_run_id=analysis_run_id)
@@ -549,6 +552,7 @@ def handle_multiple_cdr(
     *,
     input_folder: str | Path | None = None,
     generate_individual_reports: bool = False,
+    gui_only: bool = False,
 ) -> dict[str, Any] | None:
     """Run common-first Multiple CDR analysis.
 
@@ -604,7 +608,7 @@ def handle_multiple_cdr(
         individual_results: dict[str, Any] = {}
         individual_dir: Path | None = None
 
-        if generate_individual_reports:
+        if generate_individual_reports and not gui_only:
             reporting = _reporting_functions()
             individual_dir = case_report_dir(
                 case_id,
@@ -637,6 +641,7 @@ def handle_multiple_cdr(
 
             if (
                 generate_individual_reports
+                and not gui_only
                 and individual_dir is not None
             ):
                 print(
@@ -680,7 +685,7 @@ def handle_multiple_cdr(
 
         print("[3/4] Writing common Excel report and map sidecars...")
         stage_started = time.perf_counter()
-        if callable(multi_excel):
+        if callable(multi_excel) and not gui_only:
             common_path = multi_excel(
                 loaded_cdrs=loaded_cdrs,
                 metadata=_case_metadata(case),
